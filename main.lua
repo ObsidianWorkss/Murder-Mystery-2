@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-NotroProtected"
+State.Build = "Universal-WindUI-2026-10-15-AvatarContact"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -3505,6 +3505,8 @@ local installPlayerFling = function(C)
             "Requests: " .. tostring(fling.Requests), "Target ID: " .. tostring(fling.Target or last.Target),
             "Contact writes: " .. tostring(fling.ContactSteps or 0),
             "Contact path: " .. tostring(fling.ContactPath or "not checked"),
+            "Tracked root: " .. tostring(fling.RootName or "none"),
+            "Contact body: " .. tostring(fling.ContactPartName or "none"),
             ("Current contact gap: %.2f studs"):format(fling.ContactGap or 0),
             "Session bursts: " .. tostring(saved and saved.Bursts or last.Bursts or 0),
             ("Observed displacement: %.2f studs"):format(fling.TargetDisplacement or last.Displacement or 0),
@@ -3513,11 +3515,29 @@ local installPlayerFling = function(C)
             "Local observations do not confirm server replication."
         }, "\n")
     end
+    local function rigRoot(char, hum)
+        if not char then return nil end
+        local function valid(part)
+            return part and part:IsA("BasePart") and part:IsDescendantOf(char)
+        end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if valid(root) then return root end
+        root = hum and hum.RootPart
+        if valid(root) then return root end
+        for _, name in ipairs({"Torso", "UpperTorso", "LowerTorso"}) do
+            root = char:FindFirstChild(name)
+            if valid(root) then return root end
+        end
+        return valid(char.PrimaryPart) and char.PrimaryPart or nil
+    end
+    local function anchored(part)
+        return part.Anchored or (part.AssemblyRootPart and part.AssemblyRootPart.Anchored)
+    end
     local function characterParts(p)
         local char = p and p.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not char or not hum or hum.Health <= 0 or not root or not root:IsA("BasePart") then return nil end
+        local root = rigRoot(char, hum)
+        if not char or not hum or hum.Health <= 0 or not root then return nil end
         return char, hum, root
     end
     local function finite(vector)
@@ -3624,8 +3644,7 @@ local installPlayerFling = function(C)
         fling.BlockedReason = nil
         if record then
             local targetChar = record.Target.Character
-            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-            if targetRoot and not targetRoot:IsA("BasePart") then targetRoot = nil end
+            local targetRoot = rigRoot(targetChar, targetChar and targetChar:FindFirstChildOfClass("Humanoid"))
             local position = targetRoot and finite(targetRoot.Position) and targetRoot.Position or record.LastTargetPosition
             fling.LastResult = {Target = record.Target.UserId, Mode = record.Mode, MapBoundsAvailable = record.Bounds ~= nil,
                 OutsideObservedBounds = record.ObservedExit or (position ~= nil and outsideBounds(position, record.Bounds)),
@@ -3802,10 +3821,52 @@ local installPlayerFling = function(C)
         local inherited = targetRoot.AssemblyLinearVelocity
         if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
         if record.Mode == "Spin" then
+            -- Follow a collidable body part rather than an invisible root offset.
+            -- Direct character children exclude hats, tools and their handles.
+            local contact = record.ContactPart
+            if targetRoot ~= record.ContactRoot or now >= (record.NextBodyCheck or 0)
+                or not contact or contact.Parent ~= record.TargetCharacter or not contact.CanCollide
+                or anchored(contact) then
+                record.ContactRoot, record.NextBodyCheck = targetRoot, now + 0.2
+                contact = nil
+                local bestScore = -math.huge
+                local priorities = {Torso=40, UpperTorso=40, LowerTorso=30, HumanoidRootPart=20, Head=10}
+                for _, part in ipairs(record.TargetCharacter:GetChildren()) do
+                    if part:IsA("BasePart") and part.CanCollide and not anchored(part)
+                        and finite(part.Position) and finite(part.Size) and finite(part.AssemblyLinearVelocity)
+                        and (part.Position - targetRoot.Position).Magnitude <= 22
+                        and math.min(part.Size.X,part.Size.Y,part.Size.Z) > 0 then
+                        local score = priorities[part.Name] or 0
+                        if score > bestScore then contact, bestScore = part, score end
+                    end
+                end
+                record.ContactPart = contact
+            end
+            if not contact then
+                fling.ContactPartName = "none (no collidable body)"
+                recover(record, now, "Waiting: target has no collidable body | Stop remains available", 0.2, "NoContact")
+                return
+            end
+            if not finite(contact.Position) or not finite(contact.AssemblyLinearVelocity) then
+                recover(record, now, "Waiting: target body physics unavailable | Stop remains available", 0.2, "NoContact")
+                return
+            end
+            local width = math.min(contact.Size.X, record.Root.Size.X)
+            local offset = math.clamp(width * 0.4, 0.05, 1.2)
+            local center = contact.CFrame:PointToWorldSpace(Vector3.new(offset,0,0))
             local dt = math.clamp(now - (record.LastContactAt or now), 0, 1/30)
-            local lead = targetRoot.AssemblyLinearVelocity.Magnitude <= 120 and targetRoot.AssemblyLinearVelocity * dt or Vector3.zero
-            if lead.Magnitude > 1.5 then lead = lead.Unit * 1.5 end
-            position = targetRoot.Position + Vector3.new(0.8,0,0) + lead
+            local velocity = contact.AssemblyLinearVelocity
+            local lead = velocity.Magnitude <= 120 and velocity * dt or Vector3.zero
+            local maxLead = math.clamp(width * 0.75, 0.05, 1.5)
+            if lead.Magnitude > maxLead then lead = lead.Unit * maxLead end
+            position = center + lead
+            if not finite(position) or position.Y < C.Workspace.FallenPartsDestroyHeight + 80
+                or (position - targetRoot.Position).Magnitude > 24 then
+                recover(record, now, "Waiting: target body is outside safe contact reach | Stop remains available", 0.2, "NoContact")
+                return
+            end
+            fling.ContactPartName = contact.Name
+            fling.ContactPath = "IY noclip / body-size and pose contact"
             record.LastContactAt = now
             for _, item in ipairs(record.BodyProperties or {}) do
                 if item.Part.Parent then
@@ -3876,7 +3937,7 @@ local installPlayerFling = function(C)
         if targetRoot.Position.Y < C.Workspace.FallenPartsDestroyHeight + 80 then
             describe("Target is near the void; contact cannot start safely"); return false, fling.Status
         end
-        if root.Anchored or targetRoot.Anchored or hum.Sit or hum.PlatformStand then
+        if anchored(root) or anchored(targetRoot) or hum.Sit or hum.PlatformStand then
             describe("Fling unavailable while a character is anchored, seated, or disabled"); return false, fling.Status
         end
         if fling.Mode == "Spin" then
@@ -3923,6 +3984,7 @@ local installPlayerFling = function(C)
         fling.Active, fling.Target = true, target.UserId
         fling.ContactSteps, fling.TargetDisplacement, fling.MaxTargetSpeed = 0, 0, 0
         fling.ContactPath = "not checked"
+        fling.RootName, fling.ContactPartName = targetRoot.Name, nil
         fling.Attempts += 1
         if C.StopWeaponActions then C.StopWeaponActions() end
         local ok, message = pcall(function()
@@ -3945,7 +4007,11 @@ local installPlayerFling = function(C)
         local chosen, nearest
         for _, p in ipairs(Players:GetPlayers()) do
             local _, _, root = characterParts(p)
-            if p ~= player and root and not (State.IsPlayerExcluded and State.IsPlayerExcluded(p)) and C.IsAlive(p) and C.RoleFor(p) == role then
+            -- The shared MM2 alive check requires the canonical root name.
+            -- A healthy alternate rig can still qualify when round death flags are clear.
+            local living = root and (C.IsAlive(p) or (root ~= p.Character:FindFirstChild("HumanoidRootPart")
+                and C.IsEliminated and not C.IsEliminated(p)))
+            if p ~= player and root and living and not (State.IsPlayerExcluded and State.IsPlayerExcluded(p)) and C.RoleFor(p) == role then
                 local distance = ownRoot and (root.Position - ownRoot.Position).Magnitude or 0
                 if not nearest or distance < nearest then chosen, nearest = p, distance end
             end
@@ -3959,6 +4025,9 @@ local installPlayerFling = function(C)
         local ok, message = pcall(function()
             if not State.Running or player.Character ~= record.Character or not record.Root.Parent
                 or record.Humanoid.Health <= 0 then State.StopFling("Fling stopped: your character changed"); return end
+            if rigRoot(record.Character, record.Humanoid) ~= record.Root then
+                State.StopFling("Fling stopped: your avatar root changed; saved settings restored"); return
+            end
             if (State.Invis and (State.Invis.Busy or State.Invis.Active))
                 or (State.ExperimentalInvis and (State.ExperimentalInvis.Busy or State.ExperimentalInvis.Active)) then
                 State.StopFling("Character mode changed; fling stopped and position restored"); return
@@ -3976,8 +4045,9 @@ local installPlayerFling = function(C)
                 record.TargetDied = true
                 State.StopFling("Target eliminated; returned to saved position"); return
             end
-            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-            if targetRoot and targetRoot:IsA("BasePart") and finite(targetRoot.Position) then
+            local targetRoot = rigRoot(targetChar, targetHum)
+            if targetRoot and finite(targetRoot.Position) then
+                fling.RootName = targetRoot.Name
                 record.LastTargetPosition = targetRoot.Position
                 fling.TargetDisplacement = (targetRoot.Position - record.TargetStart).Magnitude
                 record.ObservedExit = record.ObservedExit or outsideBounds(targetRoot.Position, record.Bounds)
@@ -3999,7 +4069,7 @@ local installPlayerFling = function(C)
             -- Bound pursuit from the target's initial position, not the lobby return point.
             local targetDistance = validTarget and (targetRoot.Position - record.TargetStart).Magnitude or 0
             local targetUnsafe = not validTarget or targetRoot.Position.Y < dangerY or targetDistance > 280
-            if lowHealth or targetUnsafe or record.Root.Anchored or (targetRoot and targetRoot.Anchored) then
+            if lowHealth or targetUnsafe or anchored(record.Root) or (targetRoot and anchored(targetRoot)) then
                 local reason = lowHealth and "LowHealth" or (not validTarget and "Unstreamed"
                     or (targetRoot.Position.Y < dangerY and "Void" or (targetDistance > 280 and "TooFar" or "Anchored")))
                 local message = lowHealth and "Paused: health at or below 25%"
@@ -4379,7 +4449,7 @@ local createMobileUI = function(C)
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
     if State.FlingPlayer then
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
-        playersTab:Paragraph({Title = "Player launch", Desc = "Choose a method and target. Spin sticks to the selected player in 3D until stopped, eliminated, or a recovery check interrupts contact. Exclusions remain active. Contact does not guarantee a server kill."})
+        playersTab:Paragraph({Title = "Player launch", Desc = "Choose a method and target. Spin follows body size and pose in 3D, with R6/R15 and humanoid-root fallbacks. Missing collision bodies show a waiting status. Exclusions remain active. Contact does not guarantee a server kill."})
         if State.SetFlingSpinContact then
             mobile.SpinContactToggle = playersTab:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
                 Desc = "Recorded IY spin and noclip settings. Tracks the selected player while moving or jumping. Stop any separate IY fling first. Changing mode stops the current session.",
