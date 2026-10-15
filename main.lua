@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-QuietGuide"
+State.Build = "Universal-WindUI-2026-10-15-VisualAudit"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -2664,7 +2664,7 @@ local function updateHiddenBoxes(visual, char, color)
                     box.Adornee = part
                     box.AlwaysOnTop = true
                     box.ZIndex = 3
-                    box.Transparency = 0.7
+                    box.Transparency = 0.3
                     box.Parent = visualFolder
                     visual.HiddenBoxes[part] = box
                 end
@@ -2679,15 +2679,15 @@ local function updateESP()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
         local role = roleFor(p)
-        if p ~= player and State.Config.ESP and alive(p) and colors[role] and (not State.Config.CleanVisuals or role ~= "Innocent") then
+        if p ~= player and State.Config.ESP and alive(p) and colors[role] then
             local char = p.Character
             local visual = State.Visuals[p]
-            if visual and visual.Character ~= char then removeVisual(p); visual = nil end
+            if visual and (visual.Character ~= char or not visual.Highlight.Parent or not visual.Label.Parent or not visual.Text.Parent) then removeVisual(p); visual = nil end
             if not visual then
                 local highlight = Instance.new("Highlight")
                 highlight.Adornee = char
                 highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.FillTransparency = 0.65
+                highlight.FillTransparency = 0.3
                 highlight.OutlineTransparency = 0
                 highlight.Parent = visualFolder
                 local label = Instance.new("BillboardGui")
@@ -2707,9 +2707,13 @@ local function updateESP()
                 visual = {Character = char, Highlight = highlight, Label = label, Text = text, HiddenBoxes = {}}
                 State.Visuals[p] = visual
             end
-            visual.Highlight.FillTransparency = State.Config.CleanVisuals and .92 or .65
+            visual.Highlight.Adornee = char
+            visual.Highlight.Enabled = true
+            visual.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            visual.Highlight.FillTransparency = 0.3
             visual.Highlight.FillColor = colors[role]
             visual.Highlight.OutlineColor = colors[role]
+            visual.Label.Adornee = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
             visual.Text.TextColor3 = colors[role]
             updateHiddenBoxes(visual, char, colors[role])
             local targetRoot = char:FindFirstChild("HumanoidRootPart")
@@ -2719,7 +2723,7 @@ local function updateESP()
                 .. (distance and (" | " .. math.floor(distance + 0.5) .. " studs") or "")
             if State.Config.CleanVisuals then visual.Text.Text=role; visual.Label.Size=UDim2.fromOffset(150,24)
             else visual.Label.Size=UDim2.fromOffset(280,44) end
-            visual.Label.Enabled=not (State.Config.TacticalGuide and State.Guidance and State.Guidance.TargetVisible and State.Guidance.TargetId==p.UserId)
+            visual.Label.Enabled=true
         else removeVisual(p) end
     end
 end
@@ -4687,10 +4691,19 @@ local createTacticalPolicy = function()
     function policy.RouteAllowed(points,threat,start)
         if #points==0 then return false end
         local minimum=threat and math.min(12,(start-threat).Magnitude)-1 or nil
+        local previous=start
         for _,wp in ipairs(points) do
             local p=wp.Position
             if not p or p.X~=p.X or p.Y~=p.Y or p.Z~=p.Z or math.abs(p.X)==math.huge or math.abs(p.Y)==math.huge or math.abs(p.Z)==math.huge then return false end
             if minimum and (p-threat).Magnitude<minimum then return false end
+            if minimum and minimum>0 and previous then
+                local dx,dy,dz=p.X-previous.X,p.Y-previous.Y,p.Z-previous.Z
+                local length2=dx*dx+dy*dy+dz*dz
+                local t=length2>0 and math.clamp(((threat.X-previous.X)*dx+(threat.Y-previous.Y)*dy+(threat.Z-previous.Z)*dz)/length2,0,1) or 0
+                local x,y,z=previous.X+t*dx-threat.X,previous.Y+t*dy-threat.Y,previous.Z+t*dz-threat.Z
+                if x*x+y*y+z*z<minimum*minimum then return false end
+            end
+            previous=p
         end
         return true
     end
@@ -4740,18 +4753,21 @@ local installTacticalGuide = function(C)
     end
     local function drawTarget(decision)
         local target=decision.Target
-        guide.TargetId,guide.TargetVisible=target and target.Id or nil,target and target.Visible or false
+        guide.TargetId,guide.TargetVisible=nil,false
         if not target or not target.Character or not target.Character.Parent then hide(); return end
         if not actorLabel then
             actorLabel,actorText=billboard(guiFolder,"TacticalTarget")
+            actorLabel.StudsOffset=Vector3.new(0,4.2,0)
             actorHighlight=Instance.new("Highlight"); actorHighlight.DepthMode=Enum.HighlightDepthMode.Occluded
-            actorHighlight.FillTransparency=1; actorHighlight.OutlineColor=Color3.fromRGB(245,218,126); actorHighlight.Parent=worldFolder
+            actorHighlight.FillTransparency=.3; actorHighlight.FillColor=Color3.fromRGB(245,218,126)
+            actorHighlight.OutlineColor=Color3.fromRGB(245,218,126); actorHighlight.Parent=worldFolder
         end
         actorLabel.Adornee=target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
-        actorLabel.Enabled=target.Visible; actorText.Text=decision.Label or "OBSERVE"
+        actorLabel.Enabled=target.Visible and actorLabel.Adornee~=nil; actorText.Text=decision.Label or "OBSERVE"
+        guide.TargetId,guide.TargetVisible=target.Id,actorLabel.Enabled
         actorHighlight.Adornee=target.Character
-        local regularESP=State.Config.ESP and (target.Role=="Murderer" or target.Role=="Sheriff" or (target.Role=="Innocent" and not State.Config.CleanVisuals))
-        actorHighlight.Enabled=target.Visible and not regularESP
+        local regularESP=State.Config.ESP and (target.Role=="Murderer" or target.Role=="Sheriff" or target.Role=="Innocent")
+        actorHighlight.Enabled=guide.TargetVisible and not regularESP
     end
     local function destinations(position)
         local best,bestDistance
@@ -4811,6 +4827,11 @@ local installTacticalGuide = function(C)
     local function plan(decision,root,hum)
         if not decision.Goal then if lastGoal or #route>0 then clearRoute() end; guide.PathStatus="No route needed"; return end
         if lastGoal and (decision.Goal-lastGoal).Magnitude>8 then clearRoute() end
+        if decision.Threat and route[index] then
+            local remaining={}
+            for i=index,#route do table.insert(remaining,route[i]) end
+            if not C.Policy.RouteAllowed(remaining,decision.Threat,root.Position) then clearRoute(); nextPath=0 end
+        end
         if busy or clock()<nextPath then return end
         nextPath=clock()+2; busy=true; lastGoal=decision.Goal
         local mine,char,goal,start=token,player.Character,decision.Goal,root.Position
@@ -4899,16 +4920,16 @@ local installCombatHUD = function(C)
         end
         local feedback=State.LastGunFeedback
         local result,tone="No gun feedback yet","neutral"
-        if feedback and feedback.TargetHit==true then result,tone="Last: server ray hit target","confirmed"
+        if State.PendingGun and #State.PendingGun>0 then result,tone="Awaiting server shot reply","waiting"
+        elseif feedback and feedback.TargetHit==true then result,tone="Last: server ray hit target","confirmed"
         elseif feedback and feedback.TargetHit==false then result,tone="Last: server ray missed target","warning"
         elseif feedback and feedback.RoundWon then result,tone="Last: server reported round victory","confirmed"
-        elseif State.PendingGun and #State.PendingGun>0 then result,tone="Awaiting server shot reply","waiting"
         elseif feedback and feedback.Message then result=feedback.Message end
         local status=State.AimStatus or "Ready"
         if State.Fling and State.Fling.Active then status=State.Fling.Status
         elseif State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0) then status=State.KnifeFeedback.Message end
         local text=table.concat({tostring(role).." | "..weapon,targetText,result,status},"\n")
-        local instruction=State.Config.TacticalGuide and State.Guidance and State.Guidance.Instruction
+        local instruction=living and State.Config.TacticalGuide and State.Guidance and State.Guidance.Instruction
         if (State.Fling and State.Fling.Active) or (State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0)) then instruction=status end
         local compact=table.concat({tostring(role).." | "..weapon,instruction or (target and "Target @"..target.Name or status)},"\n")
         return {Text=text,Role=role,Weapon=weapon,Target=target and target.Name or nil,Distance=distance,Height=height,
@@ -5051,12 +5072,12 @@ local createMobileUI = function(C)
     if State.EmergencyStop then
         combat:Button({Title="Emergency stop / return",Desc="PC: End. Mobile: STOP button. Cancels attacks and fling; disables auto pickup and dodge. Manual aim stays available.",Callback=mobile.TriggerEmergencyStop})
     end
-    option(visuals, "Role ESP", "ESP", "Sheriff: blue / Innocent: green / Murderer: red")
+    option(visuals, "Role ESP", "ESP", "Full-body fill: sheriff blue, innocent green, murderer red. Works independently of your role.")
     option(visuals, "Dropped gun ESP", "GunESP")
     option(visuals, "Gun aim marker", "AimMarker")
     if State.GetCombatHUDData then option(visuals,"Combat HUD","CombatHUD","Role, weapon state, target distance/height and actual gun feedback. Drag the panel header to move it.") end
     if State.GetCombatHUDData then option(visuals,"Compact HUD","CompactHUD","Two lines by default. Turn OFF for detailed shot feedback.") end
-    option(visuals,"Clean role visuals","CleanVisuals","Hide ordinary innocent labels and use lighter role outlines.")
+    option(visuals,"Clean role visuals","CleanVisuals","Shorten role labels. All role colors and full-body fills remain visible.")
     if State.SetTacticalGuide then
         toggles.TacticalGuide=combat:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="One suggested player and next waypoint. Fewer nearby players does not guarantee safety. Move and attack manually.",
             Callback=function(enabled) if syncing then return end; suppressInput(); State.SetTacticalGuide(enabled) end})
@@ -5360,7 +5381,7 @@ local createMobileUI = function(C)
         end)
     end
     local function action(callback)
-        if mobile.Mode ~= "Mobile" or mobile.MenuOpen or UIS:GetFocusedTextBox() then return end
+        if mobile.Destroyed or not State.Running or mobile.Mode ~= "Mobile" or mobile.MenuOpen or UIS:GetFocusedTextBox() then return end
         suppressInput()
         State.MobileActionInProgress = true
         local ok, message = pcall(callback)
@@ -5479,14 +5500,14 @@ local createMobileUI = function(C)
             combatHUD.Visible=showHUD==true
             if showHUD then
                 local ok,data=pcall(State.GetCombatHUDData)
-                if ok and type(data)=="table" then
+                if ok and type(data)=="table" and type(data.Text)=="string" then
                     mobile.LastCombatHUDData,mobile.LastCombatHUDError=data,nil
-                    combatHUDText.Text=State.Config.CompactHUD~=false and (data.CompactText or data.Text) or data.Text
+                    combatHUDText.Text=State.Config.CompactHUD~=false and type(data.CompactText)=="string" and data.CompactText or data.Text
                     combatHUDText.TextColor3=data.Tone=="confirmed" and Color3.fromRGB(110,232,158)
                         or (data.Tone=="warning" and Color3.fromRGB(255,151,136)
                         or (data.Tone=="waiting" and Color3.fromRGB(255,221,136) or Color3.fromRGB(230,238,250)))
                 else
-                    mobile.LastCombatHUDError=tostring(data); combatHUDText.Text="Combat status unavailable"
+                    mobile.LastCombatHUDError=ok and "Invalid HUD snapshot" or tostring(data); combatHUDText.Text="Combat status unavailable"
                 end
             end
         end
