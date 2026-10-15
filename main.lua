@@ -86,7 +86,7 @@ local State = {
     Invis = {Mode = "NativeGhost", Active = false, Busy = false, ActiveUntil = 0, NextUse = 0,
         Status = "Ghost OFF (requires owned/equipped perk)"},
     RepairRequired = repairRequired,
-    Config = {ExcludedPlayers = {}, FlingDownward = false, FlingSpinContact = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ExcludedPlayers = {}, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-AvatarContact"
+State.Build = "Universal-WindUI-2026-10-15-StableAimQuickStop"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -715,6 +715,50 @@ do
     end
 end
 
+do
+-- Observed movement can widen prediction limits; reported speed alone cannot.
+local installAimMotionPolicy = function(State)
+    local function valid(v)
+        return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e6 and math.abs(v.Y)<1e6 and math.abs(v.Z)<1e6
+    end
+    function State.IsAimSamplePlausible(velocity, delta, dt)
+        return valid(velocity) and valid(delta) and dt>=.01 and dt<=.15
+            and velocity.Magnitude<=900 and delta.Magnitude<=900*math.min(dt,.1)+6
+    end
+    function State.ResolveObservedAimMotion(record, selected, cap, airborne, now, gravity)
+        local result={Velocity=selected,Cap=cap,ControlledVertical=false,Fast=false}
+        if not record or not record.Time or now-record.Time>.15 or now<record.Time
+            or not valid(record.Current) or not valid(record.Previous) then return result end
+        local current,previous=record.Current,record.Previous
+        if current.Magnitude>900 or previous.Magnitude>900 then return result end
+        local a,b=Vector3.new(current.X,0,current.Z),Vector3.new(previous.X,0,previous.Z)
+        local speed,oldSpeed=a.Magnitude,b.Magnitude
+        if speed>cap and oldSpeed>cap and speed<oldSpeed*1.6 and oldSpeed<speed*1.6
+            and a:Dot(b)>speed*oldSpeed*.8 then
+            result.Velocity=Vector3.new(current.X,selected.Y,current.Z)
+            result.Cap=math.max(cap,math.min(900,speed*1.15)); result.Fast=true
+        end
+        local older=record.Older
+        local dt,priorDt=record.Interval,record.PreviousInterval
+        if airborne and valid(older) and dt and priorDt and dt>=.01 and dt<=.15 and priorDt>=.01 and priorDt<=.15
+            and not (record.VerticalResetUntil and now<record.VerticalResetUntil) then
+            local tolerance=math.max(8,gravity*.2)
+            local stable=math.abs((current.Y-previous.Y)/dt)<tolerance
+                and math.abs((previous.Y-older.Y)/priorDt)<tolerance
+            local reported=record.Reported
+            local hovering=math.abs(current.Y)<2 and valid(reported) and math.abs(reported.Y)<8
+            if stable and (math.abs(current.Y)>6 or hovering) and math.abs(current.Y)<=300 then
+                result.Velocity=Vector3.new(result.Velocity.X,current.Y,result.Velocity.Z)
+                result.ControlledVertical=true
+            end
+        end
+        return result
+    end
+end
+
+installAimMotionPolicy(State)
+end
 local function sampleMotion(now)
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
@@ -734,12 +778,12 @@ local function sampleMotion(now)
                 end
                 local dt = now - record.Time
                 if dt >= 0.02 then
+                    record.Older = record.Previous
                     record.Previous = record.Current
                     record.Current = dt <= 0.15 and (root.Position - record.Position) / dt or nil
                     local speedCap = math.max(hum and hum.WalkSpeed or 16, 16) * 1.5
-                    local networkJump = record.Current and (Vector3.new(record.Current.X, 0, record.Current.Z).Magnitude > speedCap * 2.5
-                        or math.abs(record.Current.Y) > 160)
-                    if networkJump then record.Current, record.Previous = nil, nil end
+                    local networkJump = record.Current and not State.IsAimSamplePlausible(record.Current,root.Position-record.Position,dt)
+                    if networkJump then record.Current, record.Previous, record.Older = nil, nil, nil end
                     record.PreviousInterval = record.Interval
                     record.Interval = dt <= 0.15 and dt or nil
                     record.PreviousReported = record.Reported
@@ -747,7 +791,7 @@ local function sampleMotion(now)
                     record.Position, record.Time = root.Position, now
                     if networkJump or dt > 0.15 then record.History = {} end
                     record.History = record.History or {}
-                    table.insert(record.History, {Time = now, Velocity = record.Reported, Position = root.Position})
+                    table.insert(record.History, {Time = now, Velocity = record.Current or record.Reported, Position = root.Position})
                     while #record.History > 8 do table.remove(record.History, 1) end
                 end
             end
@@ -793,6 +837,12 @@ local function motionPredictor(part, root, samplePosition, wallAware, historyOve
             Transition = record.HumanoidState ~= state or (record.VerticalResetUntil and os.clock() < record.VerticalResetUntil),
             Interval = record.Interval, PreviousInterval = record.PreviousInterval, Gravity = workspace.Gravity})
     local gravity = workspace.Gravity
+    local observed = State.ResolveObservedAimMotion(record,velocity,cap,airborne,os.clock(),gravity)
+    velocity,cap = observed.Velocity,observed.Cap
+    if observed.Fast then source ..= "+VerifiedFast" end
+    if observed.ControlledVertical then source ..= "+ControlledVertical" end
+    State.LastAimMotionPolicy = {Fast=observed.Fast,ControlledVertical=observed.ControlledVertical,Cap=cap}
+    local ballistic = airborne and not observed.ControlledVertical
     local model = wallAware and State.FitHorizontalMotion(velocity, record and record.History, os.clock(), cap)
     if model then
         source ..= "+" .. model.Kind
@@ -812,7 +862,7 @@ local function motionPredictor(part, root, samplePosition, wallAware, historyOve
         standingHeight += leg and leg.Size.Y or 2
     end
     return function(dt)
-        local point = futurePosition(partPosition, velocity, airborne, gravity, nil, dt)
+        local point = futurePosition(partPosition, velocity, ballistic, gravity, nil, dt)
         if model then
             local horizontal = State.HorizontalMotionDelta(model, dt, cap)
             point = Vector3.new(partPosition.X + horizontal.X, point.Y, partPosition.Z + horizontal.Z)
@@ -881,6 +931,38 @@ function State.TestMotionIntegration()
     if not ok then result.OK, result.Error = false, tostring(message) end
     return result
 end
+function State.TestObservedAimIntegration()
+    local ownRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not ownRoot then return {OK=false,Error="Character unavailable"} end
+    local folder=Instance.new("Folder"); folder.Name="MM2ObservedAimProbe"; folder.Parent=workspace
+    local result={LocalDummiesOnly=true}
+    local ok,message=pcall(function()
+        local char=Instance.new("Model"); char.Parent=folder
+        local root=Instance.new("Part"); root.Name="HumanoidRootPart"; root.Anchored=true
+        root.Size=Vector3.new(2,2,1); root.Position=ownRoot.Position+Vector3.new(180,1200,0); root.Parent=char
+        local hum=Instance.new("Humanoid"); hum.RequiresNeck=false; hum.HipHeight=2; hum.Parent=char
+        local record={Root=root,Time=os.clock(),Current=Vector3.new(300,40,0),Previous=Vector3.new(300,40,0),
+            Older=Vector3.new(300,40,0),Interval=.02,PreviousInterval=.02,Reported=Vector3.zero}
+        local at,_,source=motionPredictor(root,root,root.Position,true,record)
+        local point=at(.1)
+        result.FastFlightError=(point-(root.Position+Vector3.new(30,4,0))).Magnitude
+        result.VerifiedFastSource=source:find("VerifiedFast",1,true)~=nil
+        result.ControlledFlight=State.LastAimMotionPolicy.ControlledVertical
+        root.AssemblyLinearVelocity=Vector3.new(0,42.152,0)
+        record.Current,record.Previous,record.Older=Vector3.new(0,42.152,0),Vector3.new(0,46.076,0),Vector3.new(0,50,0)
+        record.Reported=root.AssemblyLinearVelocity
+        local ballistic=motionPredictor(root,root,root.Position,true,record)
+        local jump=ballistic(.1)
+        result.JumpGravityError=math.abs(jump.Y-(root.Position.Y+4.2152-.5*workspace.Gravity*.01))
+        result.JumpIsBallistic=not State.LastAimMotionPolicy.ControlledVertical
+        result.OK=result.FastFlightError<.01 and result.VerifiedFastSource and result.ControlledFlight
+            and result.JumpGravityError<.01 and result.JumpIsBallistic
+    end)
+    folder:Destroy()
+    if not ok then result.OK,result.Error=false,tostring(message) end
+    return result
+end
+
 local function predict(part, root, origin, kind, item, samplePosition, gunProfile)
     local positionAt, airborne, source = motionPredictor(part, root, samplePosition, kind == "Gun")
     if kind == "Gun" then
@@ -1207,6 +1289,34 @@ function State.TestCampChaseAim()
     if not ok then result.OK, result.Error = false, tostring(message) end
     return result
 end
+do
+-- A small score preference for a still-valid solution; no camera or part writes.
+local installTargetContinuity = function(C)
+    local State, player = C.State, C.Player
+    State.Config = State.Config or {}
+    if State.Config.TargetContinuity == nil then State.Config.TargetContinuity = true end
+    local memory = {}
+    function State.ClearTargetContinuity() table.clear(memory) end
+    function State.SetTargetContinuity(enabled)
+        State.Config.TargetContinuity = enabled == true
+        State.ClearTargetContinuity()
+    end
+    function State.TargetContinuityBias(kind, other, char, preferred, strict, now)
+        if not State.Config.TargetContinuity or preferred or strict then return 0 end
+        local previous = memory[kind]
+        if previous and previous.Player == other and previous.Character == char
+            and previous.OwnCharacter == player.Character and now >= previous.At and now-previous.At <= .35 then return 20 end
+        return 0
+    end
+    function State.RememberAimTarget(kind, solution, preferred, strict, now)
+        if preferred or strict then return end
+        if not State.Config.TargetContinuity or not solution then memory[kind]=nil; return end
+        memory[kind] = {Player=solution.Player,Character=solution.Player.Character,OwnCharacter=player.Character,At=now}
+    end
+end
+
+installTargetContinuity({State=State,Player=player})
+end
 local function chooseTarget(kind, origin, item, preferred, strict)
     if not origin then return nil end
     local started = os.clock()
@@ -1221,8 +1331,9 @@ local function chooseTarget(kind, origin, item, preferred, strict)
             local root = char:FindFirstChild("HumanoidRootPart")
             local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil, strict)
             if lower then
+                local bias = State.TargetContinuityBias(kind,other,char,preferred,strict,started)
                 table.insert(candidates, {Player = other, Character = char, Root = root, Order = order,
-                    Lower = lower - (other == preferred and 1000000 or 0), Body = body})
+                    Lower = lower - (other == preferred and 1000000 or 0) - bias, Body = body, Bias = bias})
             end
         end
     end
@@ -1247,6 +1358,7 @@ local function chooseTarget(kind, origin, item, preferred, strict)
                 local score = solution.CursorScore or (Vector2.new(screen.X, screen.Y) - cursor).Magnitude
                 solution.CursorDistance = score
                 if other == preferred then score -= 1000000 end
+                score -= candidate.Bias
                 if not bestScore or score < bestScore or (score == bestScore and candidate.Order < bestOrder) then
                     bestScore = score
                     bestOrder = candidate.Order
@@ -1257,6 +1369,7 @@ local function chooseTarget(kind, origin, item, preferred, strict)
                 end
             end
     end
+    State.RememberAimTarget(kind,best,preferred,strict,started)
     State.Performance.LastSelectionMs = (os.clock() - started) * 1000
     return best
 end
@@ -3477,13 +3590,15 @@ local installPlayerFling = function(C)
     local clock = C.Clock or os.clock
     local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.18,
         Attempts = 0, Requests = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450,
+        AdaptivePursuit = not State.Config or State.Config.FlingAdaptivePursuit ~= false,
         Mode = State.Config and State.Config.FlingSpinContact and "Spin"
             or (State.Config and State.Config.FlingDownward and "Downward" or "Outward")}
     if State.Config then
         State.Config.FlingSpinContact, State.Config.FlingDownward = fling.Mode == "Spin", fling.Mode == "Downward"
+        State.Config.FlingAdaptivePursuit = fling.AdaptivePursuit
     end
     State.Fling = fling
-    local saved
+    local saved, returning
     local function put(object, property, value)
         pcall(function() object[property] = value end)
     end
@@ -3507,6 +3622,10 @@ local installPlayerFling = function(C)
             "Contact path: " .. tostring(fling.ContactPath or "not checked"),
             "Tracked root: " .. tostring(fling.RootName or "none"),
             "Contact body: " .. tostring(fling.ContactPartName or "none"),
+            "Fast/flying tracking: " .. tostring(fling.AdaptivePursuit),
+            "Motion source: " .. tostring(fling.MotionSource or "none"),
+            "Return: " .. tostring(fling.ReturnStatus or "not captured"),
+            ("Measured movement speed: %.2f studs/s"):format(fling.MeasuredSpeed or 0),
             ("Current contact gap: %.2f studs"):format(fling.ContactGap or 0),
             "Session bursts: " .. tostring(saved and saved.Bursts or last.Bursts or 0),
             ("Observed displacement: %.2f studs"):format(fling.TargetDisplacement or last.Displacement or 0),
@@ -3603,6 +3722,50 @@ local installPlayerFling = function(C)
         table.insert(record.BodyProperties, {Part=part, Massless=part.Massless,
             CanCollide=part.CanCollide, PhysicalProperties=part.CustomPhysicalProperties})
     end
+    local function returnFrame(char, hum, root, frame)
+        if not C.Workspace.Raycast or not C.Workspace.GetPartBoundsInBox then return frame, nil, "Saved start (floor query unavailable)" end
+        local excluded = {}
+        for _, p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(excluded,p.Character) end end
+        local ray, overlap = RaycastParams.new(), OverlapParams.new()
+        ray.FilterType, overlap.FilterType = Enum.RaycastFilterType.Exclude, Enum.RaycastFilterType.Exclude
+        ray.FilterDescendantsInstances, overlap.FilterDescendantsInstances = excluded, excluded
+        ray.RespectCanCollide, ray.IgnoreWater, overlap.RespectCanCollide, overlap.MaxParts = true, true, true, 30
+        local height = (hum.HipHeight or 2) + root.Size.Y / 2 + 0.05
+        if hum.RigType == Enum.HumanoidRigType.R6 then
+            local leg = char:FindFirstChild("Left Leg"); height += leg and leg.Size.Y or 2
+        end
+        local size = Vector3.new(math.max(.2,root.Size.X*.9),math.max(.2,height*2-.25),math.max(.2,root.Size.Z*.9))
+        for _, offset in ipairs({Vector3.zero,Vector3.new(2,0,0),Vector3.new(-2,0,0),Vector3.new(0,0,2),Vector3.new(0,0,-2),
+            Vector3.new(4,0,0),Vector3.new(-4,0,0),Vector3.new(0,0,4),Vector3.new(0,0,-4)}) do
+            local point = frame.Position + offset
+            local hit = C.Workspace:Raycast(point+Vector3.new(0,.5,0),Vector3.new(0,-512,0),ray)
+            if hit and hit.Normal.Y>.6 and hit.Position.Y>C.Workspace.FallenPartsDestroyHeight+30 then
+                local y = hit.Position.Y + height
+                if math.abs(point.Y-y)<.7 then y=point.Y end
+                local destination = CFrame.new(Vector3.new(point.X,y,point.Z)) * frame.Rotation
+                local clear = #C.Workspace:GetPartBoundsInBox(destination,size,overlap)==0
+                if clear then return destination, hit.Instance, offset.Magnitude==0 and "Starting spot grounded" or "Clear landing beside starting spot" end
+            end
+        end
+        return nil, nil, "No clear floor beneath starting spot"
+    end
+    local function captureReturn(char, hum, root)
+        local frame, support, status = returnFrame(char,hum,root,root.CFrame)
+        if not frame then return nil, status end
+        local anchor = {Frame=frame,Status=status,Grounded=support~=nil}
+        if support and support:IsA("BasePart") and not support:IsA("Terrain") then
+            anchor.Support, anchor.LocalFrame = support, support.CFrame:ToObjectSpace(frame)
+        end
+        return anchor
+    end
+    local function moveBack(record, frame)
+        if record.Character.PivotTo and record.Character.GetPivot and record.RootToPivot then
+            record.Character:PivotTo(frame * record.RootToPivot)
+        else
+            record.Root.CFrame = frame
+        end
+        record.Root.AssemblyLinearVelocity, record.Root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+    end
     local function restore(record, final)
         if record then
             clearSpinner(record)
@@ -3615,28 +3778,42 @@ local installPlayerFling = function(C)
                 end
             end
             -- Never move a newly spawned character to an older character's return point.
-            local same = player.Character == record.Character
+            local same = player.Character == record.Character and rigRoot(record.Character,record.Humanoid)==record.Root
             if record.Root.Parent then
                 put(record.Root, "AssemblyAngularVelocity", Vector3.zero)
                 put(record.Root, "AssemblyLinearVelocity", Vector3.zero)
-                if same and record.Humanoid.Health > 0 then put(record.Root, "CFrame", record.CFrame) end
+                if same and record.Humanoid.Health > 0 then
+                    local anchor = record.ReturnAnchor
+                    local frame = anchor and anchor.Frame or record.CFrame
+                    if anchor and anchor.Support and anchor.Support.Parent then frame=anchor.Support.CFrame*anchor.LocalFrame end
+                    local ok, checked, _, status = pcall(returnFrame,record.Character,record.Humanoid,record.Root,frame)
+                    frame = ok and checked or (anchor and anchor.Frame or record.CFrame)
+                    local moved, message = pcall(moveBack,record,frame)
+                    fling.ReturnStatus = moved and (ok and checked and status or "Saved start used; landing could not be rechecked") or ("Return failed: "..tostring(message))
+                    if final and moved then returning={Record=record,Frame=frame,Steps=0,Until=clock()+.2} end
+                end
                 put(record.Root, "CanCollide", record.CanCollide)
                 put(record.Root, "CollisionGroup", record.CollisionGroup)
                 put(record.Root, "CustomPhysicalProperties", record.PhysicalProperties)
                 if same and record.Humanoid.Health > 0 then
-                    put(record.Root, "AssemblyLinearVelocity", final and record.LinearVelocity or Vector3.zero)
-                    put(record.Root, "AssemblyAngularVelocity", final and record.AngularVelocity or Vector3.zero)
+                    put(record.Root, "AssemblyLinearVelocity", Vector3.zero)
+                    put(record.Root, "AssemblyAngularVelocity", Vector3.zero)
                 end
             end
             if record.Humanoid.Parent then
                 put(record.Humanoid, "AutoRotate", record.AutoRotate)
                 put(record.Humanoid, "PlatformStand", record.PlatformStand)
                 if same and record.Humanoid.Health > 0 then
-                    pcall(function() record.Humanoid:ChangeState(record.HumanoidState) end)
+                    if final then put(record.Humanoid,"Jump",false) end
+                    pcall(function()
+                        record.Humanoid:ChangeState(final and record.ReturnAnchor and record.ReturnAnchor.Grounded
+                            and Enum.HumanoidStateType.GettingUp or record.HumanoidState)
+                    end)
                 end
             end
         end
     end
+    function State.CancelFlingReturn() returning=nil end
     function State.StopFling(message)
         local record = saved
         saved = nil
@@ -3654,7 +3831,9 @@ local installPlayerFling = function(C)
                 TargetDied = record.TargetDied == true}
             restore(record, true)
         end
-        describe(message or (record and "Fling stopped; position restored" or "Fling idle"))
+        if record and fling.ReturnStatus and fling.ReturnStatus:find("Return failed:",1,true) then
+            describe("Fling stopped | "..fling.ReturnStatus)
+        else describe(message or (record and "Fling stopped; returned to starting spot" or "Fling idle")) end
     end
     function State.SetFlingMode(mode)
         if mode ~= "Spin" and mode ~= "Downward" and mode ~= "Outward" then return false, "Unknown fling mode" end
@@ -3671,6 +3850,49 @@ local installPlayerFling = function(C)
     end
     function State.SetFlingSpinContact(enabled)
         return State.SetFlingMode(enabled and "Spin" or (fling.Mode == "Spin" and "Outward" or fling.Mode))
+    end
+    function State.SetFlingAdaptivePursuit(enabled)
+        enabled = enabled == true
+        if fling.AdaptivePursuit == enabled then return true, fling.Status end
+        if fling.Active then State.StopFling("Tracking changed; saved position and settings restored") end
+        State.Config = State.Config or {}
+        fling.AdaptivePursuit, State.Config.FlingAdaptivePursuit = enabled, enabled
+        describe("Fast/flying tracking " .. (enabled and "ON" or "OFF") .. "; choose a target to start")
+        return true, fling.Status
+    end
+    local function adaptive(record)
+        return record.Mode == "Spin" and fling.AdaptivePursuit
+    end
+    local function observeMotion(record, root, now)
+        local motion = record.Motion
+        if not motion then
+            record.Motion = {Root=root,Position=root.Position,At=now,Velocity=Vector3.zero,Samples=0}
+            fling.MotionSource, fling.MeasuredSpeed = "waiting for position samples", 0
+            return false
+        end
+        local dt, delta = now-motion.At, root.Position-motion.Position
+        if dt <= 1/240 then return motion.Until ~= nil end
+        motion.Position, motion.At = root.Position, now
+        local changedRoot = motion.Root ~= root
+        motion.Root = root
+        local velocity = delta / dt
+        local speed = velocity.Magnitude
+        if changedRoot or dt > 0.25 or not finite(velocity)
+            or delta.Magnitude > 900 * math.min(dt,0.1) + 6 or (speed > 900 and delta.Magnitude > 6) then
+            motion.Velocity, motion.Samples, motion.Until = Vector3.zero, 0, now + 0.35
+            motion.Reason = changedRoot and "root replaced" or (dt > 0.25 and "position samples interrupted" or "abrupt position change")
+            fling.MotionSource = "holding: " .. motion.Reason
+            fling.MeasuredSpeed = 0
+            return true
+        end
+        -- Position observations take precedence over spoofed or stale velocity properties.
+        if speed > 900 then velocity = velocity.Unit * 900 end
+        motion.Velocity, motion.Samples = velocity, motion.Samples+1
+        fling.MeasuredSpeed = velocity.Magnitude
+        if motion.Until and (now < motion.Until or motion.Samples < 2) then return true end
+        motion.Until, motion.Reason = nil, nil
+        fling.MotionSource = "observed 3D position changes"
+        return false
     end
     local function recover(record, now, message, delay, reason)
         restore(record, false)
@@ -3818,7 +4040,7 @@ local installPlayerFling = function(C)
         local wiggle = math.sin(elapsed * 34) * 0.22
         local position = targetRoot.Position - direction * 1.15 + side * wiggle + Vector3.new(0, 0.1, 0)
         if record.Mode == "Downward" then position = targetRoot.Position + record.ContactOffset end
-        local inherited = targetRoot.AssemblyLinearVelocity
+        local inherited = finite(targetRoot.AssemblyLinearVelocity) and targetRoot.AssemblyLinearVelocity or Vector3.zero
         if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
         if record.Mode == "Spin" then
             -- Follow a collidable body part rather than an invisible root offset.
@@ -3833,7 +4055,7 @@ local installPlayerFling = function(C)
                 local priorities = {Torso=40, UpperTorso=40, LowerTorso=30, HumanoidRootPart=20, Head=10}
                 for _, part in ipairs(record.TargetCharacter:GetChildren()) do
                     if part:IsA("BasePart") and part.CanCollide and not anchored(part)
-                        and finite(part.Position) and finite(part.Size) and finite(part.AssemblyLinearVelocity)
+                        and finite(part.Position) and finite(part.Size) and (adaptive(record) or finite(part.AssemblyLinearVelocity))
                         and (part.Position - targetRoot.Position).Magnitude <= 22
                         and math.min(part.Size.X,part.Size.Y,part.Size.Z) > 0 then
                         local score = priorities[part.Name] or 0
@@ -3844,10 +4066,10 @@ local installPlayerFling = function(C)
             end
             if not contact then
                 fling.ContactPartName = "none (no collidable body)"
-                recover(record, now, "Waiting: target has no collidable body | Stop remains available", 0.2, "NoContact")
+                recover(record, now, "Waiting: no collidable target body; physical fling unavailable | Stop remains available", 0.2, "NoContact")
                 return
             end
-            if not finite(contact.Position) or not finite(contact.AssemblyLinearVelocity) then
+            if not finite(contact.Position) or (not adaptive(record) and not finite(contact.AssemblyLinearVelocity)) then
                 recover(record, now, "Waiting: target body physics unavailable | Stop remains available", 0.2, "NoContact")
                 return
             end
@@ -3855,8 +4077,12 @@ local installPlayerFling = function(C)
             local offset = math.clamp(width * 0.4, 0.05, 1.2)
             local center = contact.CFrame:PointToWorldSpace(Vector3.new(offset,0,0))
             local dt = math.clamp(now - (record.LastContactAt or now), 0, 1/30)
-            local velocity = contact.AssemblyLinearVelocity
-            local lead = velocity.Magnitude <= 120 and velocity * dt or Vector3.zero
+            local velocity = finite(contact.AssemblyLinearVelocity) and contact.AssemblyLinearVelocity or Vector3.zero
+            local matched = Vector3.zero
+            if adaptive(record) and record.Motion and record.Motion.Samples > 0 then
+                velocity, matched = record.Motion.Velocity, record.Motion.Velocity
+            elseif velocity.Magnitude > 120 then velocity = Vector3.zero end
+            local lead = velocity * dt
             local maxLead = math.clamp(width * 0.75, 0.05, 1.5)
             if lead.Magnitude > maxLead then lead = lead.Unit * maxLead end
             position = center + lead
@@ -3866,7 +4092,7 @@ local installPlayerFling = function(C)
                 return
             end
             fling.ContactPartName = contact.Name
-            fling.ContactPath = "IY noclip / body-size and pose contact"
+            fling.ContactPath = adaptive(record) and "IY spin / observed 3D pursuit" or "IY noclip / body-size and pose contact"
             record.LastContactAt = now
             for _, item in ipairs(record.BodyProperties or {}) do
                 if item.Part.Parent then
@@ -3878,7 +4104,7 @@ local installPlayerFling = function(C)
             record.Root.CFrame = CFrame.new(position) * record.Root.CFrame.Rotation
             local spin = elapsed % 0.3 < 0.2 and Vector3.new(0,99999,0) or Vector3.zero
             record.Spinner.AngularVelocity = spin
-            record.Root.AssemblyLinearVelocity = Vector3.zero
+            record.Root.AssemblyLinearVelocity = matched
         else
             record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
             record.Root.AssemblyAngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
@@ -3949,10 +4175,13 @@ local installPlayerFling = function(C)
         end
         if not finite(root.Position) or not finite(targetRoot.Position)
             or not finite(root.AssemblyLinearVelocity) or not finite(root.AssemblyAngularVelocity)
-            or not finite(targetRoot.AssemblyLinearVelocity)
+            or (not (fling.Mode == "Spin" and fling.AdaptivePursuit) and not finite(targetRoot.AssemblyLinearVelocity))
             or root.AssemblyLinearVelocity.Magnitude > 80 or root.AssemblyAngularVelocity.Magnitude > 40 then
             describe("Wait until your character is moving normally"); return false, fling.Status
         end
+        local anchorOK, anchor, anchorError = pcall(captureReturn,char,hum,root)
+        if not anchorOK or not anchor then describe("Cannot save a safe return: "..tostring(anchorOK and anchorError or anchor)); return false,fling.Status end
+        returning=nil
         local bounds = mapBounds(targetRoot.Position)
         saved = {Character = char, Humanoid = hum, Root = root, CFrame = root.CFrame,
             LinearVelocity = root.AssemblyLinearVelocity, AngularVelocity = root.AssemblyAngularVelocity,
@@ -3965,6 +4194,10 @@ local installPlayerFling = function(C)
             WatchElimination = not (C.IsEliminated and C.IsEliminated(target)),
             Bounds = bounds, Direction = launchDirection(targetRoot.Position, root.Position, bounds), MaxSpeed = 0,
             LastHealth = hum.Health, LastTargetPosition = targetRoot.Position, Bursts = 0}
+        saved.ReturnAnchor = anchor
+        if char.GetPivot then saved.RootToPivot=root.CFrame:ToObjectSpace(char:GetPivot()) end
+        fling.ReturnStatus=anchor.Status
+        if adaptive(saved) then observeMotion(saved, targetRoot, saved.Started) end
         if saved.Mode == "Spin" then
             saved.BodyProperties, saved.BodySeen = {}, {}
             for _, part in ipairs(char:GetDescendants()) do rememberBodyPart(saved,part) end
@@ -3985,6 +4218,7 @@ local installPlayerFling = function(C)
         fling.ContactSteps, fling.TargetDisplacement, fling.MaxTargetSpeed = 0, 0, 0
         fling.ContactPath = "not checked"
         fling.RootName, fling.ContactPartName = targetRoot.Name, nil
+        if not adaptive(saved) then fling.MotionSource, fling.MeasuredSpeed = "legacy tracking", 0 end
         fling.Attempts += 1
         if C.StopWeaponActions then C.StopWeaponActions() end
         local ok, message = pcall(function()
@@ -4021,7 +4255,21 @@ local installPlayerFling = function(C)
     end
     C.Connect(C.RunService.PreSimulation or C.RunService.Heartbeat, function()
         local record = saved
-        if not record then return end
+        if not record then
+            local pending=returning
+            if pending then
+                local r=pending.Record
+                if player.Character~=r.Character or rigRoot(r.Character,r.Humanoid)~=r.Root or r.Humanoid.Health<=0
+                    or clock()>pending.Until or pending.Steps>=3 or r.Humanoid.Jump
+                    or (r.Humanoid.MoveDirection and r.Humanoid.MoveDirection.Magnitude>.05) then returning=nil
+                else
+                    pending.Steps+=1
+                    local ok=pcall(moveBack,r,pending.Frame)
+                    if not ok then returning=nil end
+                end
+            end
+            return
+        end
         local ok, message = pcall(function()
             if not State.Running or player.Character ~= record.Character or not record.Root.Parent
                 or record.Humanoid.Health <= 0 then State.StopFling("Fling stopped: your character changed"); return end
@@ -4065,19 +4313,25 @@ local installPlayerFling = function(C)
             record.LastHealth = record.Humanoid.Health
             local lowHealth = record.Humanoid.Health <= math.max(1, (record.Humanoid.MaxHealth or 100) * 0.25)
             local validTarget = targetHum and targetRoot and targetRoot:IsA("BasePart")
-                and finite(targetRoot.Position) and finite(targetRoot.AssemblyLinearVelocity)
+                and finite(targetRoot.Position) and (adaptive(record) or finite(targetRoot.AssemblyLinearVelocity))
+            local motionBlocked = validTarget and adaptive(record) and observeMotion(record, targetRoot, now)
+            local pursuitLimit = adaptive(record) and 8192 or 280
             -- Bound pursuit from the target's initial position, not the lobby return point.
             local targetDistance = validTarget and (targetRoot.Position - record.TargetStart).Magnitude or 0
-            local targetUnsafe = not validTarget or targetRoot.Position.Y < dangerY or targetDistance > 280
+            local targetUnsafe = not validTarget or targetRoot.Position.Y < dangerY or targetDistance > pursuitLimit
             if lowHealth or targetUnsafe or anchored(record.Root) or (targetRoot and anchored(targetRoot)) then
                 local reason = lowHealth and "LowHealth" or (not validTarget and "Unstreamed"
-                    or (targetRoot.Position.Y < dangerY and "Void" or (targetDistance > 280 and "TooFar" or "Anchored")))
+                    or (targetRoot.Position.Y < dangerY and "Void" or (targetDistance > pursuitLimit and "TooFar" or "Anchored")))
                 local message = lowHealth and "Paused: health at or below 25%"
                     or (reason == "Unstreamed" and "Paused: target character is not loaded"
                     or (reason == "Void" and "Waiting for target death: target is near the void"
-                    or (reason == "TooFar" and ("Paused: target moved %.0f studs from its start (limit: 280)"):format(targetDistance)
+                    or (reason == "TooFar" and ("Paused: target moved %.0f studs from its start (limit: %d)"):format(targetDistance,pursuitLimit)
                     or "Paused: a character is anchored")))
                 recover(record, now, message .. " | Stop remains available", 0.18, reason)
+                return
+            end
+            if motionBlocked then
+                recover(record, now, "Waiting for stable tracking: " .. (record.Motion.Reason or "position samples") .. " | Stop remains available", 0.18, "Motion")
                 return
             end
             if not finite(record.Root.Position) or not finite(record.Root.AssemblyLinearVelocity)
@@ -4201,6 +4455,7 @@ local installPlayerActions = function(C)
         local targetChar, _, targetRoot = parts(target)
         if not targetChar then return false, status("Target character is not alive or loaded") end
         if State.Fling and State.Fling.Active then State.StopFling("Fling stopped for teleport") end
+        if State.CancelFlingReturn then State.CancelFlingReturn() end
         if C.CancelAttack then C.CancelAttack() end
         if State.Invis and (State.Invis.Active or State.Invis.Busy) then return false, status("Turn Ghost off before teleporting") end
         if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return false, status("Restore your character before teleporting") end
@@ -4311,6 +4566,49 @@ installPlayerActions({State = State, Players = Players, Player = player, RunServ
 end
 
 
+do
+-- Explicit user action only. Each stop is attempted even if another one fails.
+local installEmergencyStop = function(C)
+    local State = C.State
+    function State.EmergencyStop()
+        local errors = {}
+        local hadFling = State.Fling and State.Fling.Active
+        local function run(name, callback)
+            if callback then local ok,message=pcall(callback); if not ok then table.insert(errors,name..": "..tostring(message)) end end
+        end
+        State.Config.AutoPickup = false
+        run("queued attacks",C.CancelWeaponActions)
+        run("auto attack",function() if State.StopAutoAttack then State.StopAutoAttack("Emergency stop") end end)
+        -- End dodge before fling return so a dodge restore cannot replace that return.
+        State.Config.AutoKnifeDodge = false
+        run("dodge",function() if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end end)
+        run("target memory",State.ClearTargetContinuity)
+        run("fling",function() if State.StopFling then State.StopFling() end end)
+        if hadFling and State.Fling.ReturnStatus and State.Fling.ReturnStatus:find("Return failed:",1,true) then
+            table.insert(errors,State.Fling.ReturnStatus)
+        end
+        local message = #errors==0 and "Emergency stop: attacks, fling, pickup and dodge stopped"
+            or "Emergency stop completed with issues: "..table.concat(errors,"; ")
+        State.EmergencyStopReport={OK=#errors==0,Errors=errors,Message=message}
+        State.AimStatus=message
+        return #errors==0,message
+    end
+end
+
+installEmergencyStop({State=State,CancelWeaponActions=function()
+    local failures={}
+    for _, record in pairs(State.WeaponHandlers) do
+        record.ThrowToken += 1
+        record.Charging,record.AutoSelectedThrow,record.StabbingUntil,record.StabTarget=false,nil,0,nil
+        record.LastThrow=-math.huge
+        local ok,message=pcall(stopTracks,record)
+        if not ok then table.insert(failures,tostring(message)) end
+    end
+    if #failures>0 then error(table.concat(failures,"; ")) end
+end})
+end
+
+
 -- Mobile and PC controls around the bundled WindUI library. No camera or cursor writes.
 local createMobileUI = function(C)
     local State, UIS, RunService = C.State, C.UIS, C.RunService
@@ -4320,7 +4618,10 @@ local createMobileUI = function(C)
     local actionService = C.ContextActionService
     local menuAction = "MM2AssistMenu_" .. tostring(State)
     local menuBound = false
+    local emergencyAction = "MM2AssistEmergency_" .. tostring(State)
+    local emergencyBound = false
     mobile.MenuActionName = menuAction
+    mobile.EmergencyActionName = emergencyAction
     local function getMode() return C.GetInputMode and C.GetInputMode() or "Mobile" end
     mobile.Mode = getMode()
     State.InputMode = mobile.Mode
@@ -4330,10 +4631,19 @@ local createMobileUI = function(C)
     local function suppressInput()
         mobile.InputUntil = os.clock() + 0.25
     end
+    function mobile.TriggerEmergencyStop()
+        if mobile.Destroyed or not State.Running or not State.EmergencyStop then return false end
+        suppressInput()
+        local ok,accepted,message=pcall(State.EmergencyStop)
+        mobile.LastEmergencyAction={Accepted=ok and accepted~=false,Message=ok and message or tostring(accepted)}
+        if not ok then State.AimStatus="Emergency stop error: "..tostring(accepted) end
+        return mobile.LastEmergencyAction.Accepted
+    end
     function mobile.Destroy()
         if mobile.Destroyed then return end
         mobile.Destroyed = true
         if menuBound then actionService:UnbindAction(menuAction); menuBound = false end
+        if emergencyBound then actionService:UnbindAction(emergencyAction); emergencyBound = false end
         if window then pcall(function() window:Destroy() end) end
         if overlay then overlay:Destroy() end
         if library then
@@ -4410,6 +4720,7 @@ local createMobileUI = function(C)
                 elseif key == "ExperimentalInvisibility" then State.SetExperimentalInvisibility(enabled)
                 elseif key == "Invisibility" then State.SetInvisibility(enabled)
                 elseif key == "MageAnimations" then State.SetMageAnimations(enabled) end
+                if key == "TargetContinuity" then State.SetTargetContinuity(enabled) end
                 C.SyncWeapons()
                 C.UpdateVisuals()
                 refresh()
@@ -4423,6 +4734,12 @@ local createMobileUI = function(C)
     option(combat, "Magic Bullet / gun aim", "MagicBullet", "Targets the known murderer when you fire. Walls and server rules still apply.")
     option(combat, "Knife throw prediction", "KnifeAim")
     option(combat, "Stab sweep", "StabSweep")
+    if State.SetTargetContinuity then
+        option(combat,"Stable target choice","TargetContinuity","Prefers the current target when choices nearly tie. Releases on cover, death or exclusion. Moving closer to another target switches normally.")
+    end
+    if State.EmergencyStop then
+        combat:Button({Title="Emergency stop / return",Desc="PC: End. Mobile: STOP button. Cancels attacks and fling; disables auto pickup and dodge. Manual aim stays available.",Callback=mobile.TriggerEmergencyStop})
+    end
     option(visuals, "Role ESP", "ESP", "Sheriff: blue / Innocent: green / Murderer: red")
     option(visuals, "Dropped gun ESP", "GunESP")
     option(visuals, "Gun aim marker", "AimMarker")
@@ -4459,6 +4776,11 @@ local createMobileUI = function(C)
             mobile.DownwardContactToggle = playersTab:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
                 Desc = "Attempts contact from above with downward velocity. OFF uses wall-aware outward contact. Changing mode stops the current session.",
                 Callback = function(enabled) State.SetFlingDownward(enabled) end})
+        end
+        if State.SetFlingAdaptivePursuit then
+            mobile.AdaptivePursuitToggle = playersTab:Toggle({Title = "Track fast / flying targets", Value = State.Fling.AdaptivePursuit,
+                Desc = "Spin mode: measures 3D movement and matches motion between frames. Abrupt jumps pause tracking. Cannot force contact with fully noncolliding targets. Changing this stops the session.",
+                Callback = function(enabled) State.SetFlingAdaptivePursuit(enabled) end})
         end
         mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
         if State.GetFlingReport then
@@ -4530,8 +4852,8 @@ local createMobileUI = function(C)
                 end})
             mobile.AutoAttackToggle = autoToggle
             playersTab:Button({Title = "Stop all player actions", Callback = function()
-                State.StopAutoAttack("All player actions stopped")
-                State.StopFling()
+                if State.EmergencyStop then mobile.TriggerEmergencyStop()
+                else State.StopAutoAttack("All player actions stopped"); State.StopFling() end
             end})
         end
         playersTab:Button({Title = "Fling selected player", Callback = function() runFlingAction("Selected player", function() return State.FlingPlayer(selectedId) end) end})
@@ -4684,6 +5006,16 @@ local createMobileUI = function(C)
     end
     draggable(icon, icon, function() window:Toggle() end)
     draggable(handle, pad)
+    local emergencyButton
+    if State.EmergencyStop then
+        emergencyButton=button("STOP / RETURN",UDim2.fromOffset(146,42),canvas)
+        emergencyButton.Name="EmergencyStop"
+        emergencyButton.Size=UDim2.fromOffset(146,42)
+        emergencyButton.BackgroundColor3=Color3.fromRGB(145,34,44)
+        emergencyButton.Visible=false
+        mobile.EmergencyButton=emergencyButton
+        draggable(emergencyButton,emergencyButton,mobile.TriggerEmergencyStop)
+    end
     if actionService then
         -- Consume Right Shift before native mouse-lock bindings; Left Shift stays available.
         actionService:BindActionAtPriority(menuAction, function(_, state)
@@ -4694,10 +5026,19 @@ local createMobileUI = function(C)
             return Enum.ContextActionResult.Sink
         end, false, Enum.ContextActionPriority.High.Value + 100, Enum.KeyCode.RightShift)
         menuBound = true
+        if State.EmergencyStop then
+            actionService:BindActionAtPriority(emergencyAction,function(_,state)
+                if mobile.Destroyed or not State.Running or getMode()~="PC" or UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+                if state==Enum.UserInputState.Begin then mobile.TriggerEmergencyStop() end
+                return Enum.ContextActionResult.Sink
+            end,false,Enum.ContextActionPriority.High.Value+110,Enum.KeyCode.End)
+            emergencyBound=true
+        end
     else
         connect(UIS.InputBegan, function(input, processed)
             if processed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then return end
             if input.KeyCode == Enum.KeyCode.RightShift then window:Toggle() end
+            if input.KeyCode == Enum.KeyCode.End and State.EmergencyStop then mobile.TriggerEmergencyStop() end
         end)
     end
     local function action(callback)
@@ -4730,6 +5071,7 @@ local createMobileUI = function(C)
         icon.Position = UDim2.fromOffset(12, math.max(62, size.Y * 0.22))
         -- Keep the normal jump button and movement thumbstick clear by default.
         pad.Position = UDim2.fromOffset(size.X - 252, size.Y - 207)
+        if emergencyButton then emergencyButton.Position=UDim2.fromOffset(size.X/2-73,52); clamp(emergencyButton) end
         clamp(icon); clamp(pad)
     end
     local function resized()
@@ -4742,6 +5084,7 @@ local createMobileUI = function(C)
         notice.Size = UDim2.fromOffset(math.min(300, size.X - 24), 36)
         notice.Position = UDim2.new(0.5, -notice.Size.X.Offset / 2, 0, 8)
         clamp(icon); clamp(pad)
+        if emergencyButton then clamp(emergencyButton) end
     end
     function mobile.ApplyInputMode()
         local mode = getMode()
@@ -4749,6 +5092,7 @@ local createMobileUI = function(C)
         mobile.Mode = mode
         State.InputMode = mode
         icon.Visible = mode == "Mobile"
+        if emergencyButton and mode~="Mobile" then emergencyButton.Visible=false end
         window:SetTitle("MM2 " .. mode)
         pad.Visible = mode == "Mobile" and not mobile.MenuOpen and C.EquippedWeapon() ~= nil
         suppressInput()
@@ -4776,7 +5120,18 @@ local createMobileUI = function(C)
         throw.Visible = item ~= nil and item.Name == "Knife"
         notice.Visible = not mobile.MenuOpen
         local fling = State.Fling
+        if fling and mobile.AdaptivePursuitToggle and mobile.AdaptivePursuitToggle.Value ~= fling.AdaptivePursuit then
+            mobile.AdaptivePursuitToggle:Set(fling.AdaptivePursuit,false)
+        end
         local actions = State.PlayerActions
+        if emergencyButton then
+            local pendingWeapon=false
+            for _,record in pairs(State.WeaponHandlers or {}) do
+                if record.Charging or (record.StabbingUntil or 0)>os.clock() then pendingWeapon=true; break end
+            end
+            emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
+                and ((fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge) or false
+        end
         if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end
         if fling and mobile.DownwardContactToggle and mobile.DownwardContactToggle.Value ~= (fling.Mode == "Downward") then mobile.DownwardContactToggle:Set(fling.Mode == "Downward",false) end
         if mobile.RefreshExclusions and mobile.LastExclusionsRevision ~= State.ExclusionsRevision then mobile.RefreshExclusions() end
