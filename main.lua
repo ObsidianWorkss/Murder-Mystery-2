@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-IYStick"
+State.Build = "Universal-WindUI-2026-10-15-NotroProtected"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -128,6 +128,10 @@ local installPlayerExclusions = function(C)
     local entries = type(State.Config.ExcludedPlayers) == "table" and State.Config.ExcludedPlayers or {}
     State.Config.ExcludedPlayers = entries
     State.ExclusionsRevision = 0
+    -- Built-in protection is independent of the removable session list.
+    local permanent = {
+        [11767405934] = {Name = "NotroFable", DisplayName = "NotroFable"},
+    }
     local function userId(value)
         local kind = type(value)
         if kind ~= "number" and kind ~= "string" and kind ~= "table" and kind ~= "userdata" then return nil end
@@ -136,24 +140,30 @@ local installPlayerExclusions = function(C)
     end
     function State.IsPlayerExcluded(value)
         local id = userId(value)
-        return id ~= nil and entries[tostring(id)] ~= nil
+        return id ~= nil and (permanent[id] ~= nil or entries[tostring(id)] ~= nil)
     end
     function State.GetPlayerExclusions()
         local result, present = {}, {}
         for _, p in ipairs(Players:GetPlayers()) do present[p.UserId] = p end
+        local function append(id, record, fixed)
+            local p = present[id]
+            table.insert(result, {UserId = id, Name = p and p.Name or (type(record) == "table" and record.Name) or tostring(id),
+                DisplayName = p and p.DisplayName or (type(record) == "table" and record.DisplayName) or tostring(id), Permanent = fixed})
+        end
+        for id, record in pairs(permanent) do append(id, record, true) end
         for key, record in pairs(entries) do
             local id = userId(key)
-            if id then
-                local p = present[id]
-                table.insert(result, {UserId = id, Name = p and p.Name or (type(record) == "table" and record.Name) or tostring(id),
-                    DisplayName = p and p.DisplayName or (type(record) == "table" and record.DisplayName) or tostring(id)})
-            end
+            if id and not permanent[id] then append(id, record, false) end
         end
         table.sort(result, function(a,b) return a.Name:lower() < b.Name:lower() end)
         return result
     end
     function State.SetPlayerExcluded(value, enabled)
         local id = userId(value)
+        if id and permanent[id] and not enabled then
+            return false, "NotroFable is always protected; this entry cannot be removed"
+        end
+        if id and permanent[id] and id == player.UserId then return true, "NotroFable is always protected" end
         if not id or id == player.UserId then return false, "Select another player to exclude" end
         local key = tostring(id)
         if enabled then
@@ -161,7 +171,7 @@ local installPlayerExclusions = function(C)
             for _, p in ipairs(Players:GetPlayers()) do
                 if p.UserId == id then record.Name, record.DisplayName = p.Name, p.DisplayName; break end
             end
-            entries[key] = record
+            if not permanent[id] then entries[key] = record end
             if State.CancelExcludedWeaponActions then State.CancelExcludedWeaponActions(id) end
             if State.PlayerActions and State.PlayerActions.TargetId == id and State.StopAutoAttack then
                 State.StopAutoAttack("Target excluded; auto attack stopped")
@@ -174,12 +184,12 @@ local installPlayerExclusions = function(C)
             entries[key] = nil
         end
         State.ExclusionsRevision += 1
-        return true, enabled and "Player excluded from script attacks and fling" or "Player removed from exclusions"
+        return true, permanent[id] and "NotroFable is always protected" or (enabled and "Player excluded from script attacks and fling" or "Player removed from exclusions")
     end
     function State.ClearPlayerExclusions()
         table.clear(entries)
         State.ExclusionsRevision += 1
-        return true, "Exclusions cleared; stopped actions stay stopped"
+        return true, "Custom exclusions cleared; NotroFable remains protected; stopped actions stay stopped"
     end
 end
 
@@ -4469,7 +4479,7 @@ local createMobileUI = function(C)
         end
     end
     if exclusionsTab then
-        exclusionsTab:Paragraph({Title = "Protected players", Desc = "Aim, knife contacts, auto attack and fling skip these players regardless of their role. Removing an exclusion does not restart stopped actions."})
+        exclusionsTab:Paragraph({Title = "Protected players", Desc = "NotroFable is always protected by user ID in this script, regardless of role. Clear and Remove cannot remove that entry. Aim, knife contacts, auto attack and fling skip excluded players. This does not prevent manual or other-script attacks."})
         local addId, removeId, addMap, removeMap = nil, nil, {}, {}
         local addPicker, removePicker
         mobile.ExclusionsStatus = exclusionsTab:Paragraph({Title = "Exclusion status", Desc = "Choose a player, then press Exclude selected player."})
@@ -4482,7 +4492,7 @@ local createMobileUI = function(C)
                 if entry.UserId == addId then addLabel = label end
             end
             for _, entry in ipairs(State.GetPlayerExclusions()) do
-                local label = entry.DisplayName .. " (@" .. entry.Name .. ")"
+                local label = entry.DisplayName .. " (@" .. entry.Name .. ")" .. (entry.Permanent and " [always protected]" or "")
                 table.insert(removeLabels, label); removeMap[label] = entry.UserId
                 if entry.UserId == removeId then removeLabel = label end
             end
