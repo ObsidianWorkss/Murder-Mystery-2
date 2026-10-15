@@ -86,7 +86,7 @@ local State = {
     Invis = {Mode = "NativeGhost", Active = false, Busy = false, ActiveUntil = 0, NextUse = 0,
         Status = "Ghost OFF (requires owned/equipped perk)"},
     RepairRequired = repairRequired,
-    Config = {ExcludedPlayers = {}, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ExcludedPlayers = {}, FlingDownward = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-MobileExclusions"
+State.Build = "Universal-WindUI-2026-10-15-DownwardContact"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -3466,7 +3466,8 @@ local installPlayerFling = function(C)
     local State, Players, player = C.State, C.Players, C.Player
     local clock = C.Clock or os.clock
     local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.18,
-        Attempts = 0, Requests = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450}
+        Attempts = 0, Requests = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450,
+        Mode = State.Config and State.Config.FlingDownward and "Downward" or "Outward"}
     State.Fling = fling
     local saved
     local function put(object, property, value)
@@ -3482,6 +3483,7 @@ local installPlayerFling = function(C)
         local request = State.MobileUI and State.MobileUI.LastFlingAction
         return table.concat({
             "MM2 fling report", "Build: " .. tostring(State.Build),
+            "Contact mode: " .. tostring(fling.Mode),
             "Active: " .. tostring(fling.Active), "Phase: " .. tostring(fling.Phase),
             "Status: " .. tostring(fling.Status), "Pause: " .. tostring(fling.BlockedReason or "none"),
             "Button: " .. tostring(request and request.Name or "none"),
@@ -3596,7 +3598,7 @@ local installPlayerFling = function(C)
             local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
             if targetRoot and not targetRoot:IsA("BasePart") then targetRoot = nil end
             local position = targetRoot and finite(targetRoot.Position) and targetRoot.Position or record.LastTargetPosition
-            fling.LastResult = {Target = record.Target.UserId, MapBoundsAvailable = record.Bounds ~= nil,
+            fling.LastResult = {Target = record.Target.UserId, Mode = record.Mode, MapBoundsAvailable = record.Bounds ~= nil,
                 OutsideObservedBounds = record.ObservedExit or (position ~= nil and outsideBounds(position, record.Bounds)),
                 Displacement = position and (position - record.TargetStart).Magnitude or nil,
                 HeightGain = position and position.Y - record.TargetStart.Y or nil,
@@ -3605,6 +3607,15 @@ local installPlayerFling = function(C)
             restore(record, true)
         end
         describe(message or (record and "Fling stopped; position restored" or "Fling idle"))
+    end
+    function State.SetFlingDownward(enabled)
+        if fling.Active then State.StopFling("Mode changed; previous position restored") end
+        State.Config = State.Config or {}
+        State.Config.FlingDownward = enabled == true
+        fling.Mode = enabled == true and "Downward" or "Outward"
+        describe(enabled and "Downward contact selected (experimental); choose a target to start"
+            or "Outward contact selected; choose a target to start")
+        return true, fling.Status
     end
     local function recover(record, now, message, delay, reason)
         restore(record, false)
@@ -3621,6 +3632,32 @@ local installPlayerFling = function(C)
     local function chooseContact(record, targetRoot, now)
         if now < (record.NextPathCheck or 0) then return record.PathAvailable end
         record.NextPathCheck = now + 0.15
+        if record.Mode == "Downward" then
+            local offsets = {Vector3.new(0,1.55,0), Vector3.new(0.65,1.35,0), Vector3.new(-0.65,1.35,0),
+                Vector3.new(0,1.35,0.65), Vector3.new(0,1.35,-0.65)}
+            local overlap
+            if C.Workspace.GetPartBoundsInBox then
+                local excluded = {}
+                for _, p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(excluded,p.Character) end end
+                overlap = OverlapParams.new()
+                overlap.FilterType, overlap.FilterDescendantsInstances = Enum.RaycastFilterType.Exclude, excluded
+                overlap.RespectCanCollide, overlap.CollisionGroup = true, "Default"
+            end
+            local first = math.floor((now - record.Started) / 0.15) % #offsets
+            for i = 0, #offsets - 1 do
+                local offset = offsets[(first + i) % #offsets + 1]
+                local blocked = overlap and #C.Workspace:GetPartBoundsInBox(
+                    CFrame.new(targetRoot.Position + offset), Vector3.new(3,4,3), overlap) > 0
+                if not blocked then
+                    record.ContactOffset, record.PathAvailable = offset, true
+                    fling.ContactPath = overlap and "overhead contact / floor penetration unconfirmed" or "overhead contact / geometry queries unavailable"
+                    return true
+                end
+            end
+            record.PathAvailable = false
+            fling.ContactPath = "overhead contact blocked by nearby geometry"
+            return false
+        end
         if not C.Workspace.Blockcast or not C.Workspace.GetPartBoundsInBox then
             record.PathAvailable = true
             fling.ContactPath = "geometry queries unavailable"
@@ -3684,14 +3721,15 @@ local installPlayerFling = function(C)
         spinner.Attachment0 = attachment
         spinner.RelativeTo = Enum.ActuatorRelativeTo.World
         spinner.MaxTorque = 8000000
-        spinner.AngularVelocity = Vector3.new(180, 520, 160)
+        spinner.AngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
         spinner.Parent = record.Root
         record.Phase, record.BurstStarted = "Launch", now
         record.RecoveryReason, record.RetryAt, fling.BlockedReason = nil, nil, nil
         record.Bursts = (record.Bursts or 0) + 1
         fling.Phase = "Launch"
         fling.Bursts += 1
-        describe("Launching @" .. record.Target.Name .. " / burst " .. record.Bursts .. " / until eliminated")
+        describe((record.Mode == "Downward" and "Downward contact @" or "Launching @")
+            .. record.Target.Name .. " / burst " .. record.Bursts .. " / until eliminated or stopped")
     end
     local function applyContact(record, targetRoot, now)
         local elapsed = now - record.BurstStarted
@@ -3699,11 +3737,13 @@ local installPlayerFling = function(C)
         local side = Vector3.new(-direction.Z, 0, direction.X)
         local wiggle = math.sin(elapsed * 34) * 0.22
         local position = targetRoot.Position - direction * 1.15 + side * wiggle + Vector3.new(0, 0.1, 0)
+        if record.Mode == "Downward" then position = targetRoot.Position + record.ContactOffset end
         local inherited = targetRoot.AssemblyLinearVelocity
         if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
         record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
-        record.Root.AssemblyAngularVelocity = Vector3.new(180, 520, 160)
-        record.Root.AssemblyLinearVelocity = direction * fling.LaunchSpeed + Vector3.new(0, fling.LiftSpeed, 0) + inherited
+        record.Root.AssemblyAngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
+        record.Root.AssemblyLinearVelocity = (record.Mode == "Downward" and Vector3.new(0,-fling.LaunchSpeed,0)
+            or direction * fling.LaunchSpeed + Vector3.new(0,fling.LiftSpeed,0)) + inherited
         record.ContactSteps = (record.ContactSteps or 0) + 1
         fling.ContactSteps = record.ContactSteps
     end
@@ -3770,7 +3810,7 @@ local installPlayerFling = function(C)
             AutoRotate = hum.AutoRotate, PlatformStand = hum.PlatformStand, HumanoidState = hum:GetState(),
             CanCollide = root.CanCollide, CollisionGroup = root.CollisionGroup,
             PhysicalProperties = root.CustomPhysicalProperties,
-            Target = target, TargetCharacter = targetChar, Started = clock(), TargetStart = targetRoot.Position,
+            Target = target, TargetCharacter = targetChar, Mode = fling.Mode, Started = clock(), TargetStart = targetRoot.Position,
             -- A healthy lobby avatar can retain an earlier round's elimination flag.
             -- Trust a flagged transition only after observing a clear flag this session.
             WatchElimination = not (C.IsEliminated and C.IsEliminated(target)),
@@ -3784,7 +3824,7 @@ local installPlayerFling = function(C)
         local ok, message = pcall(function()
             local now = clock()
             if not chooseContact(saved, targetRoot, now) then
-                recover(saved, now, "Waiting: no clear contact side near target | Stop remains available", 0.18, "Wall")
+                recover(saved, now, (saved.Mode == "Downward" and "Waiting: overhead contact blocked" or "Waiting: no clear contact side near target") .. " | Stop remains available", 0.18, "Wall")
                 return
             end
             beginBurst(saved, now)
@@ -3871,7 +3911,7 @@ local installPlayerFling = function(C)
                 recover(record, now, "Physics recovery: returned before retrying", 0.8, "Physics"); return
             end
             if not chooseContact(record, targetRoot, now) then
-                recover(record, now, "Waiting: no clear contact side near target | Stop remains available", 0.18, "Wall"); return
+                recover(record, now, (record.Mode == "Downward" and "Waiting: overhead contact blocked" or "Waiting: no clear contact side near target") .. " | Stop remains available", 0.18, "Wall"); return
             end
             if record.Phase == "Recover" then
                 -- Stabilize at the saved position between bursts; never chase a target into the void.
@@ -4235,7 +4275,12 @@ local createMobileUI = function(C)
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
     if State.FlingPlayer then
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
-        playersTab:Paragraph({Title = "Player launch", Desc = "Strong outward/upward bursts retry until the target dies or you press Stop. Returns between bursts; waits at the saved position if you take damage, have low health, or the target is near the void. This cannot provide invulnerability or guarantee a server kill."})
+        playersTab:Paragraph({Title = "Player launch", Desc = "Choose outward or experimental downward contact, then choose a target. Returns between bursts and respects exclusions. Contact cannot guarantee floor penetration, a server teleport, or a kill."})
+        if State.SetFlingDownward then
+            playersTab:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
+                Desc = "Attempts contact from above with downward velocity. OFF uses wall-aware outward contact. Changing mode stops the current session.",
+                Callback = function(enabled) State.SetFlingDownward(enabled) end})
+        end
         mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
         if State.GetFlingReport then
             playersTab:Paragraph({Title = "Fling build", Desc = tostring(State.Build) .. " | Contact attempts are not confirmed server launches."})
