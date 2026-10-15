@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-SpinContact"
+State.Build = "Universal-WindUI-2026-10-15-IYStick"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -3495,6 +3495,7 @@ local installPlayerFling = function(C)
             "Requests: " .. tostring(fling.Requests), "Target ID: " .. tostring(fling.Target or last.Target),
             "Contact writes: " .. tostring(fling.ContactSteps or 0),
             "Contact path: " .. tostring(fling.ContactPath or "not checked"),
+            ("Current contact gap: %.2f studs"):format(fling.ContactGap or 0),
             "Session bursts: " .. tostring(saved and saved.Bursts or last.Bursts or 0),
             ("Observed displacement: %.2f studs"):format(fling.TargetDisplacement or last.Displacement or 0),
             ("Observed peak speed: %.2f studs/s"):format(fling.MaxTargetSpeed or last.MaxSpeed or 0),
@@ -3566,9 +3567,16 @@ local installPlayerFling = function(C)
         if record.Spinner then pcall(function() record.Spinner:Destroy() end); record.Spinner = nil end
         if record.SpinAttachment then pcall(function() record.SpinAttachment:Destroy() end); record.SpinAttachment = nil end
     end
+    local function rememberBodyPart(record, part)
+        if not part:IsA("BasePart") or record.BodySeen[part] then return end
+        record.BodySeen[part] = true
+        table.insert(record.BodyProperties, {Part=part, Massless=part.Massless,
+            CanCollide=part.CanCollide, PhysicalProperties=part.CustomPhysicalProperties})
+    end
     local function restore(record, final)
         if record then
             clearSpinner(record)
+            if final and record.AddedConnection then record.AddedConnection:Disconnect(); record.AddedConnection=nil end
             for _, item in ipairs(record.BodyProperties or {}) do
                 if item.Part.Parent then
                     put(item.Part, "Massless", item.Massless)
@@ -3648,6 +3656,12 @@ local installPlayerFling = function(C)
         describe(message)
     end
     local function chooseContact(record, targetRoot, now)
+        if record.Mode == "Spin" then
+            -- Recorded IY profile uses local noclip, so map side-clearance is not a contact requirement.
+            record.PathAvailable = true
+            fling.ContactPath = "IY noclip contact / follows target in 3D"
+            return true
+        end
         if now < (record.NextPathCheck or 0) then return record.PathAvailable end
         record.NextPathCheck = now + 0.15
         if record.Mode == "Downward" then
@@ -3723,35 +3737,43 @@ local installPlayerFling = function(C)
     end
     local function beginBurst(record, now)
         clearSpinner(record)
-        record.Humanoid.AutoRotate = false
-        record.Humanoid.PlatformStand = true
-        record.Root.CanCollide = true
+        record.Humanoid.AutoRotate = record.Mode == "Spin" and record.AutoRotate or false
+        record.Humanoid.PlatformStand = record.Mode ~= "Spin"
+        record.Root.CanCollide = record.Mode ~= "Spin"
         record.Root.CollisionGroup = "Default"
         record.Root.CustomPhysicalProperties = PhysicalProperties.new(record.Mode == "Spin" and 100 or 35, 0.3, 0.2)
         if record.Mode == "Spin" then
             for _, item in ipairs(record.BodyProperties or {}) do
                 if item.Part.Parent then
-                    item.Part.Massless = item.Part ~= record.Root
+                    item.Part.Massless = true
                     item.Part.CustomPhysicalProperties = PhysicalProperties.new(100,0.3,0.5)
-                    -- Keep the root as the contact collider, reducing limb collisions with nearby walls.
-                    if item.Part ~= record.Root then item.Part.CanCollide = false end
+                    item.Part.CanCollide = false
                 end
             end
         end
-        -- Persistent finite torque maintains spin between solver steps and collision contacts.
-        local attachment = Instance.new("Attachment")
-        record.SpinAttachment = attachment
-        attachment.Name = "MM2LaunchAttachment"
-        attachment.Parent = record.Root
-        local spinner = Instance.new("AngularVelocity")
-        record.Spinner = spinner
-        spinner.Name = "MM2LaunchTorque"
-        spinner.Attachment0 = attachment
-        spinner.RelativeTo = Enum.ActuatorRelativeTo.World
-        spinner.MaxTorque = record.Mode == "Spin" and 80000000 or 8000000
-        spinner.AngularVelocity = record.Mode == "Spin" and Vector3.new(0,1200,0)
-            or (record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160))
-        spinner.Parent = record.Root
+        if record.Mode == "Spin" then
+            -- Exact force settings observed during the user's IY demonstration.
+            local spinner = Instance.new("BodyAngularVelocity")
+            record.Spinner = spinner
+            spinner.Name = "MM2IYContactSpin"
+            spinner.AngularVelocity = Vector3.new(0,99999,0)
+            spinner.MaxTorque = Vector3.new(0,math.huge,0)
+            spinner.P = math.huge
+            spinner.Parent = record.Root
+        else
+            local attachment = Instance.new("Attachment")
+            record.SpinAttachment = attachment
+            attachment.Name = "MM2LaunchAttachment"
+            attachment.Parent = record.Root
+            local spinner = Instance.new("AngularVelocity")
+            record.Spinner = spinner
+            spinner.Name = "MM2LaunchTorque"
+            spinner.Attachment0 = attachment
+            spinner.RelativeTo = Enum.ActuatorRelativeTo.World
+            spinner.MaxTorque = 8000000
+            spinner.AngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
+            spinner.Parent = record.Root
+        end
         record.Phase, record.BurstStarted = "Launch", now
         record.RecoveryReason, record.RetryAt, fling.BlockedReason = nil, nil, nil
         record.Bursts = (record.Bursts or 0) + 1
@@ -3770,12 +3792,22 @@ local installPlayerFling = function(C)
         local inherited = targetRoot.AssemblyLinearVelocity
         if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
         if record.Mode == "Spin" then
+            local dt = math.clamp(now - (record.LastContactAt or now), 0, 1/30)
+            local lead = targetRoot.AssemblyLinearVelocity.Magnitude <= 120 and targetRoot.AssemblyLinearVelocity * dt or Vector3.zero
+            if lead.Magnitude > 1.5 then lead = lead.Unit * 1.5 end
+            position = targetRoot.Position + Vector3.new(0.8,0,0) + lead
+            record.LastContactAt = now
+            for _, item in ipairs(record.BodyProperties or {}) do
+                if item.Part.Parent then
+                    if item.Part.CanCollide then item.Part.CanCollide = false end
+                    if not item.Part.Massless then item.Part.Massless = true end
+                end
+            end
             -- Recenter without replacing the orientation produced by the physics solver.
             record.Root.CFrame = CFrame.new(position) * record.Root.CFrame.Rotation
-            local spin = elapsed % 0.3 < 0.2 and Vector3.new(0,1200,0) or Vector3.zero
+            local spin = elapsed % 0.3 < 0.2 and Vector3.new(0,99999,0) or Vector3.zero
             record.Spinner.AngularVelocity = spin
-            record.Root.AssemblyAngularVelocity = spin
-            record.Root.AssemblyLinearVelocity = direction * 12 + inherited
+            record.Root.AssemblyLinearVelocity = Vector3.zero
         else
             record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
             record.Root.AssemblyAngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
@@ -3784,6 +3816,7 @@ local installPlayerFling = function(C)
         end
         record.ContactSteps = (record.ContactSteps or 0) + 1
         fling.ContactSteps = record.ContactSteps
+        fling.ContactGap = (record.Root.Position - targetRoot.Position).Magnitude
     end
     local function findPlayer(id)
         for _, p in ipairs(Players:GetPlayers()) do if p.UserId == tonumber(id) then return p end end
@@ -3836,6 +3869,13 @@ local installPlayerFling = function(C)
         if root.Anchored or targetRoot.Anchored or hum.Sit or hum.PlatformStand then
             describe("Fling unavailable while a character is anchored, seated, or disabled"); return false, fling.Status
         end
+        if fling.Mode == "Spin" then
+            for _, item in ipairs(char:GetDescendants()) do
+                if item:IsA("BodyAngularVelocity") or item:IsA("AngularVelocity") then
+                    describe("Stop the other spin script before starting selected-player contact"); return false, fling.Status
+                end
+            end
+        end
         if not finite(root.Position) or not finite(targetRoot.Position)
             or not finite(root.AssemblyLinearVelocity) or not finite(root.AssemblyAngularVelocity)
             or not finite(targetRoot.AssemblyLinearVelocity)
@@ -3855,12 +3895,19 @@ local installPlayerFling = function(C)
             Bounds = bounds, Direction = launchDirection(targetRoot.Position, root.Position, bounds), MaxSpeed = 0,
             LastHealth = hum.Health, LastTargetPosition = targetRoot.Position, Bursts = 0}
         if saved.Mode == "Spin" then
-            saved.BodyProperties = {}
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    table.insert(saved.BodyProperties, {Part=part, Massless=part.Massless,
-                        CanCollide=part.CanCollide, PhysicalProperties=part.CustomPhysicalProperties})
-                end
+            saved.BodyProperties, saved.BodySeen = {}, {}
+            for _, part in ipairs(char:GetDescendants()) do rememberBodyPart(saved,part) end
+            local record = saved
+            if char.DescendantAdded then
+                record.AddedConnection = char.DescendantAdded:Connect(function(part)
+                    if saved == record then
+                        rememberBodyPart(record,part)
+                        if part:IsA("BasePart") and record.Phase == "Launch" then
+                            part.CanCollide, part.Massless = false, true
+                            part.CustomPhysicalProperties = PhysicalProperties.new(100,0.3,0.5)
+                        end
+                    end
+                end)
             end
         end
         fling.Active, fling.Target = true, target.UserId
@@ -3965,7 +4012,7 @@ local installPlayerFling = function(C)
                 restore(record, false)
                 if now < record.RetryAt then return end
                 beginBurst(record, now)
-            elseif now - record.BurstStarted >= fling.BurstDuration then
+            elseif record.Mode ~= "Spin" and now - record.BurstStarted >= fling.BurstDuration then
                 recover(record, now, "Returned safely; retrying until target is eliminated", nil, "BetweenBursts"); return
             end
             applyContact(record, targetRoot, now)
@@ -4322,10 +4369,10 @@ local createMobileUI = function(C)
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
     if State.FlingPlayer then
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
-        playersTab:Paragraph({Title = "Player launch", Desc = "Choose spin, outward, or experimental downward contact, then choose a target. Returns between bursts and respects exclusions. Contact cannot guarantee floor penetration, a server teleport, or a kill."})
+        playersTab:Paragraph({Title = "Player launch", Desc = "Choose a method and target. Spin sticks to the selected player in 3D until stopped, eliminated, or a recovery check interrupts contact. Exclusions remain active. Contact does not guarantee a server kill."})
         if State.SetFlingSpinContact then
             mobile.SpinContactToggle = playersTab:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
-                Desc = "Pulsed vertical-axis spin during selected-player contact. Keeps physics rotation and reduces outward rushing. Changing mode stops the current session.",
+                Desc = "Recorded IY spin and noclip settings. Tracks the selected player while moving or jumping. Stop any separate IY fling first. Changing mode stops the current session.",
                 Callback = function(enabled) State.SetFlingSpinContact(enabled) end})
         end
         if State.SetFlingDownward then
