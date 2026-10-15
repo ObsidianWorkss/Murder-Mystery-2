@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-Exclusions"
+State.Build = "Universal-WindUI-2026-10-15-MobileExclusions"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -4162,6 +4162,16 @@ local createMobileUI = function(C)
     end)
 
     local combat = window:Tab({Title = "Combat", Icon = "crosshair"})
+    local exclusionsTab
+    if State.SetPlayerExcluded and State.GetPlayerExclusions then
+        exclusionsTab = window:Tab({Title = "Exclusions", Icon = "shield"})
+        mobile.ExclusionsTab = exclusionsTab
+        function mobile.OpenExclusions()
+            suppressInput()
+            exclusionsTab:Select()
+        end
+        combat:Button({Title = "Open exclusions", Desc = "Choose players the script should never target.", Callback = mobile.OpenExclusions})
+    end
     local visuals = window:Tab({Title = "Visuals", Icon = "eye"})
     local movement = window:Tab({Title = "Movement", Icon = "footprints"})
     local animations = window:Tab({Title = "Animations", Icon = "sparkles"})
@@ -4314,8 +4324,7 @@ local createMobileUI = function(C)
             connect(C.Players.PlayerRemoving, refreshRoster)
         end
     end
-    if State.SetPlayerExcluded and State.GetPlayerExclusions then
-        local exclusionsTab = window:Tab({Title = "Exclusions", Icon = "shield"})
+    if exclusionsTab then
         exclusionsTab:Paragraph({Title = "Protected players", Desc = "Aim, knife contacts, auto attack and fling skip these players regardless of their role. Removing an exclusion does not restart stopped actions."})
         local addId, removeId, addMap, removeMap = nil, nil, {}, {}
         local addPicker, removePicker
