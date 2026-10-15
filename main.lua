@@ -86,7 +86,7 @@ local State = {
     Invis = {Mode = "NativeGhost", Active = false, Busy = false, ActiveUntil = 0, NextUse = 0,
         Status = "Ghost OFF (requires owned/equipped perk)"},
     RepairRequired = repairRequired,
-    Config = {Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ExcludedPlayers = {}, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -119,7 +119,72 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-ClearContact"
+State.Build = "Universal-WindUI-2026-10-15-Exclusions"
+do
+-- Role-independent, session-persistent exclusions for script-controlled targeting.
+local installPlayerExclusions = function(C)
+    local State, Players, player = C.State, C.Players, C.Player
+    State.Config = State.Config or {}
+    local entries = type(State.Config.ExcludedPlayers) == "table" and State.Config.ExcludedPlayers or {}
+    State.Config.ExcludedPlayers = entries
+    State.ExclusionsRevision = 0
+    local function userId(value)
+        local kind = type(value)
+        if kind ~= "number" and kind ~= "string" and kind ~= "table" and kind ~= "userdata" then return nil end
+        local id = tonumber((kind == "number" or kind == "string") and value or value and value.UserId)
+        return id and id > 0 and id < math.huge and id % 1 == 0 and id or nil
+    end
+    function State.IsPlayerExcluded(value)
+        local id = userId(value)
+        return id ~= nil and entries[tostring(id)] ~= nil
+    end
+    function State.GetPlayerExclusions()
+        local result, present = {}, {}
+        for _, p in ipairs(Players:GetPlayers()) do present[p.UserId] = p end
+        for key, record in pairs(entries) do
+            local id = userId(key)
+            if id then
+                local p = present[id]
+                table.insert(result, {UserId = id, Name = p and p.Name or (type(record) == "table" and record.Name) or tostring(id),
+                    DisplayName = p and p.DisplayName or (type(record) == "table" and record.DisplayName) or tostring(id)})
+            end
+        end
+        table.sort(result, function(a,b) return a.Name:lower() < b.Name:lower() end)
+        return result
+    end
+    function State.SetPlayerExcluded(value, enabled)
+        local id = userId(value)
+        if not id or id == player.UserId then return false, "Select another player to exclude" end
+        local key = tostring(id)
+        if enabled then
+            local record = {UserId = id, Name = key, DisplayName = key}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.UserId == id then record.Name, record.DisplayName = p.Name, p.DisplayName; break end
+            end
+            entries[key] = record
+            if State.CancelExcludedWeaponActions then State.CancelExcludedWeaponActions(id) end
+            if State.PlayerActions and State.PlayerActions.TargetId == id and State.StopAutoAttack then
+                State.StopAutoAttack("Target excluded; auto attack stopped")
+            end
+            if State.Fling and State.Fling.Target == id and State.StopFling then
+                State.StopFling("Target excluded; fling stopped and position restored")
+            end
+            if State.Target == record.Name then State.Target = nil end
+        else
+            entries[key] = nil
+        end
+        State.ExclusionsRevision += 1
+        return true, enabled and "Player excluded from script attacks and fling" or "Player removed from exclusions"
+    end
+    function State.ClearPlayerExclusions()
+        table.clear(entries)
+        State.ExclusionsRevision += 1
+        return true, "Exclusions cleared; stopped actions stay stopped"
+    end
+end
+
+installPlayerExclusions({State=State,Players=Players,Player=player})
+end
 -- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
 local detectInputMode = function(UIS)
     local ok, preferred = pcall(function() return UIS.PreferredInput end)
@@ -1141,7 +1206,7 @@ local function chooseTarget(kind, origin, item, preferred, strict)
     if camera and touchInput() then cursor = camera.ViewportSize / 2 end
     local candidates = {}
     for order, other in ipairs(Players:GetPlayers()) do
-        if other ~= player and alive(other) and (not strict or other == preferred) and (kind == "Knife" or roleFor(other) == "Murderer") then
+        if other ~= player and not State.IsPlayerExcluded(other) and alive(other) and (not strict or other == preferred) and (kind == "Knife" or roleFor(other) == "Murderer") then
             local char = other.Character
             local root = char:FindFirstChild("HumanoidRootPart")
             local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil, strict)
@@ -1748,6 +1813,19 @@ local function ready(record)
         and record.Item.Parent == player.Character and alive(player)
         and record.Item:GetAttribute("Disabled") ~= true and not UIS:GetFocusedTextBox()
 end
+function State.ExcludedPlayerInShotPath(origin, destination)
+    for _, other in ipairs(Players:GetPlayers()) do
+        local char = other.Character
+        if other ~= player and char and State.IsPlayerExcluded(other) then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.Parent == char
+                    and (bodyPartSet[part.Name] or part.Name == "HumanoidRootPart")
+                    and segmentHitsBox(origin, destination, part.CFrame, part.Size) then return true end
+            end
+        end
+    end
+    return false
+end
 local function aimPoint(record, preferred, strict)
     sampleMotion(os.clock())
     State.Stats.AimCalls += 1
@@ -1789,6 +1867,11 @@ local function sendGun(record, preferred, strict)
         State.LastGunFeedback = {Message = "Shot skipped: no clear target"}
         return
     end
+    if State.ExcludedPlayerInShotPath(attachment.WorldPosition, targetFrame.Position) then
+        State.Stats.SkippedGunShots += 1
+        State.LastGunFeedback = {Message = "Shot skipped: excluded player in firing path"}
+        return
+    end
     record.LastGun = os.clock()
     State.LastGunSentAt = os.clock()
     State.LastGunFeedback = {SentAt = State.LastGunSentAt, Message = "Waiting for server shot feedback"}
@@ -1819,7 +1902,7 @@ local function reportStabContact(record, hit, source)
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if other ~= player and root and alive(other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
+        if other ~= player and root and not State.IsPlayerExcluded(other) and alive(other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
             and (hit.Transparency < 1 or (hit.Parent == char and bodyPartSet[hit.Name]))
             and (root.Position - ownRoot.Position).Magnitude <= 7
             and clearPath(ownRoot.Position, hit.Position, char) then
@@ -1849,7 +1932,7 @@ local function scanStabContacts(record)
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if other ~= player and root and alive(other) and (not record.StabTarget or other == record.StabTarget) and (root.Position - ownRoot.Position).Magnitude <= 7 then
+        if other ~= player and root and not State.IsPlayerExcluded(other) and alive(other) and (not record.StabTarget or other == record.StabTarget) and (root.Position - ownRoot.Position).Magnitude <= 7 then
             for _, part in ipairs(char:GetDescendants()) do
                 if part:IsA("BasePart") and (part.Transparency < 1 or (part.Parent == char and bodyPartSet[part.Name])) then
                     table.insert(visibleParts, part)
@@ -1928,13 +2011,14 @@ local function startThrow(record, preferred, strict)
     record.ThrowToken += 1
     local token = record.ThrowToken
     local chargedTarget = chosen and chosen.Player
+    record.ThrowTargetUserId = chargedTarget and chargedTarget.UserId
     record.LastThrow = os.clock()
     record.StabbingUntil = 0
     stopTracks(record)
     playTrack(record, "ThrowCharge", 1 / throwSpeed)
     task.spawn(function()
         task.wait(throwSpeed)
-        if not ready(record) or token ~= record.ThrowToken then
+        if not ready(record) or token ~= record.ThrowToken or (chargedTarget and State.IsPlayerExcluded(chargedTarget)) then
             if token == record.ThrowToken then record.Charging = false; stopTracks(record) end
             return
         end
@@ -1945,6 +2029,13 @@ local function startThrow(record, preferred, strict)
             record.LastThrow = -math.huge
             State.Stats.SkippedKnifeThrows += 1
             knifeFeedback("Throw cancelled: target no longer clear")
+            stopTracks(record)
+            return
+        end
+        if State.ExcludedPlayerInShotPath(handle.Position, targetFrame.Position) then
+            record.LastThrow = -math.huge
+            State.Stats.SkippedKnifeThrows += 1
+            knifeFeedback("Throw cancelled: excluded player in firing path")
             stopTracks(record)
             return
         end
@@ -2019,10 +2110,8 @@ local function takeOver(item)
     if record.Kind == "Knife" and handle then
         recordConnect(record, handle.Touched, function(hit)
             if ready(record) and os.clock() <= record.StabbingUntil then
-                if State.Config.StabSweep then reportStabContact(record, hit, "NativeTouch"); return end
-                local events = item:FindFirstChild("Events")
-                local remote = events and events:FindFirstChild("HandleTouched")
-                if remote then remote:FireServer(hit) end
+                -- Native blade touches use the same exclusion check even with sweep OFF.
+                reportStabContact(record, hit, "NativeTouch")
             end
         end)
     end
@@ -3358,6 +3447,18 @@ updateGunESP()
 syncWeapons()
 print("MM2 Assist loaded: Magic Bullet/F7 targets the murderer on click; ANIMS/F9 toggles persistent Mage movement.")
 
+State.CancelExcludedWeaponActions = function(id)
+    for _, record in pairs(State.WeaponHandlers) do
+        if record.Charging and record.ThrowTargetUserId == id then
+            record.ThrowToken += 1
+            record.Charging, record.AutoSelectedThrow = false, nil
+            record.LastThrow = -math.huge
+            stopTracks(record)
+        end
+        if record.StabTarget and record.StabTarget.UserId == id then record.StabbingUntil = 0 end
+    end
+end
+
 
 do
 -- User-triggered launch sessions, with recovery between bursts until target elimination.
@@ -3614,6 +3715,7 @@ local installPlayerFling = function(C)
         fling.Requests += 1
         local target = findPlayer(id)
         if not target or target == player then describe("Select another player who is still in this server"); return false, fling.Status end
+        if State.IsPlayerExcluded and State.IsPlayerExcluded(target) then describe("Target is excluded from fling"); return false, fling.Status end
         if fling.Active and saved then
             local targetChar = characterParts(target)
             if not targetChar then describe("Target character is unavailable; current session is unchanged"); return false, fling.Status end
@@ -3699,7 +3801,7 @@ local installPlayerFling = function(C)
         local chosen, nearest
         for _, p in ipairs(Players:GetPlayers()) do
             local _, _, root = characterParts(p)
-            if p ~= player and root and C.IsAlive(p) and C.RoleFor(p) == role then
+            if p ~= player and root and not (State.IsPlayerExcluded and State.IsPlayerExcluded(p)) and C.IsAlive(p) and C.RoleFor(p) == role then
                 local distance = ownRoot and (root.Position - ownRoot.Position).Magnitude or 0
                 if not nearest or distance < nearest then chosen, nearest = p, distance end
             end
@@ -3718,6 +3820,9 @@ local installPlayerFling = function(C)
                 State.StopFling("Character mode changed; fling stopped and position restored"); return
             end
             local now = clock()
+            if State.IsPlayerExcluded and State.IsPlayerExcluded(record.Target) then
+                State.StopFling("Target excluded; fling stopped and position restored"); return
+            end
             local targetChar = record.Target.Character
             local targetHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
             if targetChar ~= record.TargetCharacter then State.StopFling("Fling stopped: target respawned or character changed"); return end
@@ -3835,6 +3940,7 @@ local installPlayerActions = function(C)
         if not State.Running then return false, status("Script is unloaded") end
         local target = find(id)
         if not target or target == player then return false, status("Select another player first") end
+        if State.IsPlayerExcluded and State.IsPlayerExcluded(target) then return false, status("Target is excluded from attacks") end
         local char = parts(player)
         if not char then return false, status("Wait for your character to be alive") end
         local targetChar = parts(target)
@@ -3907,6 +4013,7 @@ local installPlayerActions = function(C)
             if char ~= actions.Character then State.StopAutoAttack("Your character changed; auto attack stopped"); return end
             local target = find(actions.TargetId)
             if not target then State.StopAutoAttack("Target left the server"); return end
+            if State.IsPlayerExcluded and State.IsPlayerExcluded(target) then State.StopAutoAttack("Target excluded; auto attack stopped"); return end
             if target.Character ~= actions.TargetCharacter then State.StopAutoAttack("Target character changed; auto attack stopped"); return end
             local targetHum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
             if (targetHum and targetHum.Health <= 0) or (C.IsEliminated and C.IsEliminated(target)) then
@@ -4207,6 +4314,57 @@ local createMobileUI = function(C)
             connect(C.Players.PlayerRemoving, refreshRoster)
         end
     end
+    if State.SetPlayerExcluded and State.GetPlayerExclusions then
+        local exclusionsTab = window:Tab({Title = "Exclusions", Icon = "shield"})
+        exclusionsTab:Paragraph({Title = "Protected players", Desc = "Aim, knife contacts, auto attack and fling skip these players regardless of their role. Removing an exclusion does not restart stopped actions."})
+        local addId, removeId, addMap, removeMap = nil, nil, {}, {}
+        local addPicker, removePicker
+        mobile.ExclusionsStatus = exclusionsTab:Paragraph({Title = "Exclusion status", Desc = "Choose a player, then press Exclude selected player."})
+        local function refreshExclusions()
+            local addLabels, removeLabels, addLabel, removeLabel = {}, {}, nil, nil
+            addMap, removeMap = {}, {}
+            for _, entry in ipairs(State.GetFlingPlayers()) do
+                local label = entry.DisplayName .. " (@" .. entry.Name .. ")"
+                table.insert(addLabels, label); addMap[label] = entry.UserId
+                if entry.UserId == addId then addLabel = label end
+            end
+            for _, entry in ipairs(State.GetPlayerExclusions()) do
+                local label = entry.DisplayName .. " (@" .. entry.Name .. ")"
+                table.insert(removeLabels, label); removeMap[label] = entry.UserId
+                if entry.UserId == removeId then removeLabel = label end
+            end
+            if not addLabel then addId = nil end
+            if not removeLabel then removeId = nil end
+            if addPicker then addPicker:Refresh(addLabels); addPicker:Select(addLabel) end
+            if removePicker then removePicker:Refresh(removeLabels); removePicker:Select(removeLabel) end
+            mobile.LastExclusionsRevision = State.ExclusionsRevision
+            return addLabels, removeLabels
+        end
+        local addLabels, removeLabels = refreshExclusions()
+        addPicker = exclusionsTab:Dropdown({Title = "Player to exclude", Values = addLabels, Multi = false, AllowNone = true,
+            SearchBarEnabled = true, Callback = function(label) addId = addMap[label] end})
+        removePicker = exclusionsTab:Dropdown({Title = "Excluded players", Values = removeLabels, Multi = false, AllowNone = true,
+            SearchBarEnabled = true, Callback = function(label) removeId = removeMap[label] end})
+        mobile.AddExclusionPicker, mobile.ExcludedPlayerPicker = addPicker, removePicker
+        local function change(callback)
+            local _, message = callback()
+            refreshExclusions()
+            if mobile.ExclusionsStatus.ParagraphFrame then mobile.ExclusionsStatus.ParagraphFrame:SetDesc(message) end
+        end
+        exclusionsTab:Button({Title = "Exclude selected player", Callback = function()
+            change(function() return State.SetPlayerExcluded(addId, true) end)
+        end})
+        exclusionsTab:Button({Title = "Remove selected exclusion", Callback = function()
+            change(function() return State.SetPlayerExcluded(removeId, false) end)
+        end})
+        exclusionsTab:Button({Title = "Clear exclusions", Callback = function() change(State.ClearPlayerExclusions) end})
+        mobile.RefreshExclusions = refreshExclusions
+        if C.Players then
+            local function rosterChanged() task.defer(function() if State.Running and not mobile.Destroyed then refreshExclusions() end end) end
+            connect(C.Players.PlayerAdded, rosterChanged)
+            connect(C.Players.PlayerRemoving, rosterChanged)
+        end
+    end
     combat:Select()
 
     local function button(text, size, parent)
@@ -4386,6 +4544,7 @@ local createMobileUI = function(C)
         notice.Visible = not mobile.MenuOpen
         local fling = State.Fling
         local actions = State.PlayerActions
+        if mobile.RefreshExclusions and mobile.LastExclusionsRevision ~= State.ExclusionsRevision then mobile.RefreshExclusions() end
         if actions and mobile.AutoAttackToggle and mobile.AutoAttackToggle.Value ~= actions.Enabled then
             mobile.AutoAttackToggle:Set(actions.Enabled,false)
         end
