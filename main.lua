@@ -86,7 +86,7 @@ local State = {
     Invis = {Mode = "NativeGhost", Active = false, Busy = false, ActiveUntil = 0, NextUse = 0,
         Status = "Ghost OFF (requires owned/equipped perk)"},
     RepairRequired = repairRequired,
-    Config = {ExcludedPlayers = {}, FlingDownward = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ExcludedPlayers = {}, FlingDownward = false, FlingSpinContact = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-DownwardContact"
+State.Build = "Universal-WindUI-2026-10-15-SpinContact"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -3467,7 +3467,11 @@ local installPlayerFling = function(C)
     local clock = C.Clock or os.clock
     local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.18,
         Attempts = 0, Requests = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450,
-        Mode = State.Config and State.Config.FlingDownward and "Downward" or "Outward"}
+        Mode = State.Config and State.Config.FlingSpinContact and "Spin"
+            or (State.Config and State.Config.FlingDownward and "Downward" or "Outward")}
+    if State.Config then
+        State.Config.FlingSpinContact, State.Config.FlingDownward = fling.Mode == "Spin", fling.Mode == "Downward"
+    end
     State.Fling = fling
     local saved
     local function put(object, property, value)
@@ -3565,6 +3569,13 @@ local installPlayerFling = function(C)
     local function restore(record, final)
         if record then
             clearSpinner(record)
+            for _, item in ipairs(record.BodyProperties or {}) do
+                if item.Part.Parent then
+                    put(item.Part, "Massless", item.Massless)
+                    put(item.Part, "CanCollide", item.CanCollide)
+                    put(item.Part, "CustomPhysicalProperties", item.PhysicalProperties)
+                end
+            end
             -- Never move a newly spawned character to an older character's return point.
             local same = player.Character == record.Character
             if record.Root.Parent then
@@ -3608,14 +3619,21 @@ local installPlayerFling = function(C)
         end
         describe(message or (record and "Fling stopped; position restored" or "Fling idle"))
     end
-    function State.SetFlingDownward(enabled)
+    function State.SetFlingMode(mode)
+        if mode ~= "Spin" and mode ~= "Downward" and mode ~= "Outward" then return false, "Unknown fling mode" end
+        if fling.Mode == mode then return true, fling.Status end
         if fling.Active then State.StopFling("Mode changed; previous position restored") end
         State.Config = State.Config or {}
-        State.Config.FlingDownward = enabled == true
-        fling.Mode = enabled == true and "Downward" or "Outward"
-        describe(enabled and "Downward contact selected (experimental); choose a target to start"
-            or "Outward contact selected; choose a target to start")
+        State.Config.FlingDownward, State.Config.FlingSpinContact = mode == "Downward", mode == "Spin"
+        fling.Mode = mode
+        describe(mode .. " contact selected; choose a target to start")
         return true, fling.Status
+    end
+    function State.SetFlingDownward(enabled)
+        return State.SetFlingMode(enabled and "Downward" or (fling.Mode == "Downward" and "Outward" or fling.Mode))
+    end
+    function State.SetFlingSpinContact(enabled)
+        return State.SetFlingMode(enabled and "Spin" or (fling.Mode == "Spin" and "Outward" or fling.Mode))
     end
     local function recover(record, now, message, delay, reason)
         restore(record, false)
@@ -3709,7 +3727,17 @@ local installPlayerFling = function(C)
         record.Humanoid.PlatformStand = true
         record.Root.CanCollide = true
         record.Root.CollisionGroup = "Default"
-        record.Root.CustomPhysicalProperties = PhysicalProperties.new(35, 0.3, 0.2)
+        record.Root.CustomPhysicalProperties = PhysicalProperties.new(record.Mode == "Spin" and 100 or 35, 0.3, 0.2)
+        if record.Mode == "Spin" then
+            for _, item in ipairs(record.BodyProperties or {}) do
+                if item.Part.Parent then
+                    item.Part.Massless = item.Part ~= record.Root
+                    item.Part.CustomPhysicalProperties = PhysicalProperties.new(100,0.3,0.5)
+                    -- Keep the root as the contact collider, reducing limb collisions with nearby walls.
+                    if item.Part ~= record.Root then item.Part.CanCollide = false end
+                end
+            end
+        end
         -- Persistent finite torque maintains spin between solver steps and collision contacts.
         local attachment = Instance.new("Attachment")
         record.SpinAttachment = attachment
@@ -3720,15 +3748,16 @@ local installPlayerFling = function(C)
         spinner.Name = "MM2LaunchTorque"
         spinner.Attachment0 = attachment
         spinner.RelativeTo = Enum.ActuatorRelativeTo.World
-        spinner.MaxTorque = 8000000
-        spinner.AngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
+        spinner.MaxTorque = record.Mode == "Spin" and 80000000 or 8000000
+        spinner.AngularVelocity = record.Mode == "Spin" and Vector3.new(0,1200,0)
+            or (record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160))
         spinner.Parent = record.Root
         record.Phase, record.BurstStarted = "Launch", now
         record.RecoveryReason, record.RetryAt, fling.BlockedReason = nil, nil, nil
         record.Bursts = (record.Bursts or 0) + 1
         fling.Phase = "Launch"
         fling.Bursts += 1
-        describe((record.Mode == "Downward" and "Downward contact @" or "Launching @")
+        describe((record.Mode == "Spin" and "Spin contact @" or (record.Mode == "Downward" and "Downward contact @" or "Launching @"))
             .. record.Target.Name .. " / burst " .. record.Bursts .. " / until eliminated or stopped")
     end
     local function applyContact(record, targetRoot, now)
@@ -3740,10 +3769,19 @@ local installPlayerFling = function(C)
         if record.Mode == "Downward" then position = targetRoot.Position + record.ContactOffset end
         local inherited = targetRoot.AssemblyLinearVelocity
         if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
-        record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
-        record.Root.AssemblyAngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
-        record.Root.AssemblyLinearVelocity = (record.Mode == "Downward" and Vector3.new(0,-fling.LaunchSpeed,0)
-            or direction * fling.LaunchSpeed + Vector3.new(0,fling.LiftSpeed,0)) + inherited
+        if record.Mode == "Spin" then
+            -- Recenter without replacing the orientation produced by the physics solver.
+            record.Root.CFrame = CFrame.new(position) * record.Root.CFrame.Rotation
+            local spin = elapsed % 0.3 < 0.2 and Vector3.new(0,1200,0) or Vector3.zero
+            record.Spinner.AngularVelocity = spin
+            record.Root.AssemblyAngularVelocity = spin
+            record.Root.AssemblyLinearVelocity = direction * 12 + inherited
+        else
+            record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
+            record.Root.AssemblyAngularVelocity = record.Mode == "Downward" and Vector3.new(260,80,260) or Vector3.new(180,520,160)
+            record.Root.AssemblyLinearVelocity = (record.Mode == "Downward" and Vector3.new(0,-fling.LaunchSpeed,0)
+                or direction * fling.LaunchSpeed + Vector3.new(0,fling.LiftSpeed,0)) + inherited
+        end
         record.ContactSteps = (record.ContactSteps or 0) + 1
         fling.ContactSteps = record.ContactSteps
     end
@@ -3816,6 +3854,15 @@ local installPlayerFling = function(C)
             WatchElimination = not (C.IsEliminated and C.IsEliminated(target)),
             Bounds = bounds, Direction = launchDirection(targetRoot.Position, root.Position, bounds), MaxSpeed = 0,
             LastHealth = hum.Health, LastTargetPosition = targetRoot.Position, Bursts = 0}
+        if saved.Mode == "Spin" then
+            saved.BodyProperties = {}
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    table.insert(saved.BodyProperties, {Part=part, Massless=part.Massless,
+                        CanCollide=part.CanCollide, PhysicalProperties=part.CustomPhysicalProperties})
+                end
+            end
+        end
         fling.Active, fling.Target = true, target.UserId
         fling.ContactSteps, fling.TargetDisplacement, fling.MaxTargetSpeed = 0, 0, 0
         fling.ContactPath = "not checked"
@@ -4275,9 +4322,14 @@ local createMobileUI = function(C)
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
     if State.FlingPlayer then
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
-        playersTab:Paragraph({Title = "Player launch", Desc = "Choose outward or experimental downward contact, then choose a target. Returns between bursts and respects exclusions. Contact cannot guarantee floor penetration, a server teleport, or a kill."})
+        playersTab:Paragraph({Title = "Player launch", Desc = "Choose spin, outward, or experimental downward contact, then choose a target. Returns between bursts and respects exclusions. Contact cannot guarantee floor penetration, a server teleport, or a kill."})
+        if State.SetFlingSpinContact then
+            mobile.SpinContactToggle = playersTab:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
+                Desc = "Pulsed vertical-axis spin during selected-player contact. Keeps physics rotation and reduces outward rushing. Changing mode stops the current session.",
+                Callback = function(enabled) State.SetFlingSpinContact(enabled) end})
+        end
         if State.SetFlingDownward then
-            playersTab:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
+            mobile.DownwardContactToggle = playersTab:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
                 Desc = "Attempts contact from above with downward velocity. OFF uses wall-aware outward contact. Changing mode stops the current session.",
                 Callback = function(enabled) State.SetFlingDownward(enabled) end})
         end
@@ -4598,6 +4650,8 @@ local createMobileUI = function(C)
         notice.Visible = not mobile.MenuOpen
         local fling = State.Fling
         local actions = State.PlayerActions
+        if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end
+        if fling and mobile.DownwardContactToggle and mobile.DownwardContactToggle.Value ~= (fling.Mode == "Downward") then mobile.DownwardContactToggle:Set(fling.Mode == "Downward",false) end
         if mobile.RefreshExclusions and mobile.LastExclusionsRevision ~= State.ExclusionsRevision then mobile.RefreshExclusions() end
         if actions and mobile.AutoAttackToggle and mobile.AutoAttackToggle.Value ~= actions.Enabled then
             mobile.AutoAttackToggle:Set(actions.Enabled,false)
