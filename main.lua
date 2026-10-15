@@ -1,7 +1,10 @@
--- MM2 DELTA MOBILE BUILD — full bundled source, no hosted URL needed.
--- Tap the round MM2 icon to toggle WindUI; drag it to reposition.
--- Dedicated touch actions: FIRE / STAB and separate THROW. No camera lock.
--- Delta/device compatibility still requires live testing; hits are server-authoritative.
+-- MM2 UNIVERSAL: automatic PC + mobile controls, with bundled WindUI.
+-- PC: left-click fires/stabs, E or right-click throws, Right Shift shows/hides the menu.
+-- The floating MM2 bubble is mobile-only; the PC menu key consumes Right Shift.
+-- Mobile: draggable MM2 icon + separate FIRE/STAB and THROW buttons.
+-- Active input selects the layout; touch-capable PCs keep mouse/keyboard controls.
+-- Replace your GitHub main.lua with this ENTIRE file. The existing loader URL stays the same.
+-- Device/executor compatibility needs live testing; hits remain server-authoritative.
 -- Murder Mystery 2 aim assist + role/gun ESP + optional dropped-gun pickup.
 -- Silent aim is ON at startup. Left-click shoots the gun or stabs with the knife.
 -- E, right-button press, or the native touch throw action explicitly starts a knife throw.
@@ -115,11 +118,20 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "DeltaMobile-WindUI-2026-10-15"
-local function touchInput()
+State.Build = "Universal-WindUI-2026-10-15-RShift"
+-- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
+local detectInputMode = function(UIS)
     local ok, preferred = pcall(function() return UIS.PreferredInput end)
-    return ok and preferred == Enum.PreferredInput.Touch or (not ok and UIS.TouchEnabled)
+    if ok then
+        if preferred == Enum.PreferredInput.Touch then return "Mobile" end
+        if preferred == Enum.PreferredInput.KeyboardAndMouse then return "PC" end
+    end
+    -- Older clients and gamepad input use available hardware as a fallback.
+    if UIS.TouchEnabled and not (UIS.KeyboardEnabled and UIS.MouseEnabled) then return "Mobile" end
+    return "PC"
 end
+
+local function touchInput() return detectInputMode(UIS) == "Mobile" end
 local function mobileBlocked()
     local ui = State.MobileUI
     return not State.MobileActionInProgress and ui
@@ -202,7 +214,7 @@ do
     connect(UIS.WindowFocusReleased, function() rightHeld = false end)
     connect(UIS.WindowFocused, function()
         rightHeld = false
-        if UIS.TouchEnabled or not State.Running or not input then return end
+        if touchInput() or not State.Running or not input then return end
         -- A mouse-up outside the game may never reach its camera input. Clear the native accumulated input on return.
         pcall(function()
             local wasEnabled = input.getInputEnabled()
@@ -228,7 +240,7 @@ do
         return cameras and input and utils
     end
     function State.CheckCameraLock()
-        if not State.Running or not cameras or not module.Parent or vr.VREnabled
+        if touchInput() or not State.Running or not cameras or not module.Parent or vr.VREnabled
             or not UIS.MouseEnabled or GuiService.MenuIsOpen then return false end
         local camera = workspace.CurrentCamera
         local char = player.Character
@@ -278,7 +290,6 @@ do
         RunService:UnbindFromRenderStep(bindName)
     end
     task.spawn(function()
-        if UIS.TouchEnabled then guard.Status = "Mobile native camera preserved"; return end
         local ok, loaded = pcall(loadNativeCamera)
         if not State.Running then return end
         if not ok or not loaded then guard.Status = "Native camera unavailable"; return end
@@ -303,7 +314,7 @@ if not round or not weapon then
     for _, connection in ipairs(State.Connections) do connection:Disconnect() end
     if State.StopCameraGuard then State.StopCameraGuard() end
     if env.MM2Assist == State then env.MM2Assist = nil end
-    error("MM2 Mobile: open Murder Mystery 2; game modules are unavailable or this executor cannot access them.")
+    error("MM2: open Murder Mystery 2; game modules are unavailable or this executor cannot access them.")
 end
 local function dataFor(p)
     local data = round.PlayerData or {}
@@ -3343,12 +3354,19 @@ syncWeapons()
 print("MM2 Assist loaded: Magic Bullet/F7 targets the murderer on click; ANIMS/F9 toggles persistent Mage movement.")
 
 
--- Mobile controls around the bundled WindUI library. No camera or cursor writes.
+-- Mobile and PC controls around the bundled WindUI library. No camera or cursor writes.
 local createMobileUI = function(C)
     local State, UIS, RunService = C.State, C.UIS, C.RunService
     local mobile = {MenuOpen = true, InputUntil = 0, Destroyed = false, Buttons = {}}
     State.MobileUI = mobile
     local window, library, overlay
+    local actionService = C.ContextActionService
+    local menuAction = "MM2AssistMenu_" .. tostring(State)
+    local menuBound = false
+    mobile.MenuActionName = menuAction
+    local function getMode() return C.GetInputMode and C.GetInputMode() or "Mobile" end
+    mobile.Mode = getMode()
+    State.InputMode = mobile.Mode
     local syncing = false
     local toggles = {}
     local function connect(signal, callback) return C.Connect(signal, callback) end
@@ -3358,6 +3376,7 @@ local createMobileUI = function(C)
     function mobile.Destroy()
         if mobile.Destroyed then return end
         mobile.Destroyed = true
+        if menuBound then actionService:UnbindAction(menuAction); menuBound = false end
         if window then pcall(function() window:Destroy() end) end
         if overlay then overlay:Destroy() end
         if library then
@@ -3385,8 +3404,8 @@ local createMobileUI = function(C)
     end
     local view = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 450)
     window = library:CreateWindow({
-        Title = "MM2 Mobile", Icon = "crosshair", NewElements = false,
-        Size = UDim2.fromOffset(math.min(570, view.X - 32), math.min(470, view.Y - 48)),
+        Title = "MM2 " .. mobile.Mode, Icon = "crosshair", NewElements = false,
+        Size = UDim2.fromOffset(math.min(mobile.Mode == "PC" and 680 or 570, view.X - 32), math.min(mobile.Mode == "PC" and 520 or 470, view.Y - 48)),
         MinSize = Vector2.new(280, 240), MaxSize = Vector2.new(750, 750),
         SideBarWidth = 118, Resizable = false, AutoScale = false,
         Acrylic = false, HideSearchBar = true, ScrollBarEnabled = true,
@@ -3432,7 +3451,7 @@ local createMobileUI = function(C)
         toggles[key] = toggle
         return toggle
     end
-    combat:Paragraph({Title = "Touch controls", Desc = "Close the menu to play. FIRE / STAB uses the equipped weapon. THROW only throws a knife. Drag the round MM2 icon or the action pad to move them."})
+    combat:Paragraph({Title = "PC + mobile controls", Desc = "Close the menu to play. PC: left-click fires or stabs; E / right-click throws; Right Shift toggles this menu. Mobile: FIRE / STAB and separate THROW buttons. Drag the MM2 icon to move it."})
     option(combat, "Aim assist", "Aim")
     option(combat, "Magic Bullet / gun aim", "MagicBullet", "Targets the known murderer when you fire. Walls and server rules still apply.")
     option(combat, "Knife throw prediction", "KnifeAim")
@@ -3454,7 +3473,7 @@ local createMobileUI = function(C)
     animations:Input({Title = "Custom R15 animation ID", Value = poseId, Placeholder = "Animation asset ID", Callback = function(text) poseId = text end})
     animations:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
     animations:Button({Title = "Restore animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
-    settings:Paragraph({Title = "Delta mobile build", Desc = "UI library: bundled WindUI 1.6.66. No key system, external UI download, keyboard shortcuts, or camera lock required. This device/executor still needs to support the game's module access."})
+    settings:Paragraph({Title = C.GetInputMode and "PC + mobile build" or "Delta mobile build", Desc = "UI library: bundled WindUI 1.6.66. Automatic input selection uses mouse/keyboard controls on PC and touch buttons on mobile. The executor must support the game's module access."})
     settings:Button({Title = "Equip gun / knife", Callback = function() C.EquipWeapon() end})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
     settings:Button({Title = "Repair camera input", Callback = function() State.FixCamera() end})
@@ -3484,6 +3503,7 @@ local createMobileUI = function(C)
     end
     local icon = button("MM2", UDim2.fromOffset(54, 54), canvas)
     icon.Name = "FloatingMenuIcon"
+    icon.Visible = mobile.Mode == "Mobile"
     icon.ZIndex = 10
     icon.UICorner.CornerRadius = UDim.new(1, 0)
     mobile.Icon = icon
@@ -3501,6 +3521,7 @@ local createMobileUI = function(C)
     throw.Position = UDim2.fromOffset(0, 85)
     mobile.Buttons = {Fire = fire, Throw = throw}
     mobile.Pad = pad
+    pad.Visible = false
 
     local function clamp(frame)
         local max = canvas.AbsoluteSize - frame.AbsoluteSize - Vector2.new(6, 6)
@@ -3545,8 +3566,24 @@ local createMobileUI = function(C)
     end
     draggable(icon, icon, function() window:Toggle() end)
     draggable(handle, pad)
+    if actionService then
+        -- Consume Right Shift before native mouse-lock bindings; Left Shift stays available.
+        actionService:BindActionAtPriority(menuAction, function(_, state)
+            if mobile.Destroyed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then
+                return Enum.ContextActionResult.Pass
+            end
+            if state == Enum.UserInputState.Begin then window:Toggle() end
+            return Enum.ContextActionResult.Sink
+        end, false, Enum.ContextActionPriority.High.Value + 100, Enum.KeyCode.RightShift)
+        menuBound = true
+    else
+        connect(UIS.InputBegan, function(input, processed)
+            if processed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then return end
+            if input.KeyCode == Enum.KeyCode.RightShift then window:Toggle() end
+        end)
+    end
     local function action(callback)
-        if mobile.MenuOpen or UIS:GetFocusedTextBox() then return end
+        if mobile.Mode ~= "Mobile" or mobile.MenuOpen or UIS:GetFocusedTextBox() then return end
         suppressInput()
         State.MobileActionInProgress = true
         local ok, message = pcall(callback)
@@ -3579,13 +3616,31 @@ local createMobileUI = function(C)
     end
     local function resized()
         local size = canvas.AbsoluteSize
-        local width, height = math.max(280, math.min(570, size.X - 24)), math.max(240, math.min(470, size.Y - 24))
+        local width = math.max(280, math.min(mobile.Mode == "PC" and 680 or 570, size.X - 24))
+        local height = math.max(240, math.min(mobile.Mode == "PC" and 520 or 470, size.Y - 24))
         window.Size = UDim2.fromOffset(width, height)
         if not window.Closed then window:SetSize(window.Size) end
         window:SetToTheCenter()
         notice.Size = UDim2.fromOffset(math.min(300, size.X - 24), 36)
         notice.Position = UDim2.new(0.5, -notice.Size.X.Offset / 2, 0, 8)
         clamp(icon); clamp(pad)
+    end
+    function mobile.ApplyInputMode()
+        local mode = getMode()
+        if mode == mobile.Mode then return end
+        mobile.Mode = mode
+        State.InputMode = mode
+        icon.Visible = mode == "Mobile"
+        window:SetTitle("MM2 " .. mode)
+        pad.Visible = mode == "Mobile" and not mobile.MenuOpen and C.EquippedWeapon() ~= nil
+        suppressInput()
+        resized()
+    end
+    -- PreferredInput changes on hybrid devices and when phone peripherals are used.
+    if C.GetInputMode then
+        local ok, changed = pcall(function() return UIS:GetPropertyChangedSignal("PreferredInput") end)
+        if ok and changed then connect(changed, mobile.ApplyInputMode) end
+        if UIS.LastInputTypeChanged then connect(UIS.LastInputTypeChanged, mobile.ApplyInputMode) end
     end
     connect(canvas:GetPropertyChangedSignal("AbsoluteSize"), resized)
     task.defer(function()
@@ -3597,7 +3652,8 @@ local createMobileUI = function(C)
         if elapsed < 0.3 then return end
         elapsed = 0
         local item = C.EquippedWeapon()
-        pad.Visible = not mobile.MenuOpen and item ~= nil
+        mobile.ApplyInputMode()
+        pad.Visible = mobile.Mode == "Mobile" and not mobile.MenuOpen and item ~= nil
         fire.Text = item and item.Name == "Knife" and "STAB" or "FIRE"
         throw.Visible = item ~= nil and item.Name == "Knife"
         notice.Visible = not mobile.MenuOpen
@@ -21020,7 +21076,9 @@ return aa
         createMobileUI({
             State = State, UIS = UIS, RunService = RunService, Parent = gui.Parent,
             Connect = connect, CreateLibrary = createLibrary, SyncWeapons = syncWeapons,
+            ContextActionService = game:GetService("ContextActionService"),
             EquippedWeapon = equippedWeapon,
+            GetInputMode = function() return detectInputMode(UIS) end,
             UpdateVisuals = function() updateESP(); updateThreat(); updateGunESP() end,
             EquipWeapon = function()
                 local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
@@ -21053,6 +21111,6 @@ return aa
     end)
     if not ok then
         State.Destroy()
-        error("MM2 Mobile could not open its UI: " .. tostring(message))
+        error("MM2 could not open its UI: " .. tostring(message))
     end
 end
