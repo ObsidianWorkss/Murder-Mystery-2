@@ -2,6 +2,7 @@
 -- PC: left-click fires/stabs, E or right-click throws, Right Shift shows/hides the menu.
 -- The floating MM2 bubble is mobile-only; the PC menu key consumes Right Shift.
 -- Mobile: draggable MM2 icon + separate FIRE/STAB and THROW buttons.
+-- Players tab: role-aware or selected-player fling attempts, with Stop/return.
 -- Active input selects the layout; touch-capable PCs keep mouse/keyboard controls.
 -- Replace your GitHub main.lua with this ENTIRE file. The existing loader URL stays the same.
 -- Device/executor compatibility needs live testing; hits remain server-authoritative.
@@ -118,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-RShift"
+State.Build = "Universal-WindUI-2026-10-15-Fling"
 -- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
 local detectInputMode = function(UIS)
     local ok, preferred = pcall(function() return UIS.PreferredInput end)
@@ -133,6 +134,7 @@ end
 
 local function touchInput() return detectInputMode(UIS) == "Mobile" end
 local function mobileBlocked()
+    if State.Fling and State.Fling.Active then return true end
     local ui = State.MobileUI
     return not State.MobileActionInProgress and ui
         and (ui.MenuOpen or os.clock() < (ui.InputUntil or 0))
@@ -3213,6 +3215,7 @@ end
 function State.Destroy()
     if not State.Running then return end
     State.Running = false
+    if State.StopFling then State.StopFling("Unloaded; position restored") end
     if State.MobileUI and State.MobileUI.Destroy then State.MobileUI.Destroy() end
     if State.StopKnifeDodge then State.StopKnifeDodge() end
     if State.SetExperimentalInvisibility then State.SetExperimentalInvisibility(false) end
@@ -3354,6 +3357,180 @@ syncWeapons()
 print("MM2 Assist loaded: Magic Bullet/F7 targets the murderer on click; ANIMS/F9 toggles persistent Mage movement.")
 
 
+do
+-- Short, user-triggered contact attempts. No target ownership or server-hit claims.
+local installPlayerFling = function(C)
+    local State, Players, player = C.State, C.Players, C.Player
+    local clock = C.Clock or os.clock
+    local fling = {Active = false, Status = "Fling idle", Duration = 1.8, Attempts = 0}
+    State.Fling = fling
+    local saved
+    local function put(object, property, value)
+        pcall(function() object[property] = value end)
+    end
+    local function describe(message)
+        fling.Status = message
+        fling.DisplayUntil = clock() + 4
+        State.AimStatus = message
+    end
+    local function characterParts(p)
+        local char = p and p.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not hum or hum.Health <= 0 or not root or not root:IsA("BasePart") then return nil end
+        return char, hum, root
+    end
+    local function finite(vector)
+        return vector.X == vector.X and vector.Y == vector.Y and vector.Z == vector.Z
+            and math.abs(vector.X) < 1e6 and math.abs(vector.Y) < 1e6 and math.abs(vector.Z) < 1e6
+    end
+    function State.GetFlingPlayers()
+        local result = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then
+                table.insert(result, {UserId = p.UserId, Name = p.Name, DisplayName = p.DisplayName, Role = C.RoleFor(p)})
+            end
+        end
+        table.sort(result, function(a, b) return a.Name:lower() < b.Name:lower() end)
+        return result
+    end
+    function State.StopFling(message)
+        local record = saved
+        saved = nil
+        fling.Active = false
+        fling.Target = nil
+        if record then
+            -- Never move a newly spawned character to an older character's return point.
+            local same = player.Character == record.Character
+            if record.Root.Parent then
+                put(record.Root, "AssemblyAngularVelocity", Vector3.zero)
+                put(record.Root, "AssemblyLinearVelocity", Vector3.zero)
+                if same and record.Humanoid.Health > 0 then put(record.Root, "CFrame", record.CFrame) end
+                put(record.Root, "CanCollide", record.CanCollide)
+                put(record.Root, "CollisionGroup", record.CollisionGroup)
+                if same and record.Humanoid.Health > 0 then
+                    put(record.Root, "AssemblyLinearVelocity", record.LinearVelocity)
+                    put(record.Root, "AssemblyAngularVelocity", record.AngularVelocity)
+                end
+            end
+            if record.Humanoid.Parent then
+                put(record.Humanoid, "AutoRotate", record.AutoRotate)
+                put(record.Humanoid, "PlatformStand", record.PlatformStand)
+                if same and record.Humanoid.Health > 0 then
+                    pcall(function() record.Humanoid:ChangeState(record.HumanoidState) end)
+                end
+            end
+        end
+        describe(message or (record and "Fling stopped; position restored" or "Fling idle"))
+    end
+    local function findPlayer(id)
+        for _, p in ipairs(Players:GetPlayers()) do if p.UserId == tonumber(id) then return p end end
+    end
+    function State.FlingPlayer(id)
+        if not State.Running then return false, "Script is unloaded" end
+        if fling.Active then return false, "A fling is already running; use Stop fling first" end
+        local target = findPlayer(id)
+        if not target or target == player then describe("Select another player who is still in this server"); return false, fling.Status end
+        if State.Invis and (State.Invis.Busy or State.Invis.Active) then
+            describe("Turn Ghost invisibility off before flinging"); return false, fling.Status
+        end
+        if State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy) then
+            if not State.ExitUndergroundForAttack or not State.ExitUndergroundForAttack() then
+                describe("Restore your character before flinging"); return false, fling.Status
+            end
+        end
+        local char, hum, root = characterParts(player)
+        local targetChar, targetHum, targetRoot = characterParts(target)
+        if not char or not targetChar then describe("Both characters must be alive and loaded"); return false, fling.Status end
+        if root.Anchored or targetRoot.Anchored or hum.Sit or hum.PlatformStand then
+            describe("Fling unavailable while a character is anchored, seated, or disabled"); return false, fling.Status
+        end
+        if not finite(root.Position) or not finite(targetRoot.Position)
+            or not finite(root.AssemblyLinearVelocity) or not finite(root.AssemblyAngularVelocity)
+            or root.AssemblyLinearVelocity.Magnitude > 80 or root.AssemblyAngularVelocity.Magnitude > 40 then
+            describe("Wait until your character is moving normally"); return false, fling.Status
+        end
+        saved = {Character = char, Humanoid = hum, Root = root, CFrame = root.CFrame,
+            LinearVelocity = root.AssemblyLinearVelocity, AngularVelocity = root.AssemblyAngularVelocity,
+            AutoRotate = hum.AutoRotate, PlatformStand = hum.PlatformStand, HumanoidState = hum:GetState(),
+            CanCollide = root.CanCollide, CollisionGroup = root.CollisionGroup,
+            Target = target, TargetCharacter = targetChar, Started = clock()}
+        fling.Active, fling.Target = true, target.UserId
+        fling.Attempts += 1
+        if C.StopWeaponActions then C.StopWeaponActions() end
+        local ok, message = pcall(function()
+            hum.AutoRotate = false
+            hum.PlatformStand = true
+            root.CanCollide = true
+            root.CollisionGroup = "Default"
+        end)
+        if not ok then State.StopFling("Fling setup failed: " .. tostring(message)); return false, fling.Status end
+        describe("Fling attempt: @" .. target.Name)
+        return true, fling.Status
+    end
+    function State.FlingRole(role)
+        if role == "Opponent" then role = C.RoleFor(player) == "Murderer" and "Sheriff" or "Murderer" end
+        if role ~= "Murderer" and role ~= "Sheriff" then describe("Choose Murderer or Sheriff"); return false, fling.Status end
+        local _, _, ownRoot = characterParts(player)
+        local chosen, nearest
+        for _, p in ipairs(Players:GetPlayers()) do
+            local _, _, root = characterParts(p)
+            if p ~= player and root and C.IsAlive(p) and C.RoleFor(p) == role then
+                local distance = ownRoot and (root.Position - ownRoot.Position).Magnitude or 0
+                if not nearest or distance < nearest then chosen, nearest = p, distance end
+            end
+        end
+        if not chosen then describe("No living " .. role:lower() .. " is available"); return false, fling.Status end
+        return State.FlingPlayer(chosen.UserId)
+    end
+    C.Connect(C.RunService.Heartbeat, function()
+        local record = saved
+        if not record then return end
+        local ok, message = pcall(function()
+            if not State.Running or player.Character ~= record.Character or not record.Root.Parent
+                or record.Humanoid.Health <= 0 then State.StopFling("Fling stopped: your character changed"); return end
+            local targetChar, _, targetRoot = characterParts(record.Target)
+            if targetChar ~= record.TargetCharacter or not targetRoot then State.StopFling("Fling stopped: target changed or died"); return end
+            if record.Root.Anchored or targetRoot.Anchored then State.StopFling("Fling stopped: anchored character"); return end
+            local elapsed = clock() - record.Started
+            if elapsed >= fling.Duration then State.StopFling("Attempt ended; server result unverified"); return end
+            if not finite(targetRoot.Position) or not finite(targetRoot.AssemblyLinearVelocity)
+                or targetRoot.Position.Y < C.Workspace.FallenPartsDestroyHeight + 12 then
+                State.StopFling("Fling stopped: target is out of bounds"); return
+            end
+            if elapsed > 0.2 and targetRoot.AssemblyLinearVelocity.Magnitude > 120 then
+                State.StopFling("Target moving quickly; attempt ended"); return
+            end
+            local angle = elapsed * 28
+            local radial = Vector3.new(math.cos(angle), 0, math.sin(angle))
+            local lead = targetRoot.AssemblyLinearVelocity * 0.035
+            if lead.Magnitude > 4 then lead = lead.Unit * 4 end
+            local position = targetRoot.Position + lead + radial * 1.25 + Vector3.new(0, 0.45, 0)
+            record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 17, angle, elapsed * 11)
+            record.Root.AssemblyAngularVelocity = Vector3.new(180, 420, 140)
+            record.Root.AssemblyLinearVelocity = -radial * 340 + Vector3.new(0, 75, 0)
+        end)
+        if not ok then State.StopFling("Fling interrupted: " .. tostring(message)) end
+    end)
+    C.Connect(player.CharacterRemoving, function() if fling.Active then State.StopFling("Fling stopped: respawning") end end)
+    C.Connect(Players.PlayerRemoving, function(p)
+        if saved and saved.Target == p then State.StopFling("Fling stopped: player left") end
+    end)
+    return fling
+end
+
+installPlayerFling({State = State, Players = Players, Player = player, RunService = RunService,
+    Workspace = workspace, Connect = connect, RoleFor = roleFor, IsAlive = alive,
+    StopWeaponActions = function()
+        for _, record in pairs(State.WeaponHandlers) do
+            record.ThrowToken += 1
+            record.Charging, record.StabbingUntil = false, 0
+            stopTracks(record)
+        end
+    end})
+end
+
+
 -- Mobile and PC controls around the bundled WindUI library. No camera or cursor writes.
 local createMobileUI = function(C)
     local State, UIS, RunService = C.State, C.UIS, C.RunService
@@ -3480,6 +3657,40 @@ local createMobileUI = function(C)
     settings:Button({Title = "Repair character (respawns)", Callback = function() State.RepairCharacter() end})
     settings:Button({Title = "Close menu", Callback = function() window:Close() end})
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
+    if State.FlingPlayer then
+        local playersTab = window:Tab({Title = "Players", Icon = "users"})
+        playersTab:Paragraph({Title = "Player fling", Desc = "Click a role button or select a player, then click Fling selected player. This briefly moves your character beside the target and returns you afterward. Server physics may prevent any effect."})
+        mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
+        local selectedId, labelToId, picker
+        local function roster()
+            local labels, selectedLabel = {}, nil
+            labelToId = {}
+            for _, entry in ipairs(State.GetFlingPlayers()) do
+                local label = entry.DisplayName .. " (@" .. entry.Name .. ") | " .. entry.Role
+                table.insert(labels, label)
+                labelToId[label] = entry.UserId
+                if selectedId == entry.UserId then selectedLabel = label end
+            end
+            if not selectedLabel then selectedId = nil end
+            if picker then picker:Refresh(labels); picker:Select(selectedLabel) end
+            return labels
+        end
+        picker = playersTab:Dropdown({Title = "Specific player", Values = roster(), Multi = false, AllowNone = true,
+            SearchBarEnabled = true, Callback = function(label) selectedId = labelToId[label] end})
+        playersTab:Button({Title = "Fling selected player", Callback = function() State.FlingPlayer(selectedId) end})
+        playersTab:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() State.FlingRole("Opponent") end})
+        playersTab:Button({Title = "Fling murderer", Callback = function() State.FlingRole("Murderer") end})
+        playersTab:Button({Title = "Fling sheriff", Callback = function() State.FlingRole("Sheriff") end})
+        playersTab:Button({Title = "Stop fling / return", Callback = function() State.StopFling() end})
+        playersTab:Button({Title = "Refresh player list", Callback = roster})
+        local function refreshRoster()
+            task.defer(function() if State.Running and not mobile.Destroyed then roster() end end)
+        end
+        if C.Players then
+            connect(C.Players.PlayerAdded, refreshRoster)
+            connect(C.Players.PlayerRemoving, refreshRoster)
+        end
+    end
     combat:Select()
 
     local function button(text, size, parent)
@@ -3657,8 +3868,13 @@ local createMobileUI = function(C)
         fire.Text = item and item.Name == "Knife" and "STAB" or "FIRE"
         throw.Visible = item ~= nil and item.Name == "Knife"
         notice.Visible = not mobile.MenuOpen
-        notice.Text = State.KnifeFeedback and os.clock() < State.KnifeFeedback.Until
-            and State.KnifeFeedback.Message or State.AimStatus
+        local fling = State.Fling
+        if fling and mobile.FlingStatus and mobile.FlingStatus.ParagraphFrame and mobile.LastFlingStatus ~= fling.Status then
+            mobile.FlingStatus.ParagraphFrame:SetDesc(fling.Status)
+            mobile.LastFlingStatus = fling.Status
+        end
+        notice.Text = fling and (fling.Active or os.clock() < (fling.DisplayUntil or 0)) and fling.Status
+            or (State.KnifeFeedback and os.clock() < State.KnifeFeedback.Until and State.KnifeFeedback.Message or State.AimStatus)
         refresh()
     end)
     return mobile
@@ -21076,7 +21292,7 @@ return aa
         createMobileUI({
             State = State, UIS = UIS, RunService = RunService, Parent = gui.Parent,
             Connect = connect, CreateLibrary = createLibrary, SyncWeapons = syncWeapons,
-            ContextActionService = game:GetService("ContextActionService"),
+            Players = Players, ContextActionService = game:GetService("ContextActionService"),
             EquippedWeapon = equippedWeapon,
             GetInputMode = function() return detectInputMode(UIS) end,
             UpdateVisuals = function() updateESP(); updateThreat(); updateGunESP() end,
