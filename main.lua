@@ -1,6 +1,3 @@
--- Paste this ENTIRE file into Delta and execute it in Murder Mystery 2.
--- Full bundled loadstring: this is large because it needs no hosted script URL.
-local run, problem = loadstring([=[
 -- MM2 DELTA MOBILE BUILD — full bundled source, no hosted URL needed.
 -- Tap the round MM2 icon to toggle WindUI; drag it to reposition.
 -- Dedicated touch actions: FIRE / STAB and separate THROW. No camera lock.
@@ -21059,7 +21056,3 @@ return aa
         error("MM2 Mobile could not open its UI: " .. tostring(message))
     end
 end
-
-]=], "MM2_Mobile")
-if not run then error(problem) end
-return run()
