@@ -86,7 +86,7 @@ local State = {
     Invis = {Mode = "NativeGhost", Active = false, Busy = false, ActiveUntil = 0, NextUse = 0,
         Status = "Ghost OFF (requires owned/equipped perk)"},
     RepairRequired = repairRequired,
-    Config = {ExcludedPlayers = {}, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, TacticalGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-StableAimQuickStop"
+State.Build = "Universal-WindUI-2026-10-15-QuietGuide"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -2679,7 +2679,7 @@ local function updateESP()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
         local role = roleFor(p)
-        if p ~= player and State.Config.ESP and alive(p) and colors[role] then
+        if p ~= player and State.Config.ESP and alive(p) and colors[role] and (not State.Config.CleanVisuals or role ~= "Innocent") then
             local char = p.Character
             local visual = State.Visuals[p]
             if visual and visual.Character ~= char then removeVisual(p); visual = nil end
@@ -2707,6 +2707,7 @@ local function updateESP()
                 visual = {Character = char, Highlight = highlight, Label = label, Text = text, HiddenBoxes = {}}
                 State.Visuals[p] = visual
             end
+            visual.Highlight.FillTransparency = State.Config.CleanVisuals and .92 or .65
             visual.Highlight.FillColor = colors[role]
             visual.Highlight.OutlineColor = colors[role]
             visual.Text.TextColor3 = colors[role]
@@ -2716,6 +2717,9 @@ local function updateESP()
             visual.Text.Text = p.DisplayName .. " | " .. role
                 .. (visual.Hidden and " | INVISIBLE" or "")
                 .. (distance and (" | " .. math.floor(distance + 0.5) .. " studs") or "")
+            if State.Config.CleanVisuals then visual.Text.Text=role; visual.Label.Size=UDim2.fromOffset(150,24)
+            else visual.Label.Size=UDim2.fromOffset(280,44) end
+            visual.Label.Enabled=not (State.Config.TacticalGuide and State.Guidance and State.Guidance.TargetVisible and State.Guidance.TargetId==p.UserId)
         else removeVisual(p) end
     end
 end
@@ -2817,6 +2821,7 @@ local function updateThreat()
     end
     if not closest then return end
     State.Threat = closest
+    if State.Config.CleanVisuals and State.Config.TacticalGuide and State.Config.CombatHUD then return end
     threatBanner.BackgroundColor3 = closest.Distance <= 12 and Color3.fromRGB(150, 28, 38)
         or Color3.fromRGB(115, 66, 22)
     threatBanner.Text = "MURDERER: " .. closest.DisplayName .. " | " .. math.floor(closest.Distance + 0.5)
@@ -3428,6 +3433,7 @@ end
 function State.Destroy()
     if not State.Running then return end
     State.Running = false
+    if State.DestroyTacticalGuide then State.DestroyTacticalGuide() end
     if State.StopAutoAttack then State.StopAutoAttack("Unloaded") end
     if State.StopFling then State.StopFling("Unloaded; position restored") end
     if State.MobileUI and State.MobileUI.Destroy then State.MobileUI.Destroy() end
@@ -4609,6 +4615,311 @@ end})
 end
 
 
+do
+-- Recommendations only, using currently observed characters and map destinations.
+local createTacticalPolicy = function()
+    local policy={}
+    local function countNear(list,position,except,radius)
+        local count=0
+        for _,p in ipairs(list) do if p.Id~=except and (p.Position-position).Magnitude<radius then count+=1 end end
+        return count
+    end
+    function policy.Decide(s)
+        if not s.Active or s.Role=="Unknown" then return {Instruction="Waiting for an active round",Kind="Idle"} end
+        if s.Paused then return {Instruction="Automation active; End / STOP to return",Kind="Idle"} end
+        local result={Kind="Idle",Instruction="Observe the round"}
+        local threat,threatDistance
+        for _,p in ipairs(s.Players) do
+            if p.Role=="Murderer" then
+                local d=(p.Position-s.Position).Magnitude
+                if not threatDistance or d<threatDistance then threat,threatDistance=p,d end
+            end
+        end
+        local chosen,score
+        if s.Role=="Murderer" then
+            for _,p in ipairs(s.Players) do
+                if not p.Excluded then
+                    local d=(p.Position-s.Position).Magnitude
+                    local nearby=countNear(s.Players,p.Position,p.Id,24)
+                    local cost=d+nearby*45+(p.Visible and 0 or 12)
+                    if not score or cost<score then chosen,score=p,cost end
+                end
+            end
+            if chosen then
+                local nearby=countNear(s.Players,chosen.Position,chosen.Id,24)
+                result.Target=chosen
+                if nearby==0 then
+                    result.Kind="Approach"; result.Goal=chosen.Position
+                    result.Instruction="Approach @"..chosen.Name.."; fewer nearby players"
+                    result.Label="ISOLATED · APPROACH"
+                    if s.Weapon=="Knife" and s.Enabled and chosen.Visible and (chosen.Position-s.Position).Magnitude<=6.5 then
+                        result.Kind="Opportunity"; result.Goal=nil
+                        result.Instruction="Stab opportunity; keep clear of other players"
+                        result.Label="STAB OPPORTUNITY"
+                    elseif s.Weapon~="Knife" then result.Instruction="Equip knife; watch the isolated player" end
+                else result.Instruction="Crowded; wait for separation"; result.Label="CROWDED · WAIT" end
+            else result.Instruction="No eligible target; exclusions stay protected" end
+        elseif threat then
+            result.Target=threat; result.Threat=threat.Position
+            result.Label="MURDERER"
+            if not threat.Excluded and s.Role=="Sheriff" and s.Weapon=="Gun" and s.Enabled and threat.Visible and threatDistance>=14 then
+                result.Kind="Observe"; result.Label="LINE UP A CLEAR SHOT"; result.Instruction="Keep distance and line up a clear shot"
+            else
+                result.Kind="Retreat"; result.Instruction=threatDistance<24 and "Create distance from the murderer" or "Stay clear; move toward other players"
+            end
+        else result.Instruction="Murderer unknown; stay near other players" end
+        if not result.Goal and result.Kind~="Opportunity" and result.Kind~="Observe" then
+            local best,bestCost
+            for _,goal in ipairs(s.Destinations or {}) do
+                local d=(goal.Position-s.Position).Magnitude
+                if d>10 and d<300 then
+                    local nearby=countNear(s.Players,goal.Position,nil,26)
+                    local danger=threat and (goal.Position-threat.Position).Magnitude or nil
+                    local acceptable=not danger or danger>=math.min(60,(threatDistance or 0)+8)
+                    local cost=d+(s.Role=="Murderer" and nearby*30 or -math.min(nearby,3)*14)
+                    if acceptable and (not bestCost or cost<bestCost) then best,bestCost=goal,cost end
+                end
+            end
+            if best then result.Goal=best.Position; result.DestinationName=best.Name end
+        end
+        return result
+    end
+    function policy.RouteAllowed(points,threat,start)
+        if #points==0 then return false end
+        local minimum=threat and math.min(12,(start-threat).Magnitude)-1 or nil
+        for _,wp in ipairs(points) do
+            local p=wp.Position
+            if not p or p.X~=p.X or p.Y~=p.Y or p.Z~=p.Z or math.abs(p.X)==math.huge or math.abs(p.Y)==math.huge or math.abs(p.Z)==math.huge then return false end
+            if minimum and (p-threat).Magnitude<minimum then return false end
+        end
+        return true
+    end
+    return policy
+end
+
+-- Read-only tactical hints and one path waypoint. Never moves or attacks.
+local installTacticalGuide = function(C)
+    local State,Players,player,world=C.State,C.Players,C.Player,C.Workspace
+    local clock=C.Clock or os.clock
+    local guide={Instruction="Waiting for an active round",PathStatus="Idle",ObservedPlayers=0}
+    State.Guidance=guide
+    local token,busy,nextScan,nextPath=0,false,0,0
+    local route,index,pathConnection,lastGoal,lastCharacter={},1,nil,nil,nil
+    local lastRole,lastTarget
+    local actorHighlight,actorLabel,actorText,marker,markerLabel,markerText
+    local worldFolder=Instance.new("Folder"); worldFolder.Name="MM2TacticalHints"; worldFolder.Parent=world
+    local guiFolder=Instance.new("Folder"); guiFolder.Name="MM2TacticalLabels"; guiFolder.Parent=C.Parent
+    local function hide()
+        if actorHighlight then actorHighlight.Enabled=false end
+        if actorLabel then actorLabel.Enabled=false end
+        if markerLabel then markerLabel.Enabled=false end
+    end
+    local function clearRoute()
+        token+=1; route,index,lastGoal={},1,nil
+        if pathConnection then pathConnection:Disconnect(); pathConnection=nil end
+        if markerLabel then markerLabel.Enabled=false end
+        guide.NextWaypoint=nil
+    end
+    function State.StopTacticalGuide()
+        clearRoute(); hide(); guide.TargetId,guide.TargetVisible=nil,false
+        guide.Instruction="Guide off"; guide.PathStatus="Idle"
+    end
+    function State.SetTacticalGuide(enabled)
+        State.Config.TacticalGuide=enabled==true
+        State.StopTacticalGuide(); nextScan,nextPath=0,0
+    end
+    function State.DestroyTacticalGuide()
+        State.StopTacticalGuide(); worldFolder:Destroy(); guiFolder:Destroy()
+    end
+    local function billboard(parent,name)
+        local b=Instance.new("BillboardGui"); b.Name=name; b.Size=UDim2.fromOffset(190,26)
+        b.AlwaysOnTop=false; b.MaxDistance=140; b.StudsOffset=Vector3.new(0,2.8,0); b.Parent=parent
+        local t=Instance.new("TextLabel"); t.Size=UDim2.fromScale(1,1); t.BackgroundTransparency=1
+        t.TextSize=12; t.Font=Enum.Font.GothamBold; t.TextStrokeTransparency=.25; t.TextColor3=Color3.fromRGB(245,218,126); t.Parent=b
+        return b,t
+    end
+    local function drawTarget(decision)
+        local target=decision.Target
+        guide.TargetId,guide.TargetVisible=target and target.Id or nil,target and target.Visible or false
+        if not target or not target.Character or not target.Character.Parent then hide(); return end
+        if not actorLabel then
+            actorLabel,actorText=billboard(guiFolder,"TacticalTarget")
+            actorHighlight=Instance.new("Highlight"); actorHighlight.DepthMode=Enum.HighlightDepthMode.Occluded
+            actorHighlight.FillTransparency=1; actorHighlight.OutlineColor=Color3.fromRGB(245,218,126); actorHighlight.Parent=worldFolder
+        end
+        actorLabel.Adornee=target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
+        actorLabel.Enabled=target.Visible; actorText.Text=decision.Label or "OBSERVE"
+        actorHighlight.Adornee=target.Character
+        local regularESP=State.Config.ESP and (target.Role=="Murderer" or target.Role=="Sheriff" or (target.Role=="Innocent" and not State.Config.CleanVisuals))
+        actorHighlight.Enabled=target.Visible and not regularESP
+    end
+    local function destinations(position)
+        local best,bestDistance
+        for _,map in ipairs(world:GetChildren()) do
+            local spawns=map:IsA("Model") and map:FindFirstChild("Spawns")
+            if spawns and not map.Name:lower():find("lobby",1,true) then
+                local points,closest={},math.huge
+                for _,part in ipairs(spawns:GetDescendants()) do
+                    if part:IsA("BasePart") and #points<64 then
+                        closest=math.min(closest,(part.Position-position).Magnitude)
+                        table.insert(points,{Position=part.Position,Name=part.Name})
+                    end
+                end
+                if closest<512 and (not bestDistance or closest<bestDistance) then best,bestDistance=points,closest end
+            end
+        end
+        return best or {}
+    end
+    local function snapshot()
+        local char=player.Character; local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local active=root and hum and hum.Health>0 and C.IsAlive(player)
+        if not active then return {Active=false,Role="Unknown",Players={}},root end
+        local list={}
+        for _,p in ipairs(Players:GetPlayers()) do
+            local r=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if p~=player and r and C.IsAlive(p) then
+                table.insert(list,{Id=p.UserId,Name=p.Name,Character=p.Character,Position=r.Position,Role=C.RoleFor(p),
+                    Excluded=State.IsPlayerExcluded(p),Visible=false,Distance=(r.Position-root.Position).Magnitude})
+            end
+        end
+        table.sort(list,function(a,b) return a.Distance<b.Distance end)
+        for i=1,math.min(8,#list) do
+            local p=list[i]; if p.Distance<140 then p.Visible=C.ClearPath(root.Position,p.Position,p.Character) end
+        end
+        local item=C.EquippedWeapon()
+        return {Active=true,Role=C.RoleFor(player),Position=root.Position,Players=list,Destinations=destinations(root.Position),
+            Weapon=item and item.Name,Enabled=item and item.Enabled~=false,
+            Paused=(State.Fling and State.Fling.Active) or (State.PlayerActions and State.PlayerActions.Enabled)},root,hum
+    end
+    local function drawWaypoint(root)
+        while route[index] do
+            local delta=route[index].Position-root.Position
+            if Vector3.new(delta.X,0,delta.Z).Magnitude<4 and math.abs(delta.Y)<6 then index+=1 else break end
+        end
+        local wp=route[index]
+        guide.NextWaypoint=wp and wp.Position or nil
+        if not wp then if markerLabel then markerLabel.Enabled=false end; return end
+        if not marker then
+            marker=Instance.new("Part"); marker.Name="MM2NextWaypoint"; marker.Size=Vector3.new(.2,.2,.2)
+            marker.Anchored=true; marker.CanCollide=false; marker.CanTouch=false; marker.CanQuery=false; marker.Transparency=1; marker.Parent=worldFolder
+            markerLabel,markerText=billboard(guiFolder,"NextWaypoint"); markerLabel.Adornee=marker
+        end
+        marker.Position=wp.Position+Vector3.new(0,1.5,0); markerLabel.Enabled=true
+        markerText.Text=(wp.Action==Enum.PathWaypointAction.Jump and "JUMP HERE" or "NEXT")..(" · %.0f studs"):format((wp.Position-root.Position).Magnitude)
+    end
+    local function plan(decision,root,hum)
+        if not decision.Goal then if lastGoal or #route>0 then clearRoute() end; guide.PathStatus="No route needed"; return end
+        if lastGoal and (decision.Goal-lastGoal).Magnitude>8 then clearRoute() end
+        if busy or clock()<nextPath then return end
+        nextPath=clock()+2; busy=true; lastGoal=decision.Goal
+        local mine,char,goal,start=token,player.Character,decision.Goal,root.Position
+        guide.PathStatus="Planning"
+        task.spawn(function()
+            local path
+            local ok,points=pcall(function()
+                path=C.PathfindingService:CreatePath({AgentRadius=math.clamp(root.Size.X/2,.75,3),
+                    AgentHeight=math.clamp((hum.HipHeight+root.Size.Y/2)*2,3,10),AgentCanJump=true,WaypointSpacing=5})
+                path:ComputeAsync(start,goal)
+                if path.Status~=Enum.PathStatus.Success then return nil end
+                return path:GetWaypoints()
+            end)
+            busy=false
+            if not State.Running or not State.Config.TacticalGuide or mine~=token or player.Character~=char then return end
+            if not ok or not points or not C.Policy.RouteAllowed(points,decision.Threat,start) then
+                clearRoute(); guide.PathStatus=ok and "No suitable route" or "Path unavailable"; return
+            end
+            route,index=points,1; guide.PathStatus="Route available"
+            if pathConnection then pathConnection:Disconnect() end
+            pathConnection=path.Blocked:Connect(function(blockedIndex)
+                if mine==token and blockedIndex>=index then clearRoute(); nextPath=0; guide.PathStatus="Route blocked; replanning" end
+            end)
+        end)
+    end
+    C.Connect(C.RunService.Heartbeat,function()
+        if not State.Running then return end
+        local now=clock()
+        if now<nextScan then return end; nextScan=now+.6
+        local ok,message=pcall(function()
+            if not State.Config.TacticalGuide then State.StopTacticalGuide(); return end
+            if State.MobileUI and State.MobileUI.MenuOpen then clearRoute(); hide(); guide.TargetId,guide.TargetVisible=nil,false; return end
+            if player.Character~=lastCharacter then clearRoute(); lastCharacter=player.Character end
+            local data,root,hum=snapshot(); guide.ObservedPlayers=#data.Players
+            local decision=C.Policy.Decide(data); guide.Instruction=decision.Instruction
+            local targetId=decision.Target and decision.Target.Id
+            if data.Role~=lastRole or targetId~=lastTarget then clearRoute(); nextPath=0; lastRole,lastTarget=data.Role,targetId end
+            guide.Error=nil
+            if not data.Active or decision.Kind=="Idle" and not decision.Goal then
+                clearRoute(); hide(); guide.TargetId,guide.TargetVisible=nil,false; return
+            end
+            drawTarget(decision); plan(decision,root,hum); drawWaypoint(root)
+        end)
+        if not ok then State.StopTacticalGuide(); guide.Instruction="Guidance unavailable"; guide.Error=tostring(message) end
+    end)
+end
+
+installTacticalGuide({State=State,Player=player,Players=Players,Workspace=workspace,Parent=gui.Parent,
+    Policy=createTacticalPolicy(),PathfindingService=game:GetService("PathfindingService"),RunService=RunService,
+    Connect=connect,RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath})
+end
+
+
+do
+-- Read-only combat feedback. A reported ray hit is not treated as a kill.
+local installCombatHUD = function(C)
+    local State,player,Players=C.State,C.Player,C.Players
+    local clock=C.Clock or os.clock
+    function State.GetCombatHUDData()
+        local now=clock()
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local living=hum and hum.Health>0
+        local role=not hum and "Waiting for character" or (living and (C.RoleFor(player) or "Unknown") or "Eliminated")
+        local item=living and C.EquippedWeapon() or nil
+        local record=item and State.WeaponHandlers and State.WeaponHandlers[item]
+        local weapon="No weapon equipped"
+        if item then
+            if record and record.Charging then weapon="Knife charging"
+            elseif item.Enabled==false then weapon=item.Name=="Gun" and "Gun reloading / disabled" or item.Name.." disabled"
+            elseif item.Name=="Gun" and record and now-(record.LastGun or -math.huge)<.1 then weapon="Gun cycling"
+            else weapon=item.Name.." ready" end
+        end
+        local target=living and State.Target and Players:FindFirstChild(State.Target)
+        if target and ((State.IsPlayerExcluded and State.IsPlayerExcluded(target)) or not C.IsAlive(target)) then target=nil end
+        local targetText=target and "Target @"..target.Name or "No clear target selected"
+        local distance,height
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local targetRoot=target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if root and targetRoot then
+            distance=(targetRoot.Position-root.Position).Magnitude
+            height=targetRoot.Position.Y-root.Position.Y
+            if distance==distance and distance<1e6 and height==height then
+                targetText..=(" | %.0f studs%s"):format(distance,height>5 and " | above" or (height< -5 and " | below" or ""))
+            else distance,height=nil,nil end
+        end
+        local feedback=State.LastGunFeedback
+        local result,tone="No gun feedback yet","neutral"
+        if feedback and feedback.TargetHit==true then result,tone="Last: server ray hit target","confirmed"
+        elseif feedback and feedback.TargetHit==false then result,tone="Last: server ray missed target","warning"
+        elseif feedback and feedback.RoundWon then result,tone="Last: server reported round victory","confirmed"
+        elseif State.PendingGun and #State.PendingGun>0 then result,tone="Awaiting server shot reply","waiting"
+        elseif feedback and feedback.Message then result=feedback.Message end
+        local status=State.AimStatus or "Ready"
+        if State.Fling and State.Fling.Active then status=State.Fling.Status
+        elseif State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0) then status=State.KnifeFeedback.Message end
+        local text=table.concat({tostring(role).." | "..weapon,targetText,result,status},"\n")
+        local instruction=State.Config.TacticalGuide and State.Guidance and State.Guidance.Instruction
+        if (State.Fling and State.Fling.Active) or (State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0)) then instruction=status end
+        local compact=table.concat({tostring(role).." | "..weapon,instruction or (target and "Target @"..target.Name or status)},"\n")
+        return {Text=text,Role=role,Weapon=weapon,Target=target and target.Name or nil,Distance=distance,Height=height,
+            Result=result,Tone=tone,Status=status,CompactText=compact,Instruction=instruction}
+    end
+end
+
+installCombatHUD({State=State,Player=player,Players=Players,RoleFor=roleFor,EquippedWeapon=equippedWeapon,IsAlive=alive})
+end
+
+
 -- Mobile and PC controls around the bundled WindUI library. No camera or cursor writes.
 local createMobileUI = function(C)
     local State, UIS, RunService = C.State, C.UIS, C.RunService
@@ -4743,6 +5054,13 @@ local createMobileUI = function(C)
     option(visuals, "Role ESP", "ESP", "Sheriff: blue / Innocent: green / Murderer: red")
     option(visuals, "Dropped gun ESP", "GunESP")
     option(visuals, "Gun aim marker", "AimMarker")
+    if State.GetCombatHUDData then option(visuals,"Combat HUD","CombatHUD","Role, weapon state, target distance/height and actual gun feedback. Drag the panel header to move it.") end
+    if State.GetCombatHUDData then option(visuals,"Compact HUD","CompactHUD","Two lines by default. Turn OFF for detailed shot feedback.") end
+    option(visuals,"Clean role visuals","CleanVisuals","Hide ordinary innocent labels and use lighter role outlines.")
+    if State.SetTacticalGuide then
+        toggles.TacticalGuide=combat:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="One suggested player and next waypoint. Fewer nearby players does not guarantee safety. Move and attack manually.",
+            Callback=function(enabled) if syncing then return end; suppressInput(); State.SetTacticalGuide(enabled) end})
+    end
     option(visuals, "Nearby murderer warning", "ThreatWarning")
     option(movement, "Dodge incoming knives", "AutoKnifeDodge", "Normal jump or short sidestep when a path is available.")
     local canTouch = type(firetouchinterest) == "function"
@@ -5066,12 +5384,47 @@ local createMobileUI = function(C)
     notice.Parent = canvas
     Instance.new("UICorner", notice).CornerRadius = UDim.new(0, 8)
     mobile.StatusLabel = notice
+    local combatHUD,combatHUDText
+    if State.GetCombatHUDData then
+        combatHUD=Instance.new("Frame")
+        combatHUD.Name="CombatHUD"; combatHUD.Size=UDim2.fromOffset(340,108)
+        combatHUD.Position=UDim2.fromOffset(8,8)
+        combatHUD.BackgroundColor3=Color3.fromRGB(18,23,34); combatHUD.BackgroundTransparency=.12
+        combatHUD.Active=true; combatHUD.Visible=false; combatHUD.Parent=canvas
+        Instance.new("UICorner",combatHUD).CornerRadius=UDim.new(0,10)
+        local header=Instance.new("TextLabel")
+        header.Name="CombatHUDDragHandle"; header.Text="COMBAT  |  drag to move"
+        header.Size=UDim2.new(1,-16,0,20); header.Position=UDim2.fromOffset(8,3)
+        header.BackgroundTransparency=1; header.TextSize=11; header.Font=Enum.Font.GothamBold
+        header.TextColor3=Color3.fromRGB(178,200,230); header.Active=true; header.Parent=combatHUD
+        combatHUDText=Instance.new("TextLabel")
+        combatHUDText.Name="CombatHUDData"; combatHUDText.Size=UDim2.new(1,-16,1,-28)
+        combatHUDText.Position=UDim2.fromOffset(8,24); combatHUDText.BackgroundTransparency=1
+        combatHUDText.TextSize=11; combatHUDText.Font=Enum.Font.Gotham; combatHUDText.TextWrapped=true
+        combatHUDText.TextXAlignment=Enum.TextXAlignment.Left; combatHUDText.TextYAlignment=Enum.TextYAlignment.Top
+        combatHUDText.Parent=combatHUD
+        mobile.CombatHUD,mobile.CombatHUDText,mobile.CombatHUDHandle=combatHUD,combatHUDText,header
+        draggable(header,combatHUD); connect(combatHUD.InputBegan,suppressInput)
+    end
+    local function layoutHUD()
+        if not combatHUD then return end
+        local compact=State.Config.CompactHUD~=false
+        local width=math.max(120,math.min(compact and 300 or 340,canvas.AbsoluteSize.X-24))
+        combatHUD.Size=UDim2.fromOffset(width,compact and 68 or 108)
+        mobile.CombatHUDHandle.Text=compact and "MM2 · drag" or "COMBAT  |  drag to move"
+        combatHUDText.Position=UDim2.fromOffset(8,compact and 20 or 24)
+        combatHUDText.Size=UDim2.new(1,-16,1,compact and -24 or -28)
+        mobile.LastHUDCompact=compact; clamp(combatHUD)
+    end
+    mobile.LayoutHUD=layoutHUD
     function mobile.ResetPositions()
         local size = canvas.AbsoluteSize
         icon.Position = UDim2.fromOffset(12, math.max(62, size.Y * 0.22))
         -- Keep the normal jump button and movement thumbstick clear by default.
         pad.Position = UDim2.fromOffset(size.X - 252, size.Y - 207)
-        if emergencyButton then emergencyButton.Position=UDim2.fromOffset(size.X/2-73,52); clamp(emergencyButton) end
+        layoutHUD()
+        if emergencyButton then emergencyButton.Position=UDim2.fromOffset(size.X/2-73,combatHUD and State.Config.CombatHUD and combatHUD.Size.Y.Offset+20 or 52); clamp(emergencyButton) end
+        if combatHUD then combatHUD.Position=UDim2.fromOffset(size.X/2-combatHUD.Size.X.Offset/2,8); clamp(combatHUD) end
         clamp(icon); clamp(pad)
     end
     local function resized()
@@ -5085,6 +5438,7 @@ local createMobileUI = function(C)
         notice.Position = UDim2.new(0.5, -notice.Size.X.Offset / 2, 0, 8)
         clamp(icon); clamp(pad)
         if emergencyButton then clamp(emergencyButton) end
+        layoutHUD()
     end
     function mobile.ApplyInputMode()
         local mode = getMode()
@@ -5118,7 +5472,24 @@ local createMobileUI = function(C)
         pad.Visible = mobile.Mode == "Mobile" and not mobile.MenuOpen and item ~= nil
         fire.Text = item and item.Name == "Knife" and "STAB" or "FIRE"
         throw.Visible = item ~= nil and item.Name == "Knife"
-        notice.Visible = not mobile.MenuOpen
+        local showHUD=combatHUD and State.Config.CombatHUD and not mobile.MenuOpen
+        if combatHUD and mobile.LastHUDCompact~=(State.Config.CompactHUD~=false) then layoutHUD() end
+        notice.Visible = not mobile.MenuOpen and not showHUD
+        if combatHUD then
+            combatHUD.Visible=showHUD==true
+            if showHUD then
+                local ok,data=pcall(State.GetCombatHUDData)
+                if ok and type(data)=="table" then
+                    mobile.LastCombatHUDData,mobile.LastCombatHUDError=data,nil
+                    combatHUDText.Text=State.Config.CompactHUD~=false and (data.CompactText or data.Text) or data.Text
+                    combatHUDText.TextColor3=data.Tone=="confirmed" and Color3.fromRGB(110,232,158)
+                        or (data.Tone=="warning" and Color3.fromRGB(255,151,136)
+                        or (data.Tone=="waiting" and Color3.fromRGB(255,221,136) or Color3.fromRGB(230,238,250)))
+                else
+                    mobile.LastCombatHUDError=tostring(data); combatHUDText.Text="Combat status unavailable"
+                end
+            end
+        end
         local fling = State.Fling
         if fling and mobile.AdaptivePursuitToggle and mobile.AdaptivePursuitToggle.Value ~= fling.AdaptivePursuit then
             mobile.AdaptivePursuitToggle:Set(fling.AdaptivePursuit,false)
