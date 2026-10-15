@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-Fling"
+State.Build = "Universal-WindUI-2026-10-15-RetryLaunch"
 -- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
 local detectInputMode = function(UIS)
     local ok, preferred = pcall(function() return UIS.PreferredInput end)
@@ -3358,11 +3358,12 @@ print("MM2 Assist loaded: Magic Bullet/F7 targets the murderer on click; ANIMS/F
 
 
 do
--- Short, user-triggered contact attempts. No target ownership or server-hit claims.
+-- User-triggered launch sessions, with recovery between bursts until target elimination.
 local installPlayerFling = function(C)
     local State, Players, player = C.State, C.Players, C.Player
     local clock = C.Clock or os.clock
-    local fling = {Active = false, Status = "Fling idle", Duration = 1.8, Attempts = 0}
+    local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.35,
+        Attempts = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450}
     State.Fling = fling
     local saved
     local function put(object, property, value)
@@ -3384,6 +3385,45 @@ local installPlayerFling = function(C)
         return vector.X == vector.X and vector.Y == vector.Y and vector.Z == vector.Z
             and math.abs(vector.X) < 1e6 and math.abs(vector.Y) < 1e6 and math.abs(vector.Z) < 1e6
     end
+    local function mapBounds(position)
+        if C.GetMapBounds then return C.GetMapBounds(position) end
+        if not C.Workspace.GetChildren then return nil end
+        for _, map in ipairs(C.Workspace:GetChildren()) do
+            if map:IsA("Model") and map:FindFirstChild("Spawns") and map:FindFirstChild("Base") then
+                local base = map:FindFirstChild("Base")
+                local geometry = base:IsA("Model") and base or map
+                local ok, frame, size = pcall(geometry.GetBoundingBox, geometry)
+                if ok and finite(size) then
+                    local point = frame:PointToObjectSpace(position)
+                    if math.abs(point.X) <= size.X / 2 + 12 and math.abs(point.Z) <= size.Z / 2 + 12
+                        and math.abs(point.Y) <= size.Y / 2 + 20 then
+                        return {Frame = frame, Size = size, Name = map.Name}
+                    end
+                end
+            end
+        end
+    end
+    local function launchDirection(position, ownPosition, bounds)
+        if bounds then
+            local point = bounds.Frame:PointToObjectSpace(position)
+            local xDistance, zDistance = bounds.Size.X / 2 - math.abs(point.X), bounds.Size.Z / 2 - math.abs(point.Z)
+            local localDirection = xDistance < zDistance and Vector3.new(point.X >= 0 and 1 or -1, 0, 0)
+                or Vector3.new(0, 0, point.Z >= 0 and 1 or -1)
+            local worldDirection = bounds.Frame:VectorToWorldSpace(localDirection)
+            local flat = Vector3.new(worldDirection.X, 0, worldDirection.Z)
+            if flat.Magnitude > 0.01 then return flat.Unit end
+        end
+        local delta = position - ownPosition
+        local flat = Vector3.new(delta.X, 0, delta.Z)
+        return flat.Magnitude > 0.1 and flat.Unit or Vector3.new(1, 0, 0)
+    end
+    local function outsideBounds(position, bounds)
+        if not bounds then return false end
+        local point = bounds.Frame:PointToObjectSpace(position)
+        return math.abs(point.X) > bounds.Size.X / 2 + 12
+            or math.abs(point.Z) > bounds.Size.Z / 2 + 12
+            or point.Y > bounds.Size.Y / 2 + 24
+    end
     function State.GetFlingPlayers()
         local result = {}
         for _, p in ipairs(Players:GetPlayers()) do
@@ -3394,11 +3434,7 @@ local installPlayerFling = function(C)
         table.sort(result, function(a, b) return a.Name:lower() < b.Name:lower() end)
         return result
     end
-    function State.StopFling(message)
-        local record = saved
-        saved = nil
-        fling.Active = false
-        fling.Target = nil
+    local function restore(record, final)
         if record then
             -- Never move a newly spawned character to an older character's return point.
             local same = player.Character == record.Character
@@ -3409,8 +3445,8 @@ local installPlayerFling = function(C)
                 put(record.Root, "CanCollide", record.CanCollide)
                 put(record.Root, "CollisionGroup", record.CollisionGroup)
                 if same and record.Humanoid.Health > 0 then
-                    put(record.Root, "AssemblyLinearVelocity", record.LinearVelocity)
-                    put(record.Root, "AssemblyAngularVelocity", record.AngularVelocity)
+                    put(record.Root, "AssemblyLinearVelocity", final and record.LinearVelocity or Vector3.zero)
+                    put(record.Root, "AssemblyAngularVelocity", final and record.AngularVelocity or Vector3.zero)
                 end
             end
             if record.Humanoid.Parent then
@@ -3421,7 +3457,43 @@ local installPlayerFling = function(C)
                 end
             end
         end
+    end
+    function State.StopFling(message)
+        local record = saved
+        saved = nil
+        fling.Active, fling.Target, fling.Phase = false, nil, "Idle"
+        if record then
+            local targetChar = record.Target.Character
+            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+            if targetRoot and not targetRoot:IsA("BasePart") then targetRoot = nil end
+            local position = targetRoot and finite(targetRoot.Position) and targetRoot.Position or record.LastTargetPosition
+            fling.LastResult = {Target = record.Target.UserId, MapBoundsAvailable = record.Bounds ~= nil,
+                OutsideObservedBounds = record.ObservedExit or (position ~= nil and outsideBounds(position, record.Bounds)),
+                Displacement = position and (position - record.TargetStart).Magnitude or nil,
+                HeightGain = position and position.Y - record.TargetStart.Y or nil,
+                MaxSpeed = record.MaxSpeed or 0, Bursts = record.Bursts or 0,
+                TargetDied = record.TargetDied == true}
+            restore(record, true)
+        end
         describe(message or (record and "Fling stopped; position restored" or "Fling idle"))
+    end
+    local function recover(record, now, message, delay)
+        restore(record, false)
+        record.Phase = "Recover"
+        fling.Phase = "Recover"
+        record.RetryAt = now + (delay or fling.RecoveryDuration)
+        describe(message)
+    end
+    local function beginBurst(record, now)
+        record.Humanoid.AutoRotate = false
+        record.Humanoid.PlatformStand = true
+        record.Root.CanCollide = true
+        record.Root.CollisionGroup = "Default"
+        record.Phase, record.BurstStarted = "Launch", now
+        record.Bursts = (record.Bursts or 0) + 1
+        fling.Phase = "Launch"
+        fling.Bursts += 1
+        describe("Launching @" .. record.Target.Name .. " / burst " .. record.Bursts .. " / until eliminated")
     end
     local function findPlayer(id)
         for _, p in ipairs(Players:GetPlayers()) do if p.UserId == tonumber(id) then return p end end
@@ -3450,22 +3522,19 @@ local installPlayerFling = function(C)
             or root.AssemblyLinearVelocity.Magnitude > 80 or root.AssemblyAngularVelocity.Magnitude > 40 then
             describe("Wait until your character is moving normally"); return false, fling.Status
         end
+        local bounds = mapBounds(targetRoot.Position)
         saved = {Character = char, Humanoid = hum, Root = root, CFrame = root.CFrame,
             LinearVelocity = root.AssemblyLinearVelocity, AngularVelocity = root.AssemblyAngularVelocity,
             AutoRotate = hum.AutoRotate, PlatformStand = hum.PlatformStand, HumanoidState = hum:GetState(),
             CanCollide = root.CanCollide, CollisionGroup = root.CollisionGroup,
-            Target = target, TargetCharacter = targetChar, Started = clock()}
+            Target = target, TargetCharacter = targetChar, Started = clock(), TargetStart = targetRoot.Position,
+            Bounds = bounds, Direction = launchDirection(targetRoot.Position, root.Position, bounds), MaxSpeed = 0,
+            LastHealth = hum.Health, LastTargetPosition = targetRoot.Position, Bursts = 0}
         fling.Active, fling.Target = true, target.UserId
         fling.Attempts += 1
         if C.StopWeaponActions then C.StopWeaponActions() end
-        local ok, message = pcall(function()
-            hum.AutoRotate = false
-            hum.PlatformStand = true
-            root.CanCollide = true
-            root.CollisionGroup = "Default"
-        end)
+        local ok, message = pcall(beginBurst, saved, clock())
         if not ok then State.StopFling("Fling setup failed: " .. tostring(message)); return false, fling.Status end
-        describe("Fling attempt: @" .. target.Name)
         return true, fling.Status
     end
     function State.FlingRole(role)
@@ -3489,26 +3558,65 @@ local installPlayerFling = function(C)
         local ok, message = pcall(function()
             if not State.Running or player.Character ~= record.Character or not record.Root.Parent
                 or record.Humanoid.Health <= 0 then State.StopFling("Fling stopped: your character changed"); return end
-            local targetChar, _, targetRoot = characterParts(record.Target)
-            if targetChar ~= record.TargetCharacter or not targetRoot then State.StopFling("Fling stopped: target changed or died"); return end
-            if record.Root.Anchored or targetRoot.Anchored then State.StopFling("Fling stopped: anchored character"); return end
-            local elapsed = clock() - record.Started
-            if elapsed >= fling.Duration then State.StopFling("Attempt ended; server result unverified"); return end
-            if not finite(targetRoot.Position) or not finite(targetRoot.AssemblyLinearVelocity)
-                or targetRoot.Position.Y < C.Workspace.FallenPartsDestroyHeight + 12 then
-                State.StopFling("Fling stopped: target is out of bounds"); return
+            if (State.Invis and (State.Invis.Busy or State.Invis.Active))
+                or (State.ExperimentalInvis and (State.ExperimentalInvis.Busy or State.ExperimentalInvis.Active)) then
+                State.StopFling("Character mode changed; fling stopped and position restored"); return
             end
-            if elapsed > 0.2 and targetRoot.AssemblyLinearVelocity.Magnitude > 120 then
-                State.StopFling("Target moving quickly; attempt ended"); return
+            local now = clock()
+            local targetChar = record.Target.Character
+            local targetHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+            if (targetHum and targetHum.Health <= 0) or (C.IsEliminated and C.IsEliminated(record.Target)) then
+                record.TargetDied = true
+                State.StopFling("Target eliminated; returned to saved position"); return
             end
-            local angle = elapsed * 28
-            local radial = Vector3.new(math.cos(angle), 0, math.sin(angle))
-            local lead = targetRoot.AssemblyLinearVelocity * 0.035
-            if lead.Magnitude > 4 then lead = lead.Unit * 4 end
-            local position = targetRoot.Position + lead + radial * 1.25 + Vector3.new(0, 0.45, 0)
-            record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 17, angle, elapsed * 11)
-            record.Root.AssemblyAngularVelocity = Vector3.new(180, 420, 140)
-            record.Root.AssemblyLinearVelocity = -radial * 340 + Vector3.new(0, 75, 0)
+            if targetChar ~= record.TargetCharacter then State.StopFling("Fling stopped: target respawned or character changed"); return end
+            local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+            if targetRoot and targetRoot:IsA("BasePart") and finite(targetRoot.Position) then
+                record.LastTargetPosition = targetRoot.Position
+                record.ObservedExit = record.ObservedExit or outsideBounds(targetRoot.Position, record.Bounds)
+                if finite(targetRoot.AssemblyLinearVelocity) then
+                    record.MaxSpeed = math.max(record.MaxSpeed, targetRoot.AssemblyLinearVelocity.Magnitude)
+                end
+            end
+            local dangerY = C.Workspace.FallenPartsDestroyHeight + 80
+            if record.Humanoid.Health < record.LastHealth then
+                record.LastHealth = record.Humanoid.Health
+                recover(record, now, "You took damage; returned before retrying", 1.25); return
+            end
+            record.LastHealth = record.Humanoid.Health
+            local lowHealth = record.Humanoid.Health <= math.max(1, (record.Humanoid.MaxHealth or 100) * 0.25)
+            local targetUnsafe = not targetHum or not targetRoot or not targetRoot:IsA("BasePart")
+                or not finite(targetRoot.Position) or not finite(targetRoot.AssemblyLinearVelocity)
+                or targetRoot.Position.Y < dangerY or (targetRoot.Position - record.CFrame.Position).Magnitude > 280
+            if lowHealth or targetUnsafe or record.Root.Anchored or (targetRoot and targetRoot.Anchored) then
+                recover(record, now, lowHealth and "Low health: waiting at saved position"
+                    or "Target out of safe reach: waiting at saved position; session remains active", 0.65)
+                return
+            end
+            if not finite(record.Root.Position) or not finite(record.Root.AssemblyLinearVelocity)
+                or record.Root.Position.Y < dangerY or record.Root.AssemblyLinearVelocity.Magnitude > 3500 then
+                recover(record, now, "Physics recovery: returned before retrying", 0.8); return
+            end
+            if record.Phase == "Recover" then
+                -- Stabilize at the saved position between bursts; never chase a target into the void.
+                restore(record, false)
+                if now < record.RetryAt then return end
+                beginBurst(record, now)
+            elseif now - record.BurstStarted >= fling.BurstDuration then
+                recover(record, now, "Returned safely; retrying until target is eliminated"); return
+            end
+            local elapsed = now - record.BurstStarted
+            -- Keep contact behind the target and push in one outward/upward direction.
+            -- The previous radial spin reversed direction and stopped at only 120 studs/s.
+            local direction = record.Direction
+            local side = Vector3.new(-direction.Z, 0, direction.X)
+            local wiggle = math.sin(elapsed * 34) * 0.22
+            local position = targetRoot.Position - direction * 1.15 + side * wiggle + Vector3.new(0, 0.1, 0)
+            local inherited = targetRoot.AssemblyLinearVelocity
+            if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
+            record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
+            record.Root.AssemblyAngularVelocity = Vector3.new(180, 520, 160)
+            record.Root.AssemblyLinearVelocity = direction * fling.LaunchSpeed + Vector3.new(0, fling.LiftSpeed, 0) + inherited
         end)
         if not ok then State.StopFling("Fling interrupted: " .. tostring(message)) end
     end)
@@ -3521,6 +3629,10 @@ end
 
 installPlayerFling({State = State, Players = Players, Player = player, RunService = RunService,
     Workspace = workspace, Connect = connect, RoleFor = roleFor, IsAlive = alive,
+    IsEliminated = function(p)
+        local data = dataFor(p)
+        return data and (data.Dead == true or data.Killed == true) or false
+    end,
     StopWeaponActions = function()
         for _, record in pairs(State.WeaponHandlers) do
             record.ThrowToken += 1
@@ -3659,7 +3771,7 @@ local createMobileUI = function(C)
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
     if State.FlingPlayer then
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
-        playersTab:Paragraph({Title = "Player fling", Desc = "Click a role button or select a player, then click Fling selected player. This briefly moves your character beside the target and returns you afterward. Server physics may prevent any effect."})
+        playersTab:Paragraph({Title = "Player launch", Desc = "Strong outward/upward bursts retry until the target dies or you press Stop. Returns between bursts; waits at the saved position if you take damage, have low health, or the target is near the void. This cannot provide invulnerability or guarantee a server kill."})
         mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
         local selectedId, labelToId, picker
         local function roster()
