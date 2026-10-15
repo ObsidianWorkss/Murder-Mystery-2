@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-LobbyFling"
+State.Build = "Universal-WindUI-2026-10-15-ClearContact"
 -- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
 local detectInputMode = function(UIS)
     local ok, preferred = pcall(function() return UIS.PreferredInput end)
@@ -3376,6 +3376,25 @@ local installPlayerFling = function(C)
         fling.DisplayUntil = clock() + 4
         State.AimStatus = message
     end
+    function State.GetFlingReport()
+        local last = fling.LastResult or {}
+        local request = State.MobileUI and State.MobileUI.LastFlingAction
+        return table.concat({
+            "MM2 fling report", "Build: " .. tostring(State.Build),
+            "Active: " .. tostring(fling.Active), "Phase: " .. tostring(fling.Phase),
+            "Status: " .. tostring(fling.Status), "Pause: " .. tostring(fling.BlockedReason or "none"),
+            "Button: " .. tostring(request and request.Name or "none"),
+            "Button accepted: " .. tostring(request and request.Accepted),
+            "Requests: " .. tostring(fling.Requests), "Target ID: " .. tostring(fling.Target or last.Target),
+            "Contact writes: " .. tostring(fling.ContactSteps or 0),
+            "Contact path: " .. tostring(fling.ContactPath or "not checked"),
+            "Session bursts: " .. tostring(saved and saved.Bursts or last.Bursts or 0),
+            ("Observed displacement: %.2f studs"):format(fling.TargetDisplacement or last.Displacement or 0),
+            ("Observed peak speed: %.2f studs/s"):format(fling.MaxTargetSpeed or last.MaxSpeed or 0),
+            "Target death observed: " .. tostring(last.TargetDied == true),
+            "Local observations do not confirm server replication."
+        }, "\n")
+    end
     local function characterParts(p)
         local char = p and p.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -3498,6 +3517,54 @@ local installPlayerFling = function(C)
         fling.BlockedReason = reason
         describe(message)
     end
+    local function chooseContact(record, targetRoot, now)
+        if now < (record.NextPathCheck or 0) then return record.PathAvailable end
+        record.NextPathCheck = now + 0.15
+        if not C.Workspace.Blockcast or not C.Workspace.GetPartBoundsInBox then
+            record.PathAvailable = true
+            fling.ContactPath = "geometry queries unavailable"
+            return true
+        end
+        local excluded = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then table.insert(excluded, p.Character) end
+        end
+        local ray, overlap = RaycastParams.new(), OverlapParams.new()
+        ray.FilterType, overlap.FilterType = Enum.RaycastFilterType.Exclude, Enum.RaycastFilterType.Exclude
+        ray.FilterDescendantsInstances, overlap.FilterDescendantsInstances = excluded, excluded
+        ray.RespectCanCollide, overlap.RespectCanCollide = true, true
+        ray.CollisionGroup, overlap.CollisionGroup = "Default", "Default"
+        local preferred = launchDirection(targetRoot.Position, record.CFrame.Position, record.Bounds)
+        local side = Vector3.new(-preferred.Z, 0, preferred.X)
+        local directions = {preferred, side, -side, -preferred,
+            (preferred + side).Unit, (preferred - side).Unit,
+            (-preferred + side).Unit, (-preferred - side).Unit}
+        local chosen, bestScore, chosenClearance
+        for _, direction in ipairs(directions) do
+            local contact = targetRoot.Position - direction * 1.15 + Vector3.new(0, 0.1, 0)
+            -- Casts omit initially overlapping parts, so check the contact volume separately.
+            local blockers = C.Workspace:GetPartBoundsInBox(CFrame.new(contact), Vector3.new(3, 4, 3), overlap)
+            if #blockers == 0 then
+                local hit = C.Workspace:Blockcast(CFrame.new(targetRoot.Position), Vector3.new(3, 3, 3), direction * 8, ray)
+                local clearance = hit and math.clamp(hit.Distance, 0, 8) or 8
+                if clearance >= 2.5 then
+                    local alignment = direction.X * preferred.X + direction.Z * preferred.Z
+                    local score = clearance * 2 + alignment * 0.75
+                    if not bestScore or score > bestScore then
+                        chosen, bestScore, chosenClearance = direction, score, clearance
+                    end
+                end
+            end
+        end
+        record.PathAvailable = chosen ~= nil
+        if chosen then
+            record.Direction = chosen
+            fling.ContactPath = ("open side / %.1f studs clearance"):format(chosenClearance)
+        else
+            fling.ContactPath = "blocked by nearby geometry"
+        end
+        return record.PathAvailable
+    end
     local function beginBurst(record, now)
         clearSpinner(record)
         record.Humanoid.AutoRotate = false
@@ -3524,6 +3591,20 @@ local installPlayerFling = function(C)
         fling.Phase = "Launch"
         fling.Bursts += 1
         describe("Launching @" .. record.Target.Name .. " / burst " .. record.Bursts .. " / until eliminated")
+    end
+    local function applyContact(record, targetRoot, now)
+        local elapsed = now - record.BurstStarted
+        local direction = record.Direction
+        local side = Vector3.new(-direction.Z, 0, direction.X)
+        local wiggle = math.sin(elapsed * 34) * 0.22
+        local position = targetRoot.Position - direction * 1.15 + side * wiggle + Vector3.new(0, 0.1, 0)
+        local inherited = targetRoot.AssemblyLinearVelocity
+        if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
+        record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
+        record.Root.AssemblyAngularVelocity = Vector3.new(180, 520, 160)
+        record.Root.AssemblyLinearVelocity = direction * fling.LaunchSpeed + Vector3.new(0, fling.LiftSpeed, 0) + inherited
+        record.ContactSteps = (record.ContactSteps or 0) + 1
+        fling.ContactSteps = record.ContactSteps
     end
     local function findPlayer(id)
         for _, p in ipairs(Players:GetPlayers()) do if p.UserId == tonumber(id) then return p end end
@@ -3569,11 +3650,15 @@ local installPlayerFling = function(C)
         if root.Position.Y < C.Workspace.FallenPartsDestroyHeight + 80 then
             describe("Move to a safe position before starting a fling"); return false, fling.Status
         end
+        if targetRoot.Position.Y < C.Workspace.FallenPartsDestroyHeight + 80 then
+            describe("Target is near the void; contact cannot start safely"); return false, fling.Status
+        end
         if root.Anchored or targetRoot.Anchored or hum.Sit or hum.PlatformStand then
             describe("Fling unavailable while a character is anchored, seated, or disabled"); return false, fling.Status
         end
         if not finite(root.Position) or not finite(targetRoot.Position)
             or not finite(root.AssemblyLinearVelocity) or not finite(root.AssemblyAngularVelocity)
+            or not finite(targetRoot.AssemblyLinearVelocity)
             or root.AssemblyLinearVelocity.Magnitude > 80 or root.AssemblyAngularVelocity.Magnitude > 40 then
             describe("Wait until your character is moving normally"); return false, fling.Status
         end
@@ -3590,9 +3675,20 @@ local installPlayerFling = function(C)
             Bounds = bounds, Direction = launchDirection(targetRoot.Position, root.Position, bounds), MaxSpeed = 0,
             LastHealth = hum.Health, LastTargetPosition = targetRoot.Position, Bursts = 0}
         fling.Active, fling.Target = true, target.UserId
+        fling.ContactSteps, fling.TargetDisplacement, fling.MaxTargetSpeed = 0, 0, 0
+        fling.ContactPath = "not checked"
         fling.Attempts += 1
         if C.StopWeaponActions then C.StopWeaponActions() end
-        local ok, message = pcall(beginBurst, saved, clock())
+        local ok, message = pcall(function()
+            local now = clock()
+            if not chooseContact(saved, targetRoot, now) then
+                recover(saved, now, "Waiting: no clear contact side near target | Stop remains available", 0.18, "Wall")
+                return
+            end
+            beginBurst(saved, now)
+            -- Start on this button press; subsequent updates run before the physics solver.
+            applyContact(saved, targetRoot, now)
+        end)
         if not ok then State.StopFling("Fling setup failed: " .. tostring(message)); return false, fling.Status end
         return true, fling.Status
     end
@@ -3611,7 +3707,7 @@ local installPlayerFling = function(C)
         if not chosen then describe("No living " .. role:lower() .. " is available"); return false, fling.Status end
         return State.FlingPlayer(chosen.UserId)
     end
-    C.Connect(C.RunService.Heartbeat, function()
+    C.Connect(C.RunService.PreSimulation or C.RunService.Heartbeat, function()
         local record = saved
         if not record then return end
         local ok, message = pcall(function()
@@ -3634,9 +3730,11 @@ local installPlayerFling = function(C)
             local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
             if targetRoot and targetRoot:IsA("BasePart") and finite(targetRoot.Position) then
                 record.LastTargetPosition = targetRoot.Position
+                fling.TargetDisplacement = (targetRoot.Position - record.TargetStart).Magnitude
                 record.ObservedExit = record.ObservedExit or outsideBounds(targetRoot.Position, record.Bounds)
                 if finite(targetRoot.AssemblyLinearVelocity) then
                     record.MaxSpeed = math.max(record.MaxSpeed, targetRoot.AssemblyLinearVelocity.Magnitude)
+                    fling.MaxTargetSpeed = record.MaxSpeed
                 end
             end
             local dangerY = C.Workspace.FallenPartsDestroyHeight + 80
@@ -3667,6 +3765,9 @@ local installPlayerFling = function(C)
                 or record.Root.Position.Y < dangerY or record.Root.AssemblyLinearVelocity.Magnitude > 3500 then
                 recover(record, now, "Physics recovery: returned before retrying", 0.8, "Physics"); return
             end
+            if not chooseContact(record, targetRoot, now) then
+                recover(record, now, "Waiting: no clear contact side near target | Stop remains available", 0.18, "Wall"); return
+            end
             if record.Phase == "Recover" then
                 -- Stabilize at the saved position between bursts; never chase a target into the void.
                 restore(record, false)
@@ -3675,18 +3776,7 @@ local installPlayerFling = function(C)
             elseif now - record.BurstStarted >= fling.BurstDuration then
                 recover(record, now, "Returned safely; retrying until target is eliminated", nil, "BetweenBursts"); return
             end
-            local elapsed = now - record.BurstStarted
-            -- Keep contact behind the target and push in one outward/upward direction.
-            -- The previous radial spin reversed direction and stopped at only 120 studs/s.
-            local direction = record.Direction
-            local side = Vector3.new(-direction.Z, 0, direction.X)
-            local wiggle = math.sin(elapsed * 34) * 0.22
-            local position = targetRoot.Position - direction * 1.15 + side * wiggle + Vector3.new(0, 0.1, 0)
-            local inherited = targetRoot.AssemblyLinearVelocity
-            if inherited.Magnitude > 360 then inherited = inherited.Unit * 360 end
-            record.Root.CFrame = CFrame.new(position) * CFrame.Angles(elapsed * 24, elapsed * 31, elapsed * 15)
-            record.Root.AssemblyAngularVelocity = Vector3.new(180, 520, 160)
-            record.Root.AssemblyLinearVelocity = direction * fling.LaunchSpeed + Vector3.new(0, fling.LiftSpeed, 0) + inherited
+            applyContact(record, targetRoot, now)
         end)
         if not ok then State.StopFling("Fling interrupted: " .. tostring(message)) end
     end)
@@ -4030,6 +4120,17 @@ local createMobileUI = function(C)
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
         playersTab:Paragraph({Title = "Player launch", Desc = "Strong outward/upward bursts retry until the target dies or you press Stop. Returns between bursts; waits at the saved position if you take damage, have low health, or the target is near the void. This cannot provide invulnerability or guarantee a server kill."})
         mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
+        if State.GetFlingReport then
+            playersTab:Paragraph({Title = "Fling build", Desc = tostring(State.Build) .. " | Contact attempts are not confirmed server launches."})
+            playersTab:Button({Title = "Copy fling report", Desc = "After a failed attempt, copy the status and contact measurements for troubleshooting.", Callback = function()
+                local copy = setclipboard or toclipboard
+                local report = State.GetFlingReport()
+                local ok = type(copy) == "function" and pcall(copy, report)
+                if not ok and mobile.FlingStatus and mobile.FlingStatus.ParagraphFrame then
+                    mobile.FlingStatus.ParagraphFrame:SetDesc(report)
+                end
+            end})
+        end
         local function runFlingAction(name, callback)
             local request = {Name = name, At = os.clock()}
             mobile.LastFlingAction = request
