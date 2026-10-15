@@ -119,7 +119,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-RetryLaunch"
+State.Build = "Universal-WindUI-2026-10-15-LobbyFling"
 -- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
 local detectInputMode = function(UIS)
     local ok, preferred = pcall(function() return UIS.PreferredInput end)
@@ -914,7 +914,7 @@ local function bodyWeight(name)
     if name:find("Hand") or name:find("Foot") then return 0.25 end
     return 0.45
 end
-local function visibleBodySamples(char, kind, origin, camera, cursor, profileOverride)
+local function visibleBodySamples(char, kind, origin, camera, cursor, profileOverride, allowOffscreen)
     if not camera and kind ~= "Gun" then return nil, {} end
     local minimum, body = nil, {}
     local names = hitPartNames[kind]
@@ -942,7 +942,7 @@ local function visibleBodySamples(char, kind, origin, camera, cursor, profileOve
                 if worldDistance <= State.Config.MaxRange then
                     local screen, visible = Vector3.zero, false
                     if camera then screen, visible = camera:WorldToViewportPoint(sample) end
-                    if visible or kind == "Gun" then
+                    if visible or kind == "Gun" or allowOffscreen then
                         local cursorScore
                         if cursor then
                             cursorScore = visible and (Vector2.new(screen.X, screen.Y) - cursor).Magnitude
@@ -1132,7 +1132,7 @@ function State.TestCampChaseAim()
     if not ok then result.OK, result.Error = false, tostring(message) end
     return result
 end
-local function chooseTarget(kind, origin, item, preferred)
+local function chooseTarget(kind, origin, item, preferred, strict)
     if not origin then return nil end
     local started = os.clock()
     local camera = workspace.CurrentCamera
@@ -1141,10 +1141,10 @@ local function chooseTarget(kind, origin, item, preferred)
     if camera and touchInput() then cursor = camera.ViewportSize / 2 end
     local candidates = {}
     for order, other in ipairs(Players:GetPlayers()) do
-        if other ~= player and alive(other) and (kind == "Knife" or roleFor(other) == "Murderer") then
+        if other ~= player and alive(other) and (not strict or other == preferred) and (kind == "Knife" or roleFor(other) == "Murderer") then
             local char = other.Character
             local root = char:FindFirstChild("HumanoidRootPart")
-            local lower, body = visibleBodySamples(char, kind, origin, camera, cursor)
+            local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil, strict)
             if lower then
                 table.insert(candidates, {Player = other, Character = char, Root = root, Order = order,
                     Lower = lower - (other == preferred and 1000000 or 0), Body = body})
@@ -1748,11 +1748,11 @@ local function ready(record)
         and record.Item.Parent == player.Character and alive(player)
         and record.Item:GetAttribute("Disabled") ~= true and not UIS:GetFocusedTextBox()
 end
-local function aimPoint(record, preferred)
+local function aimPoint(record, preferred, strict)
     sampleMotion(os.clock())
     State.Stats.AimCalls += 1
     if record.Kind == "Knife" and not State.Config.KnifeAim then return weapon:GetMouseTargetCFrame(), nil end
-    local target = chooseTarget(record.Kind, shotOrigin(record.Kind, record.Item), record.Item, preferred)
+    local target = chooseTarget(record.Kind, shotOrigin(record.Kind, record.Item), record.Item, preferred, strict)
     if target then
         State.Stats.Redirects += 1
         if record.Kind == "Knife" then State.Stats.KnifeRedirects += 1 end
@@ -1762,7 +1762,7 @@ local function aimPoint(record, preferred)
     -- Never replace a failed target selection with an unaimed cursor shot.
     return nil, nil
 end
-local function sendGun(record)
+local function sendGun(record, preferred, strict)
     if not State.Config.MagicBullet then return end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return end
     if not State.Config.MagicBullet or not ready(record) or os.clock() - record.LastGun < 0.1 then return end
@@ -1783,7 +1783,7 @@ local function sendGun(record)
         State.LastGunFeedback = {Message = "Shot skipped: muzzle obstructed"}
         return
     end
-    local targetFrame, targetName, solution = aimPoint(record)
+    local targetFrame, targetName, solution = aimPoint(record, preferred, strict)
     if not targetFrame then
         State.Stats.SkippedGunShots += 1
         State.LastGunFeedback = {Message = "Shot skipped: no clear target"}
@@ -1819,7 +1819,7 @@ local function reportStabContact(record, hit, source)
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if other ~= player and root and alive(other) and hit:IsDescendantOf(char)
+        if other ~= player and root and alive(other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
             and (hit.Transparency < 1 or (hit.Parent == char and bodyPartSet[hit.Name]))
             and (root.Position - ownRoot.Position).Magnitude <= 7
             and clearPath(ownRoot.Position, hit.Position, char) then
@@ -1849,7 +1849,7 @@ local function scanStabContacts(record)
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if other ~= player and root and alive(other) and (root.Position - ownRoot.Position).Magnitude <= 7 then
+        if other ~= player and root and alive(other) and (not record.StabTarget or other == record.StabTarget) and (root.Position - ownRoot.Position).Magnitude <= 7 then
             for _, part in ipairs(char:GetDescendants()) do
                 if part:IsA("BasePart") and (part.Transparency < 1 or (part.Parent == char and bodyPartSet[part.Name])) then
                     table.insert(visibleParts, part)
@@ -1874,8 +1874,9 @@ local function scanStabContacts(record)
         end
     end
 end
-local function stabKnife(record)
+local function stabKnife(record, preferred)
     if not ready(record) then return end
+    record.StabTarget = preferred
     State.KnifeFeedback = nil
     -- A click cancels an explicit throw even during the stab cooldown.
     record.ThrowToken += 1
@@ -1902,7 +1903,7 @@ local function knifeFeedback(message)
     State.KnifeFeedback = {Message = message, Until = os.clock() + 1.8}
     State.AimStatus = message
 end
-local function startThrow(record, preferred)
+local function startThrow(record, preferred, strict)
     if record.Kind ~= "Knife" then return end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return end
     if not ready(record) then knifeFeedback("Throw unavailable: equip a ready knife"); return end
@@ -1915,7 +1916,7 @@ local function startThrow(record, preferred)
     local remote = events and events:FindFirstChild("KnifeThrown")
     local handle = record.Item:FindFirstChild("Handle")
     if not remote or not handle then knifeFeedback("Knife throw objects unavailable"); return end
-    local chosen = State.Config.KnifeAim and chooseTarget("Knife", handle.Position, record.Item, preferred)
+    local chosen = State.Config.KnifeAim and chooseTarget("Knife", handle.Position, record.Item, preferred, strict)
     if State.Config.KnifeAim and not chosen then
         State.Stats.SkippedKnifeThrows += 1
         knifeFeedback("Throw skipped: no clear target")
@@ -1938,7 +1939,7 @@ local function startThrow(record, preferred)
             return
         end
         -- Resolve the prediction when the charge finishes, not at button press.
-        local targetFrame, targetName, solution = aimPoint(record, chargedTarget)
+        local targetFrame, targetName, solution = aimPoint(record, chargedTarget, strict)
         record.Charging = false
         if not targetFrame then
             record.LastThrow = -math.huge
@@ -3215,6 +3216,7 @@ end
 function State.Destroy()
     if not State.Running then return end
     State.Running = false
+    if State.StopAutoAttack then State.StopAutoAttack("Unloaded") end
     if State.StopFling then State.StopFling("Unloaded; position restored") end
     if State.MobileUI and State.MobileUI.Destroy then State.MobileUI.Destroy() end
     if State.StopKnifeDodge then State.StopKnifeDodge() end
@@ -3362,8 +3364,8 @@ do
 local installPlayerFling = function(C)
     local State, Players, player = C.State, C.Players, C.Player
     local clock = C.Clock or os.clock
-    local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.35,
-        Attempts = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450}
+    local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.18,
+        Attempts = 0, Requests = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450}
     State.Fling = fling
     local saved
     local function put(object, property, value)
@@ -3434,8 +3436,13 @@ local installPlayerFling = function(C)
         table.sort(result, function(a, b) return a.Name:lower() < b.Name:lower() end)
         return result
     end
+    local function clearSpinner(record)
+        if record.Spinner then pcall(function() record.Spinner:Destroy() end); record.Spinner = nil end
+        if record.SpinAttachment then pcall(function() record.SpinAttachment:Destroy() end); record.SpinAttachment = nil end
+    end
     local function restore(record, final)
         if record then
+            clearSpinner(record)
             -- Never move a newly spawned character to an older character's return point.
             local same = player.Character == record.Character
             if record.Root.Parent then
@@ -3444,6 +3451,7 @@ local installPlayerFling = function(C)
                 if same and record.Humanoid.Health > 0 then put(record.Root, "CFrame", record.CFrame) end
                 put(record.Root, "CanCollide", record.CanCollide)
                 put(record.Root, "CollisionGroup", record.CollisionGroup)
+                put(record.Root, "CustomPhysicalProperties", record.PhysicalProperties)
                 if same and record.Humanoid.Health > 0 then
                     put(record.Root, "AssemblyLinearVelocity", final and record.LinearVelocity or Vector3.zero)
                     put(record.Root, "AssemblyAngularVelocity", final and record.AngularVelocity or Vector3.zero)
@@ -3462,6 +3470,7 @@ local installPlayerFling = function(C)
         local record = saved
         saved = nil
         fling.Active, fling.Target, fling.Phase = false, nil, "Idle"
+        fling.BlockedReason = nil
         if record then
             local targetChar = record.Target.Character
             local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
@@ -3477,19 +3486,40 @@ local installPlayerFling = function(C)
         end
         describe(message or (record and "Fling stopped; position restored" or "Fling idle"))
     end
-    local function recover(record, now, message, delay)
+    local function recover(record, now, message, delay, reason)
         restore(record, false)
         record.Phase = "Recover"
         fling.Phase = "Recover"
-        record.RetryAt = now + (delay or fling.RecoveryDuration)
+        -- A continuously held condition must not push the same retry deadline forward each frame.
+        if record.RecoveryReason ~= reason or not record.RetryAt then
+            record.RetryAt = now + (delay or fling.RecoveryDuration)
+        end
+        record.RecoveryReason = reason
+        fling.BlockedReason = reason
         describe(message)
     end
     local function beginBurst(record, now)
+        clearSpinner(record)
         record.Humanoid.AutoRotate = false
         record.Humanoid.PlatformStand = true
         record.Root.CanCollide = true
         record.Root.CollisionGroup = "Default"
+        record.Root.CustomPhysicalProperties = PhysicalProperties.new(35, 0.3, 0.2)
+        -- Persistent finite torque maintains spin between solver steps and collision contacts.
+        local attachment = Instance.new("Attachment")
+        record.SpinAttachment = attachment
+        attachment.Name = "MM2LaunchAttachment"
+        attachment.Parent = record.Root
+        local spinner = Instance.new("AngularVelocity")
+        record.Spinner = spinner
+        spinner.Name = "MM2LaunchTorque"
+        spinner.Attachment0 = attachment
+        spinner.RelativeTo = Enum.ActuatorRelativeTo.World
+        spinner.MaxTorque = 8000000
+        spinner.AngularVelocity = Vector3.new(180, 520, 160)
+        spinner.Parent = record.Root
         record.Phase, record.BurstStarted = "Launch", now
+        record.RecoveryReason, record.RetryAt, fling.BlockedReason = nil, nil, nil
         record.Bursts = (record.Bursts or 0) + 1
         fling.Phase = "Launch"
         fling.Bursts += 1
@@ -3500,9 +3530,28 @@ local installPlayerFling = function(C)
     end
     function State.FlingPlayer(id)
         if not State.Running then return false, "Script is unloaded" end
-        if fling.Active then return false, "A fling is already running; use Stop fling first" end
+        fling.Requests += 1
         local target = findPlayer(id)
         if not target or target == player then describe("Select another player who is still in this server"); return false, fling.Status end
+        if fling.Active and saved then
+            local targetChar = characterParts(target)
+            if not targetChar then describe("Target character is unavailable; current session is unchanged"); return false, fling.Status end
+            if saved.Target == target and saved.TargetCharacter == targetChar and player.Character == saved.Character then
+                local now = clock()
+                if saved.Phase == "Launch" then
+                    describe("Contact is running for @" .. target.Name .. "; repeated clicks do not reset it")
+                elseif (saved.RecoveryReason == "Damage" or saved.RecoveryReason == "Physics") and now < (saved.RetryAt or 0) then
+                    describe(("Recovery active; retry in %.1fs"):format(saved.RetryAt - now))
+                else
+                    saved.RetryAt = now
+                    describe("Retry requested for @" .. target.Name .. "; checking health and target reach")
+                end
+                return true, fling.Status
+            end
+            State.StopFling("Switching target; previous position restored")
+        elseif fling.Active then
+            State.StopFling("Cleared stale active state")
+        end
         if State.Invis and (State.Invis.Busy or State.Invis.Active) then
             describe("Turn Ghost invisibility off before flinging"); return false, fling.Status
         end
@@ -3514,6 +3563,12 @@ local installPlayerFling = function(C)
         local char, hum, root = characterParts(player)
         local targetChar, targetHum, targetRoot = characterParts(target)
         if not char or not targetChar then describe("Both characters must be alive and loaded"); return false, fling.Status end
+        if hum.Health <= math.max(1, (hum.MaxHealth or 100) * 0.25) then
+            describe("Low health: recover before starting a new fling"); return false, fling.Status
+        end
+        if root.Position.Y < C.Workspace.FallenPartsDestroyHeight + 80 then
+            describe("Move to a safe position before starting a fling"); return false, fling.Status
+        end
         if root.Anchored or targetRoot.Anchored or hum.Sit or hum.PlatformStand then
             describe("Fling unavailable while a character is anchored, seated, or disabled"); return false, fling.Status
         end
@@ -3527,7 +3582,11 @@ local installPlayerFling = function(C)
             LinearVelocity = root.AssemblyLinearVelocity, AngularVelocity = root.AssemblyAngularVelocity,
             AutoRotate = hum.AutoRotate, PlatformStand = hum.PlatformStand, HumanoidState = hum:GetState(),
             CanCollide = root.CanCollide, CollisionGroup = root.CollisionGroup,
+            PhysicalProperties = root.CustomPhysicalProperties,
             Target = target, TargetCharacter = targetChar, Started = clock(), TargetStart = targetRoot.Position,
+            -- A healthy lobby avatar can retain an earlier round's elimination flag.
+            -- Trust a flagged transition only after observing a clear flag this session.
+            WatchElimination = not (C.IsEliminated and C.IsEliminated(target)),
             Bounds = bounds, Direction = launchDirection(targetRoot.Position, root.Position, bounds), MaxSpeed = 0,
             LastHealth = hum.Health, LastTargetPosition = targetRoot.Position, Bursts = 0}
         fling.Active, fling.Target = true, target.UserId
@@ -3565,11 +3624,13 @@ local installPlayerFling = function(C)
             local now = clock()
             local targetChar = record.Target.Character
             local targetHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
-            if (targetHum and targetHum.Health <= 0) or (C.IsEliminated and C.IsEliminated(record.Target)) then
+            if targetChar ~= record.TargetCharacter then State.StopFling("Fling stopped: target respawned or character changed"); return end
+            local eliminated = C.IsEliminated and C.IsEliminated(record.Target)
+            if not eliminated then record.WatchElimination = true end
+            if (targetHum and targetHum.Health <= 0) or (record.WatchElimination and eliminated) then
                 record.TargetDied = true
                 State.StopFling("Target eliminated; returned to saved position"); return
             end
-            if targetChar ~= record.TargetCharacter then State.StopFling("Fling stopped: target respawned or character changed"); return end
             local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
             if targetRoot and targetRoot:IsA("BasePart") and finite(targetRoot.Position) then
                 record.LastTargetPosition = targetRoot.Position
@@ -3581,21 +3642,30 @@ local installPlayerFling = function(C)
             local dangerY = C.Workspace.FallenPartsDestroyHeight + 80
             if record.Humanoid.Health < record.LastHealth then
                 record.LastHealth = record.Humanoid.Health
-                recover(record, now, "You took damage; returned before retrying", 1.25); return
+                record.RetryAt = nil
+                recover(record, now, "You took damage; returned before retrying", 1.25, "Damage"); return
             end
             record.LastHealth = record.Humanoid.Health
             local lowHealth = record.Humanoid.Health <= math.max(1, (record.Humanoid.MaxHealth or 100) * 0.25)
-            local targetUnsafe = not targetHum or not targetRoot or not targetRoot:IsA("BasePart")
-                or not finite(targetRoot.Position) or not finite(targetRoot.AssemblyLinearVelocity)
-                or targetRoot.Position.Y < dangerY or (targetRoot.Position - record.CFrame.Position).Magnitude > 280
+            local validTarget = targetHum and targetRoot and targetRoot:IsA("BasePart")
+                and finite(targetRoot.Position) and finite(targetRoot.AssemblyLinearVelocity)
+            -- Bound pursuit from the target's initial position, not the lobby return point.
+            local targetDistance = validTarget and (targetRoot.Position - record.TargetStart).Magnitude or 0
+            local targetUnsafe = not validTarget or targetRoot.Position.Y < dangerY or targetDistance > 280
             if lowHealth or targetUnsafe or record.Root.Anchored or (targetRoot and targetRoot.Anchored) then
-                recover(record, now, lowHealth and "Low health: waiting at saved position"
-                    or "Target out of safe reach: waiting at saved position; session remains active", 0.65)
+                local reason = lowHealth and "LowHealth" or (not validTarget and "Unstreamed"
+                    or (targetRoot.Position.Y < dangerY and "Void" or (targetDistance > 280 and "TooFar" or "Anchored")))
+                local message = lowHealth and "Paused: health at or below 25%"
+                    or (reason == "Unstreamed" and "Paused: target character is not loaded"
+                    or (reason == "Void" and "Waiting for target death: target is near the void"
+                    or (reason == "TooFar" and ("Paused: target moved %.0f studs from its start (limit: 280)"):format(targetDistance)
+                    or "Paused: a character is anchored")))
+                recover(record, now, message .. " | Stop remains available", 0.18, reason)
                 return
             end
             if not finite(record.Root.Position) or not finite(record.Root.AssemblyLinearVelocity)
                 or record.Root.Position.Y < dangerY or record.Root.AssemblyLinearVelocity.Magnitude > 3500 then
-                recover(record, now, "Physics recovery: returned before retrying", 0.8); return
+                recover(record, now, "Physics recovery: returned before retrying", 0.8, "Physics"); return
             end
             if record.Phase == "Recover" then
                 -- Stabilize at the saved position between bursts; never chase a target into the void.
@@ -3603,7 +3673,7 @@ local installPlayerFling = function(C)
                 if now < record.RetryAt then return end
                 beginBurst(record, now)
             elseif now - record.BurstStarted >= fling.BurstDuration then
-                recover(record, now, "Returned safely; retrying until target is eliminated"); return
+                recover(record, now, "Returned safely; retrying until target is eliminated", nil, "BetweenBursts"); return
             end
             local elapsed = now - record.BurstStarted
             -- Keep contact behind the target and push in one outward/upward direction.
@@ -3639,6 +3709,193 @@ installPlayerFling({State = State, Players = Players, Player = player, RunServic
             record.Charging, record.StabbingUntil = false, 0
             stopTracks(record)
         end
+    end})
+end
+
+
+do
+-- Explicit teleport and selected-target weapon automation. No server-kill claims.
+local installPlayerActions = function(C)
+    local State, player, Players = C.State, C.Player, C.Players
+    local actions = {Enabled = false, SelectedId = nil, TargetId = nil, Status = "Auto attack OFF", Checks = 0}
+    State.PlayerActions = actions
+    local function status(text) actions.Status = text; return text end
+    local function find(id)
+        for _, p in ipairs(Players:GetPlayers()) do if p.UserId == tonumber(id) then return p end end
+    end
+    local function parts(p)
+        local char = p and p.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not hum or hum.Health <= 0 or not root then return nil end
+        return char, hum, root
+    end
+    function State.StopAutoAttack(message)
+        actions.Enabled, actions.TargetId, actions.Character = false, nil, nil
+        if C.CancelAttack then C.CancelAttack() end
+        status(message or "Auto attack OFF")
+    end
+    function State.SetSelectedPlayer(id)
+        id = tonumber(id)
+        if id ~= actions.SelectedId and actions.Enabled then State.StopAutoAttack("Selection changed; enable auto attack for the new player") end
+        actions.SelectedId = id
+    end
+    function State.SetAutoAttack(enabled, id)
+        if not enabled then State.StopAutoAttack(); return true, actions.Status end
+        if not State.Running then return false, status("Script is unloaded") end
+        local target = find(id)
+        if not target or target == player then return false, status("Select another player first") end
+        local char = parts(player)
+        if not char then return false, status("Wait for your character to be alive") end
+        local targetChar = parts(target)
+        if not targetChar or (C.IsEliminated and C.IsEliminated(target)) then return false, status("Target is not alive or loaded") end
+        if C.CancelAttack then C.CancelAttack() end
+        actions.Enabled, actions.TargetId, actions.SelectedId, actions.Character = true, target.UserId, target.UserId, char
+        actions.TargetCharacter = targetChar
+        actions.WasPaused = false
+        return true, status("Auto attack enabled; close the menu to play")
+    end
+    local function landing(char, hum, root, targetChar, targetRoot)
+        if C.FindLanding then return C.FindLanding(char, hum, root, targetChar, targetRoot) end
+        local excluded = {}
+        for _, p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(excluded, p.Character) end end
+        local ray = RaycastParams.new()
+        ray.FilterType, ray.FilterDescendantsInstances = Enum.RaycastFilterType.Exclude, excluded
+        ray.RespectCanCollide, ray.IgnoreWater = true, true
+        local overlap = OverlapParams.new()
+        overlap.FilterType, overlap.FilterDescendantsInstances = Enum.RaycastFilterType.Exclude, excluded
+        overlap.RespectCanCollide, overlap.MaxParts = true, 30
+        local offsets = {Vector3.new(0,0,4),Vector3.new(4,0,0),Vector3.new(-4,0,0),Vector3.new(0,0,-4),Vector3.new(4,0,4),Vector3.new(-4,0,4)}
+        for _, offset in ipairs(offsets) do
+            local position = targetRoot.CFrame:PointToWorldSpace(offset)
+            local ground = C.Workspace:Raycast(position + Vector3.new(0,6,0), Vector3.new(0,-24,0), ray)
+            if ground and ground.Normal.Y > 0.6 and ground.Position.Y > C.Workspace.FallenPartsDestroyHeight + 30 then
+                local height = hum.HipHeight + root.Size.Y / 2 + 0.15
+                if hum.RigType == Enum.HumanoidRigType.R6 then
+                    local leg = char:FindFirstChild("Left Leg")
+                    height += leg and leg.Size.Y or 2
+                end
+                local point = ground.Position + Vector3.new(0,height,0)
+                local clear = true
+                for _, part in ipairs(C.Workspace:GetPartBoundsInBox(CFrame.new(point),Vector3.new(2.7,4.5,2.7),overlap)) do
+                    if part.CanCollide then clear=false; break end
+                end
+                if clear then return CFrame.new(point) end
+            end
+        end
+    end
+    function State.TeleportToPlayer(id)
+        local target = find(id)
+        if not State.Running then return false, status("Script is unloaded") end
+        if not target or target == player then return false, status("Select another player first") end
+        local targetChar, _, targetRoot = parts(target)
+        if not targetChar then return false, status("Target character is not alive or loaded") end
+        if State.Fling and State.Fling.Active then State.StopFling("Fling stopped for teleport") end
+        if C.CancelAttack then C.CancelAttack() end
+        if State.Invis and (State.Invis.Active or State.Invis.Busy) then return false, status("Turn Ghost off before teleporting") end
+        if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return false, status("Restore your character before teleporting") end
+        local char, hum, root = parts(player)
+        if not char or root.Anchored or hum.Sit or hum.PlatformStand then return false, status("Your character must be alive and free to move") end
+        local destination = landing(char,hum,root,targetChar,targetRoot)
+        if not destination then return false, status("No clear landing space beside this player") end
+        local ok, message = pcall(function()
+            root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+            char:PivotTo(destination * root.CFrame:ToObjectSpace(char:GetPivot()))
+        end)
+        if not ok then return false, status("Teleport failed: " .. tostring(message)) end
+        return true, status("Teleported near @" .. target.Name .. "; server may correct the position")
+    end
+    local elapsed = 0
+    C.Connect(C.RunService.Heartbeat, function(dt)
+        if not actions.Enabled then return end
+        elapsed += dt
+        if elapsed < 0.2 then return end
+        elapsed = 0
+        local ok, message = pcall(function()
+            if not State.Running then State.StopAutoAttack("Unloaded"); return end
+            local char = parts(player)
+            if char ~= actions.Character then State.StopAutoAttack("Your character changed; auto attack stopped"); return end
+            local target = find(actions.TargetId)
+            if not target then State.StopAutoAttack("Target left the server"); return end
+            if target.Character ~= actions.TargetCharacter then State.StopAutoAttack("Target character changed; auto attack stopped"); return end
+            local targetHum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+            if (targetHum and targetHum.Health <= 0) or (C.IsEliminated and C.IsEliminated(target)) then
+                State.StopAutoAttack("Target eliminated; auto attack stopped"); return
+            end
+            local blocked = (State.Fling and State.Fling.Active) or C.InputBlocked()
+            if blocked then
+                if not actions.WasPaused and C.CancelAttack then C.CancelAttack() end
+                actions.WasPaused = true
+                status(State.Fling and State.Fling.Active and "Auto attack paused during fling" or "Auto attack paused: close menu / finish typing")
+                return
+            end
+            actions.WasPaused = false
+            if not parts(target) then status("Waiting for selected target to load"); return end
+            actions.Checks += 1
+            local _, text = C.PerformAttack(target)
+            if text then status(text) end
+        end)
+        if not ok then State.StopAutoAttack("Auto attack error: " .. tostring(message)) end
+    end)
+    C.Connect(player.CharacterRemoving, function() State.StopAutoAttack("Respawning; auto attack stopped") end)
+    C.Connect(Players.PlayerRemoving, function(p)
+        if p.UserId == actions.TargetId then State.StopAutoAttack("Target left the server") end
+    end)
+    return actions
+end
+
+local function cancelAutoWeapon()
+    for _, record in pairs(State.WeaponHandlers) do
+        if record.AutoSelectedThrow then
+            record.ThrowToken += 1
+            record.Charging, record.AutoSelectedThrow = false, nil
+            record.LastThrow = -math.huge
+            stopTracks(record)
+        end
+        if record.StabTarget then record.StabbingUntil, record.StabTarget = 0, nil end
+    end
+end
+installPlayerActions({State = State, Players = Players, Player = player, RunService = RunService,
+    Workspace = workspace, Connect = connect, CancelAttack = cancelAutoWeapon,
+    IsEliminated = function(p)
+        local data = dataFor(p)
+        return data and (data.Dead == true or data.Killed == true) or false
+    end,
+    InputBlocked = function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox() ~= nil end,
+    PerformAttack = function(target)
+        if not State.Config.Aim then return false, "Enable Aim assist to use auto attack" end
+        if not alive(target) then return false, "Waiting for selected target in an active round" end
+        local item = toolFor(player, "Knife") or toolFor(player, "Gun")
+        if not item then return false, "Waiting for a gun or knife you own" end
+        if item.Name == "Gun" and roleFor(target) ~= "Murderer" then
+            return false, "Gun auto attack only fires at the confirmed murderer"
+        end
+        if item.Name == "Gun" and not State.Config.MagicBullet then return false, "Enable Magic Bullet / gun aim" end
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then return false, "Waiting for your character" end
+        if item.Parent ~= char then hum:EquipTool(item); return false, "Equipping " .. item.Name end
+        local record = State.WeaponHandlers[item]
+        if not record then syncWeapons(); return false, "Preparing native weapon handler" end
+        if record.AutoSelectedThrow and not record.Charging then record.AutoSelectedThrow = nil end
+        if record.Kind == "Gun" then
+            if not item.Enabled then return false, "Gun is reloading" end
+            local before = State.Stats.GunRequests
+            sendGun(record, target, true)
+            return State.Stats.GunRequests > before, State.LastGunFeedback and State.LastGunFeedback.Message or "Waiting for a clear gun shot"
+        end
+        local ownRoot, targetRoot = char:FindFirstChild("HumanoidRootPart"), target.Character:FindFirstChild("HumanoidRootPart")
+        if not ownRoot or not targetRoot then return false, "Waiting for character roots" end
+        if record.Charging then return true, "Knife throw charging at selected player" end
+        if (targetRoot.Position - ownRoot.Position).Magnitude <= 6.5 and clearPath(ownRoot.Position,targetRoot.Position,target.Character) then
+            local before = State.Stats.StabRequests
+            stabKnife(record,target)
+            return State.Stats.StabRequests > before, "Stab selected player / respecting cooldown"
+        end
+        if not State.Config.KnifeAim then return false, "Enable knife throw prediction for ranged auto attack" end
+        startThrow(record,target,true)
+        record.AutoSelectedThrow = record.Charging and true or nil
+        return record.Charging, State.KnifeFeedback and State.KnifeFeedback.Message or "Waiting for a clear knife throw"
     end})
 end
 
@@ -3773,6 +4030,22 @@ local createMobileUI = function(C)
         local playersTab = window:Tab({Title = "Players", Icon = "users"})
         playersTab:Paragraph({Title = "Player launch", Desc = "Strong outward/upward bursts retry until the target dies or you press Stop. Returns between bursts; waits at the saved position if you take damage, have low health, or the target is near the void. This cannot provide invulnerability or guarantee a server kill."})
         mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
+        local function runFlingAction(name, callback)
+            local request = {Name = name, At = os.clock()}
+            mobile.LastFlingAction = request
+            local ok, accepted, message = pcall(callback)
+            request.Accepted = ok and accepted ~= false
+            if not ok then
+                State.Fling.Status = "Fling error: " .. tostring(accepted)
+                request.Error = tostring(accepted)
+            elseif accepted == false and message then
+                State.Fling.Status = tostring(message)
+            end
+            State.Fling.DisplayUntil = os.clock() + 4
+            if mobile.FlingStatus and mobile.FlingStatus.ParagraphFrame then
+                mobile.FlingStatus.ParagraphFrame:SetDesc(State.Fling.Status)
+            end
+        end
         local selectedId, labelToId, picker
         local function roster()
             local labels, selectedLabel = {}, nil
@@ -3788,11 +4061,41 @@ local createMobileUI = function(C)
             return labels
         end
         picker = playersTab:Dropdown({Title = "Specific player", Values = roster(), Multi = false, AllowNone = true,
-            SearchBarEnabled = true, Callback = function(label) selectedId = labelToId[label] end})
-        playersTab:Button({Title = "Fling selected player", Callback = function() State.FlingPlayer(selectedId) end})
-        playersTab:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() State.FlingRole("Opponent") end})
-        playersTab:Button({Title = "Fling murderer", Callback = function() State.FlingRole("Murderer") end})
-        playersTab:Button({Title = "Fling sheriff", Callback = function() State.FlingRole("Sheriff") end})
+            SearchBarEnabled = true, Callback = function(label)
+                selectedId = labelToId[label]
+                if State.SetSelectedPlayer then State.SetSelectedPlayer(selectedId) end
+            end})
+        if State.PlayerActions then
+            mobile.PlayerActionStatus = playersTab:Paragraph({Title = "Teleport / auto attack", Desc = State.PlayerActions.Status})
+            local function playerAction(callback)
+                local ok, accepted, message = pcall(callback)
+                if not ok then State.PlayerActions.Status = "Player action error: " .. tostring(accepted)
+                elseif accepted == false and message then State.PlayerActions.Status = tostring(message) end
+                if mobile.PlayerActionStatus and mobile.PlayerActionStatus.ParagraphFrame then
+                    mobile.PlayerActionStatus.ParagraphFrame:SetDesc(State.PlayerActions.Status)
+                end
+                return ok and accepted ~= false
+            end
+            playersTab:Button({Title = "Teleport to selected player", Callback = function()
+                playerAction(function() return State.TeleportToPlayer(selectedId) end)
+            end})
+            local autoToggle
+            autoToggle = playersTab:Toggle({Title = "Auto attack selected player", Value = false,
+                Desc = "Uses an owned gun or knife. Gun targets the murderer; knife stabs close targets or throws at range. Close menu to attack.",
+                Callback = function(enabled)
+                    local accepted = playerAction(function() return State.SetAutoAttack(enabled,selectedId) end)
+                    if not accepted and autoToggle then autoToggle:Set(false,false) end
+                end})
+            mobile.AutoAttackToggle = autoToggle
+            playersTab:Button({Title = "Stop all player actions", Callback = function()
+                State.StopAutoAttack("All player actions stopped")
+                State.StopFling()
+            end})
+        end
+        playersTab:Button({Title = "Fling selected player", Callback = function() runFlingAction("Selected player", function() return State.FlingPlayer(selectedId) end) end})
+        playersTab:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() runFlingAction("Role opponent", function() return State.FlingRole("Opponent") end) end})
+        playersTab:Button({Title = "Fling murderer", Callback = function() runFlingAction("Murderer", function() return State.FlingRole("Murderer") end) end})
+        playersTab:Button({Title = "Fling sheriff", Callback = function() runFlingAction("Sheriff", function() return State.FlingRole("Sheriff") end) end})
         playersTab:Button({Title = "Stop fling / return", Callback = function() State.StopFling() end})
         playersTab:Button({Title = "Refresh player list", Callback = roster})
         local function refreshRoster()
@@ -3981,6 +4284,14 @@ local createMobileUI = function(C)
         throw.Visible = item ~= nil and item.Name == "Knife"
         notice.Visible = not mobile.MenuOpen
         local fling = State.Fling
+        local actions = State.PlayerActions
+        if actions and mobile.AutoAttackToggle and mobile.AutoAttackToggle.Value ~= actions.Enabled then
+            mobile.AutoAttackToggle:Set(actions.Enabled,false)
+        end
+        if actions and mobile.PlayerActionStatus and mobile.PlayerActionStatus.ParagraphFrame and mobile.LastPlayerActionStatus ~= actions.Status then
+            mobile.PlayerActionStatus.ParagraphFrame:SetDesc(actions.Status)
+            mobile.LastPlayerActionStatus = actions.Status
+        end
         if fling and mobile.FlingStatus and mobile.FlingStatus.ParagraphFrame and mobile.LastFlingStatus ~= fling.Status then
             mobile.FlingStatus.ParagraphFrame:SetDesc(fling.Status)
             mobile.LastFlingStatus = fling.Status
