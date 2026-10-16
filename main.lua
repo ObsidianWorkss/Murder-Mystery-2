@@ -16,8 +16,6 @@
 -- Magic Bullet (F7) separately toggles immediate gun redirection to the known murderer.
 -- Magic Bullet OFF restores the native gun controller; knife assist has its own toggle.
 -- Auto pickup uses simulated touch only; server distance checks may reject it.
--- The Ghost helper retains the game's perk checks; F8 uses a separate underground emote experiment.
--- The underground emote keeps the original root as a small collider at the floor.
 -- Repair character respawns an avatar affected by an older root-swap version.
 -- Knife speed follows replicated ThrowingKnife attributes (MM2 default: 96).
 -- Auto knife dodge jumps low incoming paths or briefly sidesteps using normal movement; menu toggle stops it.
@@ -49,7 +47,6 @@
 -- Mage locomotion is ON by default: idle, walk, run, jump, fall, climb, and swim.
 -- ANIMS / F9 toggles Mage; original animation IDs are restored on OFF or unload.
 -- Mage retries late character setup and reapplies if the game replaces/resets Animate.
--- F8 is an optional underground pose, OFF by default. Other-client visibility is unverified.
 -- Attacking exits the pose and restores normal body/weapon geometry before firing or stabbing.
 -- Coin/gun touch pickup is experimental; only real CoinCollected events are counted.
 -- Floating/bend poses do not remove the head. Other-client visibility is not independently verified.
@@ -73,20 +70,19 @@ local previousBlockers = env.MM2Assist and env.MM2Assist.ServerBlockers
 local previousGunDelay = env.MM2Assist and env.MM2Assist.MeasuredGunDelay
 local previousRecord = env.MM2Assist and env.MM2Assist.Invis and env.MM2Assist.Invis.Record
 local repairRequired = (previousRecord and previousRecord.Swapped) or (env.MM2Assist and env.MM2Assist.RepairRequired) or false
-if env.MM2Assist and env.MM2Assist.Invis and env.MM2Assist.Invis.Mode ~= "NativeGhost" then repairRequired = true end
+if env.MM2Assist and env.MM2Assist.Invis and env.MM2Assist.Invis.Mode ~= "NativeGhost" and env.MM2Assist.Invis.Mode ~= "LocalSeat" then repairRequired = true end
 if env.MM2Assist and env.MM2Assist.Destroy then
     local ok, message = pcall(env.MM2Assist.Destroy)
-    if not ok then warn("MM2 Assist old cleanup failed: " .. tostring(message)); repairRequired = true end
+    if not ok or message==false then error("Previous cleanup incomplete; use its Restore character control before reloading: "..tostring(message)) end
 end
 
 local State = {
     Running = true, Connections = {}, Visuals = {}, GunVisuals = {}, Target = nil,
     AimMode = "DirectWeaponInput", AimStatus = "Waiting for weapon", WeaponHandlers = {},
     PickupMode = "TouchOnly",
-    Invis = {Mode = "NativeGhost", Active = false, Busy = false, ActiveUntil = 0, NextUse = 0,
-        Status = "Ghost OFF (requires owned/equipped perk)"},
+    Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Invisibility OFF"},
     RepairRequired = repairRequired,
-    Config = {ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, TacticalGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {InvisibleKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = true, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -119,7 +115,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-15-VisualAudit"
+State.Build = "Universal-WindUI-2026-10-16-FlingReturnFix"
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -1379,152 +1375,19 @@ end
 local function owned(item)
     return item.Parent == player.Character or item.Parent == player:FindFirstChild("Backpack")
 end
-local function refreshInvisibilityButton()
-    if refreshButtons.Invisibility then refreshButtons.Invisibility() end
-end
-local profile = getModule("Modules", "ProfileData")
-local function ownsGhost()
-    local ownedPerks = profile and profile.Perks and profile.Perks.Owned
-    if type(ownedPerks) ~= "table" then return false end
-    for key, value in pairs(ownedPerks) do
-        if value == "Ghost" or (key == "Ghost" and value ~= false) then return true end
-    end
-    return false
-end
-local function ghostActor()
-    local char = player.Character
-    local gui = player:FindFirstChild("PlayerGui")
-    return (char and char:FindFirstChild("Ghost")) or (gui and gui:FindFirstChild("Ghost"))
-end
-local function stopGhostRequests()
-    State.Config.Invisibility = false
-    State.Invis.Busy = false
-    State.Invis.WaitingAck = nil
-    local remaining = State.Invis.ActiveUntil - os.clock()
-    if remaining > 0 then
-        State.Invis.Status = "Ghost ending in " .. math.ceil(remaining) .. "s"
-    else
-        State.Invis.Active = false
-        State.Invis.Status = "Ghost OFF (native character preserved)"
-    end
-    refreshInvisibilityButton()
-end
-local restoreInvisibility = stopGhostRequests
-function State.SetInvisibility(enabled)
-    if not enabled then stopGhostRequests(); return true end
-    if State.RepairRequired then
-        State.Invis.Status = "Repair character first to restore interactions"
-        State.Config.Invisibility = false
-        refreshInvisibilityButton()
-        return false
-    end
-    if not ownsGhost() then
-        State.Config.Invisibility = false
-        State.Invis.Status = "Ghost not owned; root-swap method removed"
-        refreshInvisibilityButton()
-        return false
-    end
-    if player:GetAttribute("EquippedPerk") ~= "Ghost" then
-        State.Config.Invisibility = false
-        State.Invis.Status = "Equip Ghost in MM2 before enabling"
-        refreshInvisibilityButton()
-        return false
-    end
-    State.Config.Invisibility = true
-    State.Invis.Status = "Ghost waiting for murderer role"
-    refreshInvisibilityButton()
+local function restoreInvisibility()
+    if State.SetInvisibility then return State.SetInvisibility(false) end
     return true
-end
-local observedGhost, ghostConnection
-local function updateGhost()
-    local actor = ghostActor()
-    if actor ~= observedGhost then
-        if ghostConnection then ghostConnection:Disconnect(); ghostConnection = nil end
-        observedGhost = actor
-        if actor then
-            ghostConnection = connect(actor:GetAttributeChangedSignal("LastUse"), function()
-                local now = os.clock()
-                local duration = actor:GetAttribute("ActiveTime") or 5
-                local cooldown = actor:GetAttribute("Cooldown") or 30
-                State.Invis.ActiveUntil = now + duration
-                State.Invis.NextUse = now + cooldown
-                State.Invis.Active = true
-                State.Invis.WaitingAck = nil
-            end)
-        end
-    end
-    local now = os.clock()
-    State.Invis.Active = actor ~= nil and now < State.Invis.ActiveUntil
-    if State.Invis.Active then
-        State.Invis.Status = (State.Config.Invisibility and "Ghost active: " or "Ghost ending: ")
-            .. math.ceil(State.Invis.ActiveUntil - now) .. "s"
-        return
-    end
-    if not State.Config.Invisibility then
-        if State.Invis.ActiveUntil > 0 then State.Invis.Status = "Ghost OFF (native character preserved)" end
-        return
-    end
-    if not ownsGhost() or player:GetAttribute("EquippedPerk") ~= "Ghost" then
-        stopGhostRequests()
-        State.Invis.Status = "Ghost must be owned and equipped"
-        return
-    end
-    if not alive(player) or roleFor(player) ~= "Murderer" or not actor then
-        State.Invis.Status = "Ghost waiting for murderer role"
-        return
-    end
-    if State.Invis.WaitingAck then
-        if now - State.Invis.WaitingAck > 2 then
-            stopGhostRequests()
-            State.Invis.Status = "Ghost activation not confirmed by game"
-        end
-        return
-    end
-    if now < State.Invis.NextUse then
-        State.Invis.Status = "Ghost cooldown: " .. math.ceil(State.Invis.NextUse - now) .. "s"
-        return
-    end
-    local services = RS:FindFirstChild("ClientServices")
-    local service = services and services:FindFirstChild("PerkService")
-    local activation = service and service:FindFirstChild("PerkActivated")
-    if not activation or not activation:IsA("BindableEvent") then
-        stopGhostRequests()
-        State.Invis.Status = "Native perk handler unavailable"
-        return
-    end
-    State.Invis.WaitingAck = now
-    State.Stats.GhostRequests += 1
-    State.Invis.Status = "Requesting native Ghost perk"
-    activation:Fire()
 end
 function State.RepairCharacter()
-    if State.SetExperimentalInvisibility then State.SetExperimentalInvisibility(false) end
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    stopGhostRequests()
-    if not hum or hum.Health <= 0 then
-        State.Invis.Status = "Waiting for a fresh character"
-        return false
-    end
-    State.RepairRequired = true
-    State.Stats.RepairRequests += 1
-    State.Invis.Status = "Repairing: respawning character"
-    -- A server-created fresh avatar is required to recover lost physics ownership.
-    -- Request a normal character reset; never construct a replacement avatar.
-    hum.Health = 0
+    if not restoreInvisibility() then return false end
+    local hum=player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health<=0 then return false end
+    State.RepairRequired=true
+    State.Stats.RepairRequests+=1
+    hum.Health=0 -- Only the explicit Repair character (respawns) control requests this.
     return true
 end
-connect(player.CharacterAdded, function()
-    State.Config.Invisibility = false
-    State.RepairRequired = false
-    State.Invis.ActiveUntil = 0
-    State.Invis.NextUse = 0
-    State.Invis.Active = false
-    State.Invis.WaitingAck = nil
-    State.Invis.Status = "Fresh character received; native body in use"
-    refreshInvisibilityButton()
-end)
-if State.RepairRequired then State.Invis.Status = "Repair character to recover old root-swap state" end
 local gameplayRemotes = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Gameplay")
 local coinCollected = gameplayRemotes and gameplayRemotes:FindFirstChild("CoinCollected")
 if coinCollected and coinCollected:IsA("RemoteEvent") then
@@ -1965,7 +1828,7 @@ local function aimPoint(record, preferred, strict)
 end
 local function sendGun(record, preferred, strict)
     if not State.Config.MagicBullet then return end
-    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return end
+    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Gun") then return end
     if not State.Config.MagicBullet or not ready(record) or os.clock() - record.LastGun < 0.1 then return end
     if not record.Item.Enabled then
         State.LastGunFeedback = {Message = "Gun is not ready to fire"}
@@ -2019,6 +1882,7 @@ local function sendGun(record, preferred, strict)
 end
 local function reportStabContact(record, hit, source)
     if not ready(record) or os.clock() > record.StabbingUntil or not hit or not hit:IsA("BasePart") then return end
+    if record.AuraStab and (not State.CanAuraContact or not State.CanAuraContact()) then return end
     record.StabContacts = record.StabContacts or {}
     if record.StabContacts[hit] then return end
     local ownRoot = player.Character:FindFirstChild("HumanoidRootPart")
@@ -2027,7 +1891,7 @@ local function reportStabContact(record, hit, source)
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if other ~= player and root and not State.IsPlayerExcluded(other) and alive(other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
             and (hit.Transparency < 1 or (hit.Parent == char and bodyPartSet[hit.Name]))
-            and (root.Position - ownRoot.Position).Magnitude <= 7
+            and (root.Position - ownRoot.Position).Magnitude <= (record.AuraStab and State.GetKillAuraRange and State.GetKillAuraRange() or 7)
             and clearPath(ownRoot.Position, hit.Position, char) then
             local events = record.Item:FindFirstChild("Events")
             local remote = events and events:FindFirstChild("HandleTouched")
@@ -2083,6 +1947,7 @@ end
 local function stabKnife(record, preferred)
     if not ready(record) then return end
     record.StabTarget = preferred
+    record.AuraStab = false
     State.KnifeFeedback = nil
     -- A click cancels an explicit throw even during the stab cooldown.
     record.ThrowToken += 1
@@ -2111,7 +1976,7 @@ local function knifeFeedback(message)
 end
 local function startThrow(record, preferred, strict)
     if record.Kind ~= "Knife" then return end
-    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return end
+    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return end
     if not ready(record) then knifeFeedback("Throw unavailable: equip a ready knife"); return end
     if record.Charging then return end
     local throwSpeed = record.Item:GetAttribute("ThrowSpeed")
@@ -2175,7 +2040,7 @@ local function startThrow(record, preferred, strict)
     end)
 end
 local function clickKnife(record)
-    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return end
+    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return end
     if not ready(record) then return end
     -- A stab cancels a pending charge before its release task can throw.
     State.LastKnifeInput = {Action = "Stab"}
@@ -2255,7 +2120,7 @@ local function syncWeapons()
     end
     if State.Invis.Busy then State.AimStatus = "Invisibility switching"; return end
     if State.ExperimentalInvis and State.ExperimentalInvis.Busy then
-        State.AimStatus = "Preparing underground pose; attack to cancel"
+        State.AimStatus = "Invisibility preparing; use Restore character to cancel"
         State.Target, State.AimPreview = nil, nil
         return
     end
@@ -2336,302 +2201,217 @@ if throwAction then
 end
 
 do
-    -- Inspectable source: https://rawscripts.net/raw/UPDATE-Lone-Survival-Underground-R15-Not-made-by-me-54351
-    -- Only its animation asset is used. The original root and rig connections stay intact.
-    local experiment = {Mode = "FrozenEmoteSurfaceCollider", Token = 0, Active = false, Busy = false,
-        Status = "Underground pose OFF", OtherClientsVerified = false}
-    State.ExperimentalInvis = experiment
-    local ContentProvider = game:GetService("ContentProvider")
+-- Local-seat replication hypothesis. Local assembly checks cannot verify observer visibility.
+-- Keeps the original character, joints, humanoid settings and native camera controls.
+local installSeatVisibility=function(C)
+    local State, player, world = C.State, C.Player, C.Workspace
+    local now, new = C.Clock or os.clock, C.NewInstance or Instance.new
+    local mode = {Mode="LocalSeat", Phase="Off", Active=false, Busy=false,
+        OtherClientsVerified=false, Status="Invisibility OFF", Record=nil}
+    State.Invis = mode
+    -- Compatibility for the baseline's attack, pickup, dodge and unload guards.
+    State.ExperimentalInvis = mode
+    State.Config.Invisibility, State.Config.ExperimentalInvisibility = false, false
+    if State.Config.InvisibleKnife==nil then State.Config.InvisibleKnife=true end
     local function refresh()
-        if refreshButtons.ExperimentalInvisibility then refreshButtons.ExperimentalInvisibility() end
+        if C.Refresh then pcall(C.Refresh) end
+        if State.MobileUI and State.MobileUI.Refresh then pcall(State.MobileUI.Refresh) end
     end
-    local function groundAt(record)
-        return workspace:Raycast(record.Original.Position + Vector3.new(0, 0.75, 0),
-            Vector3.new(0, -12, 0), record.Params)
+    local function finite(v)
+        return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e7 and math.abs(v.Y)<1e7 and math.abs(v.Z)<1e7
     end
-    local function savePart(record, part)
-        if not part:IsA("BasePart") or record.Parts[part] then return end
-        record.Parts[part] = {CanCollide = part.CanCollide, CanTouch = part.CanTouch}
+    local function ownsCharacter(r)
+        return player.Character==r.Character and r.Character.Parent and r.Humanoid.Parent==r.Character
+            and r.Humanoid.Health>0 and r.Root.Parent==r.Character
+            and r.Character:FindFirstChild("HumanoidRootPart")==r.Root
     end
-    local function bodyTop(record)
-        local top = -math.huge
-        for part in pairs(record.Parts) do
-            if part.Parent and part ~= record.Original and not part:FindFirstAncestorOfClass("Tool") then
-                local frame, size = part.CFrame, part.Size / 2
-                local extent = math.abs(frame.RightVector.Y) * size.X + math.abs(frame.UpVector.Y) * size.Y
-                    + math.abs(frame.LookVector.Y) * size.Z
-                top = math.max(top, part.Position.Y + extent)
+    local function restoreCamera(r)
+        if r.Camera and r.Proxy and r.Camera.CameraSubject==r.Proxy then
+            r.Camera.CameraSubject = r.CameraSubject
+        end
+        if r.Proxy and r.Proxy.Parent then r.Proxy:Destroy() end
+    end
+    local function restore(reason, move)
+        local r=mode.Record
+        State.Config.Invisibility, State.Config.ExperimentalInvisibility=false,false
+        mode.Active=false
+        if not r then mode.Busy=false; mode.Phase="Off"; refresh(); return true end
+        local errors={}
+        local function attempt(name,fn)
+            local ok,message=pcall(fn)
+            if not ok then table.insert(errors,name..": "..tostring(message)) end
+        end
+        local destination=r.StartFrame
+        if r.LocalReady and ownsCharacter(r) and finite(r.Root.Position)
+            and r.Root.Position.Y>world.FallenPartsDestroyHeight+16
+            and (r.Root.Position-r.ParkFrame.Position).Magnitude>64 then
+            destination=r.Root.CFrame
+        end
+        -- Remove only instances owned by this activation, even after a character change.
+        attempt("weld",function() if r.Weld and r.Weld.Parent then r.Weld:Destroy() end end)
+        attempt("seat",function() if r.Seat and r.Seat.Parent then r.Seat:Destroy() end end)
+        attempt("camera",function() restoreCamera(r) end)
+        local detached=not (r.Weld and r.Weld.Parent) and not (r.Seat and r.Seat.Parent)
+        if move~=false and ownsCharacter(r) and detached then
+            attempt("position",function()
+                r.Root.CFrame=destination
+                r.Root.AssemblyLinearVelocity, r.Root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            end)
+        end
+        if not detached then table.insert(errors,"local assembly still attached") end
+        if #errors>0 then
+            mode.Busy,mode.Phase=true,"RestoreFailed"
+            mode.Status="Restore incomplete; press Restore character again: "..table.concat(errors,"; ")
+            -- Retain the record for retry; do not hide failures behind a reset.
+            refresh(); return false,mode.Status
+        end
+        mode.Record=nil
+        mode.Busy,mode.Phase=false,"Off"
+        mode.Status=reason or "Invisibility OFF; local body restored / server sync unverified"
+        refresh(); return true,mode.Status
+    end
+    local function fail(message)
+        local ok=restore(message)
+        if not ok then return false,mode.Status end
+        return false,message
+    end
+    function State.SetInvisibility(enabled)
+        if not enabled then return restore() end
+        if mode.Phase=="RestoreFailed" then State.Config.Invisibility=false; refresh(); return false,mode.Status end
+        if mode.Record then State.Config.Invisibility=true; refresh(); return true,mode.Status end
+        local function reject(message) State.Config.Invisibility=false; mode.Status=message; refresh(); return false,message end
+        if not State.Running or State.RepairRequired then return reject("Restore your normal character first") end
+        if State.Fling and State.Fling.Active then return reject("Stop fling before enabling invisibility") end
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not hum or hum.Health<=0 or not root or root.Anchored or (root.AssemblyRootPart and root.AssemblyRootPart.Anchored) or hum.Sit or hum.PlatformStand
+            or hum.RootPart~=root or not finite(root.Position) then
+            return reject("A living, unseated character with its original root is required")
+        end
+        local r={Character=char,Humanoid=hum,Root=root,Original=root,StartFrame=root.CFrame,
+            ParkFrame=root.CFrame+Vector3.new(0,4096,0),Started=now(),LocalReady=false}
+        mode.Record=r
+        mode.Busy,mode.Phase=true,"Parking"
+        State.Config.Invisibility=true
+        local ok,message=pcall(function()
+            if C.BeforeStart then C.BeforeStart() end
+            -- Ending a dodge may return the root to its previous position.
+            if not ownsCharacter(r) or not finite(root.Position) then error("Character changed during preparation") end
+            r.StartFrame=root.CFrame
+            r.ParkFrame=root.CFrame+Vector3.new(0,4096,0)
+            local camera=world.CurrentCamera
+            if camera and camera.CameraSubject==hum then
+                r.Camera,r.CameraSubject=camera,camera.CameraSubject
+                r.Proxy=new("Part")
+                r.Proxy.Name="MM2VisibilityCamera"
+                r.Proxy.Anchored=true
+                r.Proxy.CanCollide,r.Proxy.CanTouch,r.Proxy.CanQuery=false,false,false
+                r.Proxy.Transparency=1
+                r.Proxy.Size=Vector3.new(0.2,0.2,0.2)
+                local head=char:FindFirstChild("Head")
+                r.Proxy.CFrame=head and head.CFrame or root.CFrame
+                r.Proxy.Parent=world
+                camera.CameraSubject=r.Proxy
             end
-        end
-        return top
+            root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            root.CFrame=r.ParkFrame
+        end)
+        if not ok then return fail("Preparation failed: "..tostring(message)) end
+        mode.Status="Preparing invisibility; coin pickup unavailable / observer visibility unverified"
+        refresh(); return true,mode.Status
     end
-    local function snapshot(char)
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not hum or hum.Health <= 0 or not root or root.Anchored or hum.RigType ~= Enum.HumanoidRigType.R15 then
-            error("Healthy, unanchored R15 character required")
-        end
-        local record = {Character = char, Humanoid = hum, Original = root, Parts = {},
-            Size = root.Size, Transparency = root.Transparency, CanQuery = root.CanQuery,
-            HipHeight = hum.HipHeight, AutoRotate = hum.AutoRotate, Scaling = hum.AutomaticScalingEnabled,
-            CameraOffset = hum.CameraOffset, StartFrame = root.CFrame, Activated = false,
-            Falling = hum:GetStateEnabled(Enum.HumanoidStateType.FallingDown),
-            Ragdoll = hum:GetStateEnabled(Enum.HumanoidStateType.Ragdoll)}
-        for _, part in char:GetDescendants() do savePart(record, part) end
-        record.Params = RaycastParams.new()
-        record.Params.FilterType = Enum.RaycastFilterType.Exclude
-        record.Params.FilterDescendantsInstances = {char}
-        record.Params.RespectCanCollide = true
-        record.Params.IgnoreWater = true
-        record.Params.CollisionGroup = root.CollisionGroup
-        local ground = groundAt(record)
-        if not ground or hum.FloorMaterial == Enum.Material.Air then error("Stand on solid ground first") end
-        record.LastGround = ground.Position
-        record.CameraHeight = hum.HipHeight + root.Size.Y / 2 + 1.5
-        if char == player.Character then
-            local pm = player.PlayerScripts:FindFirstChild("PlayerModule")
-            local cameras = pm and require(pm):GetCameras()
-            local controller = cameras and cameras.activeCameraController
-            record.CameraController = controller
-            if controller and controller.inMouseLockedMode then error("Turn shift lock OFF for this pose") end
-            if controller and controller.GetSubjectPosition then
-                local point = controller:GetSubjectPosition()
-                if point then record.CameraHeight = point.Y - ground.Position.Y end
-            end
-        end
-        return record
-    end
-    local function restore(record)
-        if record.Restored then return true end
-        if record.ChildConnection then record.ChildConnection:Disconnect() end
-        if record.Track then record.Track:Stop(0); record.Track:Destroy() end
-        if record.Animation then record.Animation:Destroy() end
-        local hum, root = record.Humanoid, record.Original
-        if not hum.Parent or not root.Parent then record.Restored = true; return true end
-        hum.AutomaticScalingEnabled = false
-        root.Size, root.Transparency, root.CanQuery = record.Size, record.Transparency, record.CanQuery
-        hum.HipHeight, hum.AutoRotate, hum.CameraOffset = record.HipHeight, record.AutoRotate, record.CameraOffset
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, record.Falling)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, record.Ragdoll)
-        for part, properties in pairs(record.Parts) do
-            if part.Parent then part.CanCollide, part.CanTouch = properties.CanCollide, properties.CanTouch end
-        end
-        if record.Activated then
-            local ground = groundAt(record)
-            local floor = ground and ground.Position.Y or (record.LastGround and record.LastGround.Y)
-            local pos = root.Position
-            local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
-            look = look.Magnitude > 0.01 and look.Unit or Vector3.new(0, 0, -1)
-            if floor then pos = Vector3.new(pos.X, floor + record.HipHeight + record.Size.Y / 2 + 0.05, pos.Z) end
-            root.CFrame = CFrame.lookAt(pos, pos + look)
-            root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
-        end
-        hum.AutomaticScalingEnabled = record.Scaling
-        record.Restored = true
-        return record.Character:FindFirstChild("HumanoidRootPart") == root and hum.RootPart == root
-    end
-    local function update(record, dt)
-        local hum, root = record.Humanoid, record.Original
-        if not hum.Parent or hum.Health <= 0 or root.Parent ~= record.Character
-            or hum.RootPart ~= root or not record.Track.IsPlaying then return false, "Pose stopped; normal character restored" end
-        if record.CameraController and record.CameraController.inMouseLockedMode then
-            return false, "Shift lock enabled; normal camera restored"
-        end
-        local hit = groundAt(record)
-        if hit then record.LastGround, record.NoGround = hit.Position, 0
-        else record.NoGround = (record.NoGround or 0) + dt end
-        if not record.LastGround or (record.NoGround or 0) > 0.15 then return false, "No supporting floor; pose stopped" end
-        local floor = record.LastGround.Y
-        if floor < workspace.FallenPartsDestroyHeight + 12 then return false, "Void guard stopped pose" end
-        local look = Vector3.new(hum.MoveDirection.X, 0, hum.MoveDirection.Z)
-        if look.Magnitude < 0.01 then look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z) end
-        look = look.Magnitude > 0.01 and look.Unit or Vector3.new(0, 0, -1)
-        local pos = Vector3.new(root.Position.X, floor + 0.2, root.Position.Z)
-        root.CFrame = CFrame.lookAt(pos, pos + look) * CFrame.Angles(0, 0, math.pi)
-        root.AssemblyAngularVelocity = Vector3.zero
-        local velocity = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-        for part in pairs(record.Parts) do if part.Parent then part.CanCollide = part == root end end
-        root.CanTouch = true
-        hum.CameraOffset = root.CFrame:VectorToObjectSpace(Vector3.new(0, record.CameraHeight - 0.2, 0)) - Vector3.new(0, 2, 0)
-        record.CheckElapsed = (record.CheckElapsed or 0) + dt
-        if record.CheckElapsed >= 0.2 then
-            record.CheckElapsed = 0
-            record.BodyTop = bodyTop(record) - floor
-            if record.BodyTop > 0.1 then return false, "Body exposed; normal character restored" end
-        end
+    function State.SetExperimentalInvisibility(enabled) return State.SetInvisibility(enabled) end
+    function State.ExitUndergroundForAttack(kind)
+        if kind=="Knife" and mode.Active and not mode.Busy and State.Config.InvisibleKnife then return true end
+        if mode.Record then return State.SetInvisibility(false) end
         return true
     end
-    local function activate(record)
-        local hum, root = record.Humanoid, record.Original
-        if hum.FloorMaterial == Enum.Material.Air then return false, "Stand on the floor before enabling pose" end
-        hum.AutomaticScalingEnabled = false
-        root.Size = Vector3.new(0.6, 0.4, 0.6)
-        root.Transparency, root.CanQuery = 1, true
-        hum.HipHeight, hum.AutoRotate = 0, false
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-        record.Activated = true
-        record.ChildConnection = record.Character.DescendantAdded:Connect(function(part) savePart(record, part) end)
-        return update(record, 0)
+    function State.GetInvisibilityReport()
+        return {Mode=mode.Mode,Phase=mode.Phase,Active=mode.Active,Busy=mode.Busy,
+            OtherClientsVerified=false,Status=mode.Status,
+            LocalRootIsSeat=mode.Record and mode.Record.Seat~=nil and mode.Record.Root.AssemblyRootPart==mode.Record.Seat or false}
     end
-    local function loadTrack(record)
-        local animator = record.Humanoid:FindFirstChildOfClass("Animator")
-        if not animator then error("Existing Animator required") end
-        local animation = Instance.new("Animation")
-        animation.AnimationId = "rbxassetid://10147821284"
-        record.Animation = animation
-        ContentProvider:PreloadAsync({animation})
-        if record.Restored then animation:Destroy(); return end
-        record.Track = animator:LoadAnimation(animation)
-        record.Track.Priority = Enum.AnimationPriority.Action4
-        record.Track.Looped = false
-    end
-    function State.SetExperimentalInvisibility(enabled)
-        if not enabled then
-            experiment.Token += 1
-            experiment.Active, experiment.Busy = false, false
-            State.Config.ExperimentalInvisibility = false
-            local record = experiment.Record
-            experiment.Record = nil
-            local ok, result = true, true
-            if record then ok, result = pcall(restore, record) end
-            experiment.Status = ok and result and "Underground pose OFF; normal character restored"
-                or "Restoration failed; use Repair character"
-            if not ok or not result then State.RepairRequired = true end
+    local function step()
+        local r=mode.Record
+        if not r or mode.Phase=="RestoreFailed" then return end
+        if not State.Running then restore("Unloaded; local body restored"); return end
+        if not ownsCharacter(r) then restore("Character changed; invisibility OFF",false); return end
+        if r.Root.Anchored then fail("Root anchored; invisibility stopped"); return end
+        if not finite(r.Root.Position) or r.Root.Position.Y<=world.FallenPartsDestroyHeight+16 then
+            -- Avoid preserving an unsafe current position during cleanup.
+            r.LocalReady=false; fail("Unsafe position; invisibility stopped"); return
+        end
+        if mode.Phase=="Parking" then
+            r.Root.CFrame=r.ParkFrame
+            r.Root.AssemblyLinearVelocity,r.Root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            if now()-r.Started<0.4 then return end
+            r.Seat=new("Seat")
+            r.Seat.Name="MM2VisibilitySeat"
+            r.Seat.Disabled=true
+            r.Seat.Size=Vector3.new(2,0.5,2)
+            r.Seat.Anchored,r.Seat.Massless=false,false
+            r.Seat.RootPriority=127
+            r.Seat.CanCollide,r.Seat.CanTouch,r.Seat.CanQuery=false,false,false
+            r.Seat.Transparency=1
+            r.Seat.CFrame=r.Root.CFrame
+            r.Seat.Parent=r.Character
+            r.Weld=new("WeldConstraint")
+            r.Weld.Part0,r.Weld.Part1=r.Seat,r.Root
+            r.Weld.Parent=r.Seat
+            r.Attached=now()
+            mode.Phase="Attaching"
+        elseif mode.Phase=="Attaching" then
+            if now()-r.Attached<0.1 then return end
+            if r.Root.AssemblyRootPart~=r.Seat then fail("Local seat did not become the assembly root; restored"); return end
+            r.Seat.CFrame=r.StartFrame
+            r.Root.AssemblyLinearVelocity,r.Root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            restoreCamera(r)
+            r.LocalReady=true
+            mode.Phase,mode.Active,mode.Busy="Active",true,false
+            mode.Status="Invisibility ON locally; visibility to others unverified / pickups unavailable"
             refresh()
-            return ok and result
-        end
-        if experiment.Active or experiment.Busy then return true end
-        if not State.Running or State.RepairRequired or State.Invis.Active or State.Invis.Busy then
-            State.Config.ExperimentalInvisibility = false
-            experiment.Status = "Normal character required; turn Ghost OFF first"
-            refresh(); return false
-        end
-        local ok, record = pcall(snapshot, player.Character)
-        if not ok then
-            State.Config.ExperimentalInvisibility = false
-            experiment.Status = tostring(record)
-            refresh(); return false
-        end
-        experiment.Token += 1
-        local token = experiment.Token
-        experiment.Record, experiment.Busy = record, true
-        State.Config.ExperimentalInvisibility = true
-        experiment.Status = "Preparing underground emote..."
-        refresh()
-        task.spawn(function()
-            local prepared, failure = pcall(function()
-                loadTrack(record)
-                if token ~= experiment.Token then return end
-                record.Track:Play(0, 1, 1)
-                local deadline = os.clock() + 5
-                repeat
-                    task.wait()
-                    if token ~= experiment.Token then return end
-                    if player.Character ~= record.Character or record.Humanoid.Health <= 0 then error("Character changed") end
-                    if os.clock() > deadline then error("Emote did not load") end
-                until record.Track.TimePosition >= 1.89
-                record.Track:AdjustSpeed(0)
-                RunService.Heartbeat:Wait()
-                if token ~= experiment.Token then return end
-                local supported, reason = activate(record)
-                if not supported then error(reason) end
-            end)
-            if token ~= experiment.Token then pcall(restore, record); return end
-            if not prepared then
-                State.SetExperimentalInvisibility(false)
-                experiment.Status = "Pose unavailable: " .. tostring(failure)
-                return
+        elseif mode.Phase=="Active" then
+            if not r.Seat.Parent or not r.Weld.Parent or r.Root.AssemblyRootPart~=r.Seat then
+                fail("Assembly changed; invisibility stopped"); return
             end
-            experiment.Active, experiment.Busy = true, false
-            experiment.StartCoinEvents = State.Stats.ServerCoinEvents
-            experiment.Status = "Underground ON; pickups/others unverified"
-        end)
-        return true
-    end
-    function State.ExitUndergroundForAttack()
-        if experiment.Active or experiment.Busy then
-            if not State.SetExperimentalInvisibility(false) then return false end
-            -- Allow the stopped emote and restored rig to settle before reading weapon/head transforms.
-            RunService.Heartbeat:Wait()
-        end
-        return true
-    end
-    connect(player.CharacterRemoving, function(char)
-        if experiment.Record and experiment.Record.Character == char then State.SetExperimentalInvisibility(false) end
-    end)
-    connect(RunService.PreSimulation, function(dt)
-        if not experiment.Active or not experiment.Record then return end
-        local ok, supported, reason = pcall(update, experiment.Record, dt)
-        if not ok or not supported then
-            State.SetExperimentalInvisibility(false)
-            experiment.Status = ok and reason or "Pose update failed; normal character restored"
-            return
-        end
-        experiment.Status = "Underground ON / real coin events: " .. (State.Stats.ServerCoinEvents - experiment.StartCoinEvents)
-            .. " / others unverified"
-    end)
-    function State.TestExperimentalUndergroundPose()
-        if experiment.Record then return {OK = false, Error = "Turn pose OFF before testing"} end
-        local source = player.Character
-        if not source then return {OK = false, Error = "No character"} end
-        local archivable = source.Archivable
-        source.Archivable = true
-        local copied, clone = pcall(source.Clone, source)
-        source.Archivable = archivable
-        if not copied or not clone then return {OK = false, Error = "Cannot clone character"} end
-        local platform, record, connection, result = nil, nil, nil, {}
-        local ok, failure = pcall(function()
-            clone.Name = "MM2UndergroundPoseProbe"
-            for _, item in clone:GetDescendants() do
-                if item:IsA("BaseScript") or item:IsA("Tool") then item:Destroy() end
+            if (r.Root.Position-r.ParkFrame.Position).Magnitude<64 then
+                r.LocalReady=false; fail("Position corrected; invisibility stopped"); return
             end
-            platform = Instance.new("Part")
-            platform.Name, platform.Anchored, platform.Size = "MM2UndergroundProbeFloor", true, Vector3.new(50, 2, 50)
-            platform.Position = clone.HumanoidRootPart.Position + Vector3.new(60, 40, 0)
-            platform.Parent = workspace
-            clone:PivotTo(CFrame.new(platform.Position + Vector3.new(0, 1 + clone.Humanoid.HipHeight + 1.05, 0)))
-            clone.Parent = workspace
-            task.wait(0.4)
-            record = snapshot(clone)
-            loadTrack(record)
-            local deadline = os.clock() + 5
-            record.Track:Play(0, 1, 0)
-            repeat task.wait() until record.Track.Length > 2 or os.clock() > deadline
-            if record.Track.Length <= 2 then error("Probe animation failed to load") end
-            record.Track.TimePosition = 1.89
-            task.wait(0.1)
-            assert(activate(record))
-            connection = RunService.PreSimulation:Connect(function(dt)
-                clone.Humanoid:Move(Vector3.new(1, 0, 0), false)
-                update(record, dt)
-            end)
-            local start = record.Original.Position
-            task.wait(0.45)
-            connection:Disconnect(); connection = nil
-            result.Moved = (record.Original.Position - start).Magnitude
-            result.BodyTopRelativeToFloor = bodyTop(record) - (platform.Position.Y + 1)
-            result.RootIdentity = clone.Humanoid.RootPart == record.Original
-            result.ColliderSize = tostring(record.Original.Size)
-            result.SurfaceContact = math.abs(record.Original.Position.Y - 0.2 - (platform.Position.Y + 1)) < 0.15
-            local originalSize, originalHip, originalScaling, originalOffset = record.Size, record.HipHeight, record.Scaling, record.CameraOffset
-            result.Restored = restore(record)
-            result.PropertiesRestored = clone.HumanoidRootPart.Size == originalSize and clone.Humanoid.HipHeight == originalHip
-                and clone.Humanoid.AutomaticScalingEnabled == originalScaling and clone.Humanoid.CameraOffset == originalOffset
-            record = nil
-            result.OK = result.RootIdentity and result.Restored and result.PropertiesRestored and result.Moved > 1
-                and result.BodyTopRelativeToFloor < 0 and result.SurfaceContact
-        end)
-        if connection then connection:Disconnect() end
-        if record then pcall(restore, record) end
-        clone:Destroy()
-        if platform then platform:Destroy() end
-        if not ok then result.OK, result.Error = false, tostring(failure) end
-        return result
+        end
     end
+    C.Connect(C.RunService.PreSimulation,function()
+        local ok,message=pcall(step)
+        if not ok then fail("Invisibility error: "..tostring(message)) end
+    end)
+    C.Connect(player.CharacterRemoving,function(char)
+        if mode.Record and mode.Record.Character==char then restore("Character removed; invisibility OFF",false) end
+    end)
+    C.Connect(player.CharacterAdded,function()
+        if mode.Record then restore("New character; invisibility OFF",false) end
+        if not mode.Record then State.RepairRequired=false; mode.Status="Invisibility OFF"; refresh() end
+    end)
+    return mode
 end
 
+installSeatVisibility({State=State,Player=player,Workspace=workspace,RunService=RunService,Connect=connect,
+    Refresh=function() if refreshButtons.Invisibility then refreshButtons.Invisibility() end end,
+    BeforeStart=function()
+        if State.CancelKillAuraContacts then
+            local ok,message=State.CancelKillAuraContacts("Paused while invisibility prepares")
+            if not ok then error(message) end
+        end
+        if State.StopAutoAttack then State.StopAutoAttack("Paused for invisibility") end
+        if State.StopKnifeDodge then State.StopKnifeDodge("Paused for invisibility") end
+        if State.CancelFlingReturn then State.CancelFlingReturn() end
+        for _,record in pairs(State.WeaponHandlers) do
+            record.ThrowToken+=1
+            record.Charging,record.AutoSelectedThrow,record.StabbingUntil,record.StabTarget=false,nil,0,nil
+            stopTracks(record)
+        end
+    end})
+end
 
 local colors = {Sheriff = Color3.fromRGB(55, 145, 255),
     Innocent = Color3.fromRGB(65, 235, 105), Murderer = Color3.fromRGB(255, 55, 65)}
@@ -2647,34 +2427,38 @@ local function removeVisual(p)
         State.Visuals[p] = nil
     end
 end
+-- Only replicated invisible geometry needs a native adornment fallback.
+-- Uses existing body geometry; does not resize, move or change character parts.
 local function updateHiddenBoxes(visual, char, color)
-    local hidden, total = 0, 0
-    for part, box in pairs(visual.HiddenBoxes) do
-        if part.Parent ~= char or not hiddenBodyPart(part) then box:Destroy(); visual.HiddenBoxes[part] = nil end
-    end
-    for _, name in ipairs(hitPartNames.Gun) do
-        local part = char:FindFirstChild(name)
-        if part and part:IsA("BasePart") then
-            total += 1
-            if hiddenBodyPart(part) then
-                hidden += 1
-                local box = visual.HiddenBoxes[part]
-                if not box then
-                    box = Instance.new("BoxHandleAdornment")
-                    box.Adornee = part
-                    box.AlwaysOnTop = true
-                    box.ZIndex = 3
-                    box.Transparency = 0.3
-                    box.Parent = visualFolder
-                    visual.HiddenBoxes[part] = box
-                end
-                box.Size = part.Size
-                box.Color3 = color
-            end
+    local hidden,total=0,0
+    for part,box in pairs(visual.HiddenBoxes) do
+        if not box.Parent or part.Parent~=char then
+            box:Destroy(); visual.HiddenBoxes[part]=nil
         end
     end
-    visual.Hidden = total > 0 and hidden >= math.max(1, total * 0.5)
+    for _,name in ipairs(hitPartNames.Gun) do
+        local part=char:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            total+=1
+            local invisible=hiddenBodyPart(part)
+            if invisible then hidden+=1 end
+            local wanted=invisible
+            local box=visual.HiddenBoxes[part]
+            if wanted then
+                if not box then
+                    box=Instance.new("BoxHandleAdornment")
+                    box.Name="MM2BodyFill"
+                    box.Parent=visualFolder; visual.HiddenBoxes[part]=box
+                end
+                box.Adornee=part; box.AlwaysOnTop=true; box.ZIndex=3
+                box.Transparency=invisible and .3 or .55
+                box.Size=part.Size; box.Color3=color; box.Visible=true
+            elseif box then box:Destroy(); visual.HiddenBoxes[part]=nil end
+        end
+    end
+    visual.Hidden=total>0 and hidden>=math.max(1,total*.5)
 end
+
 local function updateESP()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
@@ -2718,10 +2502,10 @@ local function updateESP()
             updateHiddenBoxes(visual, char, colors[role])
             local targetRoot = char:FindFirstChild("HumanoidRootPart")
             local distance = ownRoot and targetRoot and (targetRoot.Position - ownRoot.Position).Magnitude
-            visual.Text.Text = p.DisplayName .. " | " .. role
+            visual.Text.Text = "@" .. p.Name
                 .. (visual.Hidden and " | INVISIBLE" or "")
                 .. (distance and (" | " .. math.floor(distance + 0.5) .. " studs") or "")
-            if State.Config.CleanVisuals then visual.Text.Text=role; visual.Label.Size=UDim2.fromOffset(150,24)
+            if State.Config.CleanVisuals then visual.Text.Text="@"..p.Name; visual.Label.Size=UDim2.fromOffset(190,24)
             else visual.Label.Size=UDim2.fromOffset(280,44) end
             visual.Label.Enabled=true
         else removeVisual(p) end
@@ -2893,7 +2677,7 @@ button("Dropped gun ESP", "GunESP", 265)
 button("Nearby murderer warning", "ThreatWarning", 302)
 button("Auto gun pickup (no TP)", "AutoPickup", 339)
 button("Auto knife dodge: jump / sidestep", "AutoKnifeDodge", 376)
-button("Underground pose experiment (F8)", "ExperimentalInvisibility", 413)
+button("Invisibility (F8)", "Invisibility", 413)
 local repair = Instance.new("TextButton")
 repair.Position = UDim2.fromOffset(14, 450)
 repair.Size = UDim2.new(1, -28, 0, 31)
@@ -2960,7 +2744,7 @@ connect(UIS.InputBegan, function(input, processed)
         State.SetMagicBullet(not State.Config.MagicBullet)
     end
     if not processed and not UIS:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.F8 then
-        State.SetExperimentalInvisibility(not State.Config.ExperimentalInvisibility)
+        State.SetInvisibility(not State.Config.Invisibility)
     end
     if not processed and not UIS:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.F10 then
         State.FixCamera()
@@ -3348,6 +3132,9 @@ updateGunESP = function()
         local part = object:IsDescendantOf(workspace) and dropPart(object)
         if part then
             local visual = State.GunVisuals[object]
+            if visual and (not visual.Highlight.Parent or not visual.Label.Parent or not visual.Text.Parent) then
+                removeGunVisual(object); visual=nil
+            end
             if not visual then
                 local yellow = Color3.fromRGB(255, 215, 45)
                 local highlight = Instance.new("Highlight")
@@ -3374,6 +3161,11 @@ updateGunESP = function()
                 visual = {Highlight = highlight, Label = label, Text = text}
                 State.GunVisuals[object] = visual
             end
+            visual.Highlight.Adornee = object:IsA("Model") and object or part
+            visual.Highlight.Enabled = true
+            visual.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            visual.Highlight.FillTransparency = 0.2
+            visual.Label.Enabled = true
             visual.Label.Adornee = part
             local distance = root and math.round((part.Position - root.Position).Magnitude)
             visual.Text.Text = "DROPPED GUN" .. (distance and " | " .. distance .. " studs" or "")
@@ -3391,7 +3183,7 @@ end)
 local pickingUp, lastPickup = false, -math.huge
 local warnedTouchUnavailable = false
 local function autoPickup()
-    if State.ExperimentalInvis and State.ExperimentalInvis.Busy then return end
+    if State.Invis and (State.Invis.Active or State.Invis.Busy) then return end
     if mobileBlocked() or pickingUp or State.Invis.Busy or not State.Config.AutoPickup or not alive(player)
         or roleFor(player) ~= "Innocent" or toolFor(player, "Gun")
         or os.clock() - lastPickup < 2 then return end
@@ -3435,8 +3227,14 @@ local function autoPickup()
 end
 
 function State.Destroy()
+    if State.StopKillAura then State.StopKillAura("Unloaded") end
+    if State.SetInvisibility and not State.SetInvisibility(false) then
+        warn("Unload stopped: character restoration is incomplete; retry Restore character")
+        return false
+    end
     if not State.Running then return end
     State.Running = false
+    if State.StopScreenESP then State.StopScreenESP() end
     if State.DestroyTacticalGuide then State.DestroyTacticalGuide() end
     if State.StopAutoAttack then State.StopAutoAttack("Unloaded") end
     if State.StopFling then State.StopFling("Unloaded; position restored") end
@@ -3500,7 +3298,7 @@ function State.DebugSnapshot()
         GunESP = State.Config.GunESP, GunVisualCount = gunCount,
         PickupMode = State.PickupMode, TouchAvailable = type(firetouchinterest) == "function",
         InvisibilityActive = State.Invis.Active, InvisibilityBusy = State.Invis.Busy,
-        InvisibilityMode = State.Invis.Mode, GhostOwned = ownsGhost(), RepairRequired = State.RepairRequired,
+        InvisibilityMode = State.Invis.Mode, RepairRequired = State.RepairRequired,
         LastCoinCollection = State.LastCoinCollection,
         ObservedKnifeSpeed = State.ObservedKnifeSpeed, KnifeSpeedDefault = State.Config.KnifeSpeed,
         LastGunFeedback = State.LastGunFeedback,
@@ -3563,7 +3361,6 @@ connect(RunService.Heartbeat, function(dt)
                 Message = "Server did not confirm this shot; cause unknown"}
         end
     end
-    updateGhost()
     syncWeapons()
     updateESP()
     updateThreat()
@@ -3572,7 +3369,7 @@ connect(RunService.Heartbeat, function(dt)
     status.Text = State.AimStatus
     gunFeedback.Text = State.LastGunFeedback and State.LastGunFeedback.Message or "Gun feedback: waiting for shot"
     dodgeStatus.Text = State.Config.AutoKnifeDodge and State.KnifeDodge.Status or "Knife dodge OFF"
-    invisStatus.Text = State.ExperimentalInvis.Status
+    invisStatus.Text = State.Invis.Status
 end)
 updateESP()
 updateThreat()
@@ -3796,11 +3593,17 @@ local installPlayerFling = function(C)
                     local anchor = record.ReturnAnchor
                     local frame = anchor and anchor.Frame or record.CFrame
                     if anchor and anchor.Support and anchor.Support.Parent then frame=anchor.Support.CFrame*anchor.LocalFrame end
-                    local ok, checked, _, status = pcall(returnFrame,record.Character,record.Humanoid,record.Root,frame)
+                    local ok, checked, support, status = pcall(returnFrame,record.Character,record.Humanoid,record.Root,frame)
                     frame = ok and checked or (anchor and anchor.Frame or record.CFrame)
                     local moved, message = pcall(moveBack,record,frame)
                     fling.ReturnStatus = moved and (ok and checked and status or "Saved start used; landing could not be rechecked") or ("Return failed: "..tostring(message))
-                    if final and moved then returning={Record=record,Frame=frame,Steps=0,Until=clock()+.2} end
+                    if final and moved then
+                        returning={Record=record,Frame=frame,Steps=0,Until=clock()+.2}
+                        -- Track the actual checked landing, including any obstacle-avoidance offset.
+                        if ok and checked and support and support:IsA("BasePart") and not support:IsA("Terrain") then
+                            returning.Support,returning.LocalFrame=support,support.CFrame:ToObjectSpace(frame)
+                        end
+                    end
                 end
                 put(record.Root, "CanCollide", record.CanCollide)
                 put(record.Root, "CollisionGroup", record.CollisionGroup)
@@ -4154,7 +3957,7 @@ local installPlayerFling = function(C)
             State.StopFling("Cleared stale active state")
         end
         if State.Invis and (State.Invis.Busy or State.Invis.Active) then
-            describe("Turn Ghost invisibility off before flinging"); return false, fling.Status
+            describe("Turn invisibility off before flinging"); return false, fling.Status
         end
         if State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy) then
             if not State.ExitUndergroundForAttack or not State.ExitUndergroundForAttack() then
@@ -4274,8 +4077,19 @@ local installPlayerFling = function(C)
                     or (r.Humanoid.MoveDirection and r.Humanoid.MoveDirection.Magnitude>.05) then returning=nil
                 else
                     pending.Steps+=1
-                    local ok=pcall(moveBack,r,pending.Frame)
-                    if not ok then returning=nil end
+                    local ok,result=pcall(function()
+                        if pending.Support then
+                            if not pending.Support.Parent then return false end
+                            pending.Frame=pending.Support.CFrame*pending.LocalFrame
+                        end
+                        moveBack(r,pending.Frame)
+                        return true
+                    end)
+                    if not ok then
+                        returning=nil
+                        fling.ReturnStatus="Return failed: settling movement: "..tostring(result)
+                        describe("Fling stopped | "..fling.ReturnStatus)
+                    elseif result==false then returning=nil end
                 end
             end
             return
@@ -4423,6 +4237,7 @@ local installPlayerActions = function(C)
         if not char then return false, status("Wait for your character to be alive") end
         local targetChar = parts(target)
         if not targetChar or (C.IsEliminated and C.IsEliminated(target)) then return false, status("Target is not alive or loaded") end
+        if State.StopKillAura then State.StopKillAura("Stopped for selected-player auto attack") end
         if C.CancelAttack then C.CancelAttack() end
         actions.Enabled, actions.TargetId, actions.SelectedId, actions.Character = true, target.UserId, target.UserId, char
         actions.TargetCharacter = targetChar
@@ -4467,7 +4282,7 @@ local installPlayerActions = function(C)
         if State.Fling and State.Fling.Active then State.StopFling("Fling stopped for teleport") end
         if State.CancelFlingReturn then State.CancelFlingReturn() end
         if C.CancelAttack then C.CancelAttack() end
-        if State.Invis and (State.Invis.Active or State.Invis.Busy) then return false, status("Turn Ghost off before teleporting") end
+        if State.Invis and (State.Invis.Active or State.Invis.Busy) then return false, status("Turn invisibility off before teleporting") end
         if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return false, status("Restore your character before teleporting") end
         local char, hum, root = parts(player)
         if not char or root.Anchored or hum.Sit or hum.PlatformStand then return false, status("Your character must be alive and free to move") end
@@ -4498,11 +4313,12 @@ local installPlayerActions = function(C)
             if (targetHum and targetHum.Health <= 0) or (C.IsEliminated and C.IsEliminated(target)) then
                 State.StopAutoAttack("Target eliminated; auto attack stopped"); return
             end
-            local blocked = (State.Fling and State.Fling.Active) or C.InputBlocked()
+            local invisible=State.Invis and (State.Invis.Active or State.Invis.Busy)
+            local blocked = invisible or (State.Fling and State.Fling.Active) or C.InputBlocked()
             if blocked then
                 if not actions.WasPaused and C.CancelAttack then C.CancelAttack() end
                 actions.WasPaused = true
-                status(State.Fling and State.Fling.Active and "Auto attack paused during fling" or "Auto attack paused: close menu / finish typing")
+                status(invisible and "Auto attack paused during invisibility" or (State.Fling and State.Fling.Active and "Auto attack paused during fling" or "Auto attack paused: close menu / finish typing"))
                 return
             end
             actions.WasPaused = false
@@ -4577,6 +4393,427 @@ end
 
 
 do
+-- Murderer-only nearby stab automation; requests are not confirmed kills.
+local installKillAura=function(C)
+    local State,player=C.State,C.Player
+    local clock=C.Clock or os.clock
+    local focused=true
+    local aura={Enabled=false,Status="Kill aura OFF",Attempts=0,TargetId=nil,LastAttempt=-math.huge}
+    State.KillAura=aura
+    State.Config.KillAura=false
+    local function range(value)
+        local n=tonumber(value)
+        return n and n==n and n>=1 and n<=6.5 and n or nil
+    end
+    State.Config.KillAuraRange=range(State.Config.KillAuraRange) or 6
+    local function reach(value)
+        local n=tonumber(value)
+        return n and n==n and n>=1 and n<=100 and n or nil
+    end
+    State.Config.AuraExtendedReach=State.Config.AuraExtendedReach~=false
+    State.Config.AuraReachRange=reach(State.Config.AuraReachRange) or 30
+    function State.GetKillAuraRange()
+        return State.Config.AuraExtendedReach and (reach(State.Config.AuraReachRange) or 30)
+            or (range(State.Config.KillAuraRange) or 6)
+    end
+    local function refresh()
+        if State.MobileUI and State.MobileUI.Refresh then pcall(State.MobileUI.Refresh) end
+    end
+    local function cancel()
+        if C.CancelStab then
+            local ok,message=pcall(C.CancelStab)
+            if not ok then return false,tostring(message) end
+        end
+        return true
+    end
+    function State.CancelKillAuraContacts(message)
+        aura.TargetId=nil
+        local ok,why=cancel()
+        if message and aura.Enabled then aura.Status=message end
+        return ok,why
+    end
+    function State.SetAuraExtendedReach(enabled)
+        State.Config.AuraExtendedReach=enabled==true
+        local ok,message=State.CancelKillAuraContacts("Aura reach changed; waiting for cooldown")
+        refresh(); return ok,message
+    end
+    function State.SetAuraReachRange(value)
+        local n=reach(value)
+        if not n then return false,"Extended reach must be between 1 and 100 studs" end
+        State.Config.AuraReachRange=n
+        local ok,message=State.CancelKillAuraContacts("Aura range changed; waiting for cooldown")
+        return ok,ok and n or message
+    end
+    function State.CanAuraContact()
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        return aura.Enabled and State.Running and State.Config.Aim and focused and char==aura.Character
+            and hum and hum.Health>0 and C.IsAlive(player) and C.RoleFor(player)=="Murderer"
+            and not (State.Invis and (State.Invis.Busy or State.Invis.Active and not State.Config.InvisibleKnife))
+            and not (State.Fling and State.Fling.Active) and not C.InputBlocked()
+    end
+    function State.StopKillAura(message)
+        aura.Enabled,State.Config.KillAura=false,false
+        aura.TargetId=nil
+        local ok,why=cancel()
+        aura.Status=ok and (message or "Kill aura OFF") or "Kill aura stopped; cleanup error: "..why
+        refresh(); return ok,aura.Status
+    end
+    function State.SetKillAura(enabled)
+        if not enabled then return State.StopKillAura() end
+        if not State.Running then State.StopKillAura("Script is unloaded"); return false,aura.Status end
+        if aura.Enabled then State.Config.KillAura=true; return true,aura.Status end
+        local ok,message=pcall(function()
+            if State.StopAutoAttack then State.StopAutoAttack("Stopped for kill aura") end
+            State.Config.Aim=true
+            if C.Prepare then C.Prepare() end
+        end)
+        if not ok then State.StopKillAura("Aura unavailable: "..tostring(message)); return false,aura.Status end
+        aura.Enabled,State.Config.KillAura=true,true
+        aura.Character=player.Character
+        aura.Status="Kill aura enabled; waiting for murderer + equipped knife"
+        refresh(); return true,aura.Status
+    end
+    function State.SetKillAuraRange(value)
+        local n=range(value)
+        if not n then return false,"Aura range must be between 1 and 6.5 studs" end
+        State.Config.KillAuraRange=n
+        return true,n
+    end
+    local function pause(message)
+        aura.TargetId=nil
+        local ok,why=cancel()
+        if not ok then State.StopKillAura("Aura cleanup failed: "..why); return end
+        aura.Status=message
+    end
+    local elapsed=0
+    C.Connect(C.RunService.Heartbeat,function(dt)
+        if not aura.Enabled then return end
+        elapsed+=dt
+        if elapsed<0.1 then return end
+        elapsed=0
+        local ok,message=pcall(function()
+            if not State.Running then State.StopKillAura("Unloaded"); return end
+            local char=player.Character
+            if char~=aura.Character then State.StopKillAura("Character changed; kill aura OFF"); return end
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            if not hum or hum.Health<=0 then State.StopKillAura("Character unavailable; kill aura OFF"); return end
+            if C.RoleFor(player)~="Murderer" or not C.IsAlive(player) then pause("Kill aura waiting for murderer role in a round"); return end
+            if not root then pause("Kill aura waiting for your character root"); return end
+            if not State.Config.Aim then pause("Kill aura paused: enable Aim assist"); return end
+            if State.Invis and (State.Invis.Busy or State.Invis.Active and not State.Config.InvisibleKnife) then pause("Kill aura paused during invisibility"); return end
+            if State.Fling and State.Fling.Active then pause("Kill aura paused during fling"); return end
+            if not focused or C.InputBlocked() then pause("Kill aura paused: focus Roblox / close menu / finish typing"); return end
+            local item=C.EquippedWeapon()
+            if not item or item.Name~="Knife" or item.Parent~=char or item.Enabled==false then pause("Kill aura waiting for an equipped, enabled knife"); return end
+            local ready,reason=C.CanStab(item)
+            if not ready then aura.Status=reason or "Kill aura waiting for knife cooldown"; return end
+            if clock()-aura.LastAttempt<0.85 then return end
+            local best,bestChar,bestDistance
+            local radius=State.GetKillAuraRange()
+            for _,p in ipairs(C.Players:GetPlayers()) do
+                if p~=player and not State.IsPlayerExcluded(p) and C.IsAlive(p) then
+                    local targetChar=p.Character
+                    local targetHum=targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+                    local targetRoot=targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+                    if targetHum and targetHum.Health>0 and targetRoot then
+                        local distance=(targetRoot.Position-root.Position).Magnitude
+                        if distance==distance and distance<=radius and (not bestDistance or distance<bestDistance
+                            or distance==bestDistance and p.UserId<best.UserId)
+                            and C.ClearPath(root.Position,targetRoot.Position,targetChar) then
+                            best,bestChar,bestDistance=p,targetChar,distance
+                        end
+                    end
+                end
+            end
+            if not best then aura.TargetId=nil; aura.Status="Kill aura: no clear target in range"; return end
+            if best.Character~=bestChar or State.IsPlayerExcluded(best) or not C.IsAlive(best) then return end
+            local accepted,why=C.Stab(item,best)
+            aura.TargetId=accepted and best.UserId or nil
+            if accepted then
+                aura.Attempts+=1; aura.LastAttempt=clock()
+                aura.Status="Aura stab requested: @"..best.Name.." / hit unconfirmed"
+            else aura.Status=why or "Kill aura waiting for a ready knife" end
+        end)
+        if not ok then State.StopKillAura("Kill aura stopped: "..tostring(message)) end
+    end)
+    C.Connect(player.CharacterRemoving,function() State.StopKillAura("Respawning; kill aura OFF") end)
+    if C.UIS then
+        C.Connect(C.UIS.WindowFocusReleased,function() focused=false; if aura.Enabled then pause("Kill aura paused: focus Roblox") end end)
+        C.Connect(C.UIS.WindowFocused,function() focused=true end)
+    end
+    return aura
+end
+
+local function auraKnifeReady(item)
+    local record=State.WeaponHandlers[item]
+    if not record or not ready(record) then return false,"Kill aura waiting for knife handler" end
+    if record.Charging then return false,"Kill aura paused for your knife throw" end
+    local throwSpeed=item:GetAttribute("ThrowSpeed")
+    throwSpeed=type(throwSpeed)=="number" and throwSpeed>0 and throwSpeed or 1
+    if os.clock()-record.LastThrow<2*throwSpeed then return false,"Kill aura waiting for throw cooldown" end
+    if os.clock()-record.LastStab<0.85 then return false,"Kill aura waiting for stab cooldown" end
+    return true
+end
+installKillAura({State=State,Player=player,Players=Players,RunService=RunService,UIS=UIS,Connect=connect,
+    RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,
+    InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end,
+    CanStab=auraKnifeReady,
+    CancelStab=function()
+        for _,record in pairs(State.WeaponHandlers) do
+            if record.AuraStab then record.StabbingUntil,record.StabTarget,record.AuraStab=0,nil,false end
+        end
+    end,
+    Stab=function(item,target)
+        if not State.CanAuraContact() then return false end
+        if roleFor(player)~="Murderer" or not alive(player) or not alive(target) or State.IsPlayerExcluded(target) then return false end
+        if not auraKnifeReady(item) then return false end
+        local ownRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local targetRoot=target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not ownRoot or not targetRoot or (targetRoot.Position-ownRoot.Position).Magnitude>State.GetKillAuraRange()
+            or not clearPath(ownRoot.Position,targetRoot.Position,target.Character) then return false end
+        local record=State.WeaponHandlers[item]
+        local before=State.Stats.StabRequests
+        stabKnife(record,target)
+        local sent=State.Stats.StabRequests>before
+        if sent then
+            record.AuraStab=true
+            if State.Config.AuraExtendedReach then
+                local char=target.Character
+                local hit=char and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("Head") or targetRoot)
+                if hit then reportStabContact(record,hit,"AuraReachAttempt") end
+            end
+        end
+        return sent
+    end})
+end
+
+
+do
+-- Perspective bounds of an oriented box clipped against the near plane.
+-- Coordinates use camera-right, camera-up and positive forward depth.
+local function finite(n) return type(n)=="number" and n==n and math.abs(n)<math.huge end
+local signsX={-1,1,-1,1,-1,1,-1,1}
+local signsY={-1,-1,1,1,-1,-1,1,1}
+local signsZ={-1,-1,-1,-1,1,1,1,1}
+local edgeA={1,3,5,7,1,2,5,6,1,2,3,4}
+local edgeB={2,4,6,8,3,4,7,8,5,6,7,8}
+-- No yields: scratch arrays can be reused without per-corner table allocation.
+local xs,ys,ds={},{},{}
+local projectESPPart=function(center,size,axes,view)
+    if not finite(center.X) or not finite(center.Y) or not finite(center.Z)
+        or not finite(size.X) or not finite(size.Y) or not finite(size.Z) or size.X<=0 or size.Y<=0 or size.Z<=0
+        or not finite(view.FX) or not finite(view.FY) or view.FX<=0 or view.FY<=0
+        or not finite(view.CX) or not finite(view.CY) or not finite(view.Near) or view.Near<=0
+        or not finite(view.Left) or not finite(view.Top) or not finite(view.Right) or not finite(view.Bottom)
+        or view.Right<=view.Left or view.Bottom<=view.Top then return nil end
+    if not finite(axes.RX) or not finite(axes.RY) or not finite(axes.RD)
+        or not finite(axes.UX) or not finite(axes.UY) or not finite(axes.UD)
+        or not finite(axes.ZX) or not finite(axes.ZY) or not finite(axes.ZD) then return nil end
+    local hx,hy,hz=size.X*.5,size.Y*.5,size.Z*.5
+    local rx,ry,rd=axes.RX*hx,axes.RY*hx,axes.RD*hx
+    local ux,uy,ud=axes.UX*hy,axes.UY*hy,axes.UD*hy
+    local zx,zy,zd=axes.ZX*hz,axes.ZY*hz,axes.ZD*hz
+    local near=view.Near
+    if center.Z+math.abs(rd)+math.abs(ud)+math.abs(zd)<near then return nil end
+    local left,top,right,bottom=math.huge,math.huge,-math.huge,-math.huge
+    local clipped=false
+    for i=1,8 do
+        local a,b,c=signsX[i],signsY[i],signsZ[i]
+        local x,y,d=center.X+a*rx+b*ux+c*zx,center.Y+a*ry+b*uy+c*zy,center.Z+a*rd+b*ud+c*zd
+        xs[i],ys[i],ds[i]=x,y,d
+        if d>=near then
+            local px,py=view.CX+view.FX*x/d,view.CY-view.FY*y/d
+            left,top,right,bottom=math.min(left,px),math.min(top,py),math.max(right,px),math.max(bottom,py)
+        else clipped=true end
+    end
+    if clipped then
+        for i=1,12 do
+            local a,b=edgeA[i],edgeB[i]
+            local da,db=ds[a],ds[b]
+            if (da<near)~=(db<near) then
+                local t=(near-da)/(db-da)
+                local x,y=xs[a]+t*(xs[b]-xs[a]),ys[a]+t*(ys[b]-ys[a])
+                local px,py=view.CX+view.FX*x/near,view.CY-view.FY*y/near
+                left,top,right,bottom=math.min(left,px),math.min(top,py),math.max(right,px),math.max(bottom,py)
+            end
+        end
+    end
+    left,top=math.max(view.Left,left),math.max(view.Top,top)
+    right,bottom=math.min(view.Right,right),math.min(view.Bottom,bottom)
+    if right<=left or bottom<=top then return nil end
+    return left,top,right-left,bottom-top
+end
+
+-- Calibrate in engine viewport UI units instead of assuming FOV/optical centre.
+local function finite(n) return type(n)=="number" and n==n and math.abs(n)<math.huge end
+local function insetAreas(service)
+    return service:GetInsetArea(Enum.ScreenInsets.None),service:GetInsetArea(Enum.ScreenInsets.DeviceSafeInsets)
+end
+local calibrateESPCamera=function(camera,view,guiService)
+    local frame=camera:GetRenderCFrame()
+    local viewport=camera.ViewportSize
+    if viewport.X<=0 or viewport.Y<=0 then return nil,"Empty viewport" end
+    local point=frame.Position+frame.LookVector*8
+    local origin=camera:WorldToViewportPoint(point)
+    local across=camera:WorldToViewportPoint(point+frame.RightVector)
+    local above=camera:WorldToViewportPoint(point+frame.UpVector)
+    local fx,fy=(across.X-origin.X)*8,(origin.Y-above.Y)*8
+    if not finite(fx) or not finite(fy) or fx<=0 or fy<=0 or not finite(origin.X) or not finite(origin.Y)
+        or math.abs(across.Y-origin.Y)>.5 or math.abs(above.X-origin.X)>.5 then
+        return nil,"Projection calibration unavailable"
+    end
+    view.CX,view.CY,view.FX,view.FY=origin.X,origin.Y,fx,fy
+    local near=camera.NearPlaneZ
+    view.Near=finite(near) and near<0 and -near or .1
+    view.Left,view.Top,view.Right,view.Bottom=0,0,viewport.X,viewport.Y
+    view.BoundsSource="Device viewport"
+    if guiService then
+        local ok,full,device=pcall(insetAreas,guiService)
+        if ok and full and device and full.Min and full.Max and device.Min then
+            view.Left,view.Top=full.Min.X-device.Min.X,full.Min.Y-device.Min.Y
+            view.Right,view.Bottom=full.Max.X-device.Min.X,full.Max.Y-device.Min.Y
+            view.BoundsSource="Fullscreen in device-safe coordinates"
+        end
+    end
+    return frame
+end
+
+-- Lightweight, camera-refreshed fallback fill. No 3D adornments for normal avatars.
+local installScreenESP=function(C)
+    local State=C.State
+    local function makeLayer()
+        local gui=Instance.new("ScreenGui")
+        gui.Name="MM2StableBodyFill"; gui.IgnoreGuiInset=true; gui.ResetOnSpawn=false
+        pcall(function() gui.ScreenInsets=Enum.ScreenInsets.DeviceSafeInsets; gui.ClipToDeviceSafeArea=false end)
+        gui.DisplayOrder=80; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; gui.Parent=C.Parent
+        return gui
+    end
+    local layer=makeLayer()
+    local status={Backend="Screen-space body rectangles",DrawnParts=0,AllocatedParts=0,Frames=0,GeometryWrites=0}
+    State.ScreenESP=status
+    local cache,view,axes,center={},{},{},{}
+    local profileBegin,profileEnd=debug and debug.profilebegin,debug and debug.profileend
+    local bindName="MM2ScreenFill_"..tostring(State)
+    status.BindName=bindName
+    status.RenderPriority=Enum.RenderPriority.Last.Value+1
+    local function clear(p)
+        local entry=cache[p]
+        if entry then
+            for _,record in pairs(entry.Parts) do record.Frame:Destroy(); status.AllocatedParts-=1 end
+            cache[p]=nil
+        end
+    end
+    local function hide(entry)
+        for _,record in pairs(entry.Parts) do if record.Frame.Visible then record.Frame.Visible=false end end
+    end
+    function status.Stop()
+        if status.Stopped then return end
+        C.RunService:UnbindFromRenderStep(bindName)
+        for p in pairs(cache) do clear(p) end
+        layer:Destroy(); status.Stopped=true; status.DrawnParts=0
+    end
+    State.StopScreenESP=status.Stop
+    local function makeFill(name)
+        local f=Instance.new("Frame"); f.Name="BodyFill_"..name; f.BorderSizePixel=0
+        f.BackgroundTransparency=.6; f.Active=false; f.Visible=false; f.ZIndex=1; f.Parent=layer
+        return f
+    end
+    local function refresh(p,v,now)
+        local entry=cache[p]
+        if entry and entry.Character~=v.Character then clear(p); entry=nil end
+        if not entry then entry={Character=v.Character,Parts={},NextScan=0}; cache[p]=entry end
+        if now>=entry.NextScan then
+            entry.NextScan=now+.4
+            for part,record in pairs(entry.Parts) do
+                if part.Parent~=v.Character or not record.Frame.Parent then record.Frame:Destroy(); entry.Parts[part]=nil; status.AllocatedParts-=1 end
+            end
+            for _,name in ipairs(C.PartNames) do
+                local part=v.Character:FindFirstChild(name)
+                if part and part:IsA("BasePart") and not entry.Parts[part] then
+                    entry.Parts[part]={Frame=makeFill(name),Name=name}; status.AllocatedParts+=1
+                end
+            end
+        end
+        return entry
+    end
+    local function step(dt)
+        if status.Stopped or not State.Running then return end
+        status.Frames+=1; status.DrawnParts=0
+        if not layer.Parent then for p in pairs(cache) do clear(p) end; layer=makeLayer() end
+        local camera=C.Camera()
+        if not camera or not State.Config.ESP or State.Config.StableBodyESP==false or (C.IsVR and C.IsVR()) then
+            for p,entry in pairs(cache) do
+                if not State.Visuals[p] then clear(p) else hide(entry) end
+            end
+            return
+        end
+        local valid,frame,reason=pcall(C.Calibrate,camera,view,C.GuiService)
+        if not valid or not frame then
+            for _,entry in pairs(cache) do hide(entry) end
+            status.LastError=valid and reason or tostring(frame); return
+        end
+        local right,up,forward=frame.RightVector,frame.UpVector,frame.LookVector
+        status.BoundsSource=view.BoundsSource
+        local now=C.Clock and C.Clock() or os.clock()
+        local began=os.clock()
+        if profileBegin and profileEnd then profileBegin("MM2/BodyProjectionAndGUI") end
+        for p,entry in pairs(cache) do if not State.Visuals[p] then clear(p) end end
+        for p,v in pairs(State.Visuals) do
+            -- One bad/streamed-out body cannot prevent other players from drawing.
+            local ok,err=pcall(function()
+                local entry=refresh(p,v,now)
+                local color=v.Highlight.FillColor
+                for part,record in pairs(entry.Parts) do
+                    local f=record.Frame
+                    if not f.Parent then
+                        f:Destroy(); f=makeFill(record.Name); record.Frame=f
+                        record.X,record.Y,record.Width,record.Height=nil,nil,nil,nil
+                    end
+                    if part.Parent~=v.Character then if f.Visible then f.Visible=false end; entry.NextScan=0
+                    else
+                        local delta=part.Position-frame.Position
+                        center.X,center.Y,center.Z=delta:Dot(right),delta:Dot(up),delta:Dot(forward)
+                        local cf=part.CFrame
+                        axes.RX,axes.RY,axes.RD=cf.RightVector:Dot(right),cf.RightVector:Dot(up),cf.RightVector:Dot(forward)
+                        axes.UX,axes.UY,axes.UD=cf.UpVector:Dot(right),cf.UpVector:Dot(up),cf.UpVector:Dot(forward)
+                        axes.ZX,axes.ZY,axes.ZD=cf.LookVector:Dot(right),cf.LookVector:Dot(up),cf.LookVector:Dot(forward)
+                        local left,top,width,height=C.Project(center,part.Size,axes,view)
+                        if left then
+                            if not record.X or math.abs(record.X-left)>.25 or math.abs(record.Y-top)>.25
+                                or math.abs(record.Width-width)>.25 or math.abs(record.Height-height)>.25 then
+                                f.Position=UDim2.fromOffset(left,top); f.Size=UDim2.fromOffset(width,height)
+                                record.X,record.Y,record.Width,record.Height=left,top,width,height
+                                status.GeometryWrites+=2
+                            end
+                            if f.BackgroundColor3~=color then f.BackgroundColor3=color end
+                            if not f.Visible then f.Visible=true end; status.DrawnParts+=1
+                        elseif f.Visible then f.Visible=false end
+                    end
+                end
+            end)
+            if not ok then
+                if cache[p] then hide(cache[p]) end
+                status.LastError=tostring(err)
+            end
+        end
+        if profileBegin and profileEnd then profileEnd() end
+        status.LastGeometryMilliseconds=(os.clock()-began)*1000
+    end
+    status.Step=step -- Read-only render step, also used by the offline fixture.
+    C.RunService:BindToRenderStep(bindName,status.RenderPriority,step)
+    return status
+end
+
+installScreenESP({State=State,Parent=player:WaitForChild("PlayerGui"),PartNames=hitPartNames.Gun,
+    Project=projectESPPart,Calibrate=calibrateESPCamera,GuiService=GuiService,
+    IsVR=function() return game:GetService("VRService").VREnabled end,
+    Camera=function() return workspace.CurrentCamera end,RunService=RunService})
+end
+
+
+do
 -- Explicit user action only. Each stop is attempted even if another one fails.
 local installEmergencyStop = function(C)
     local State = C.State
@@ -4588,6 +4825,10 @@ local installEmergencyStop = function(C)
         end
         State.Config.AutoPickup = false
         run("queued attacks",C.CancelWeaponActions)
+        run("kill aura",function() if State.StopKillAura then
+            local ok,message=State.StopKillAura("Emergency stop")
+            if ok==false then error(message or "Aura cleanup failed") end
+        end end)
         run("auto attack",function() if State.StopAutoAttack then State.StopAutoAttack("Emergency stop") end end)
         -- End dodge before fling return so a dodge restore cannot replace that return.
         State.Config.AutoKnifeDodge = false
@@ -4597,6 +4838,12 @@ local installEmergencyStop = function(C)
         if hadFling and State.Fling.ReturnStatus and State.Fling.ReturnStatus:find("Return failed:",1,true) then
             table.insert(errors,State.Fling.ReturnStatus)
         end
+        run("invisibility",function()
+            if State.SetInvisibility then
+                local ok,message=State.SetInvisibility(false)
+                if ok==false then error(message or "Character restoration failed") end
+            end
+        end)
         local message = #errors==0 and "Emergency stop: attacks, fling, pickup and dodge stopped"
             or "Emergency stop completed with issues: "..table.concat(errors,"; ")
         State.EmergencyStopReport={OK=#errors==0,Errors=errors,Message=message}
@@ -4620,6 +4867,86 @@ end
 
 
 do
+-- Bounded yielding path jobs. A timeout does not imply native cancellation.
+-- Successful Path ownership transfers to the callback; other paths are destroyed.
+local createAsyncPathPool = function(C)
+    local clock=C.Clock or os.clock
+    local limit,timeout=C.Limit or 2,C.Timeout or 4
+    local budget=C.Budget or {Outstanding=0}
+    local status={Outstanding=0,Timeouts=0,Live=false,LastStatus="Idle",Limit=limit,TimeoutSeconds=timeout}
+    status.TotalOutstanding=budget.Outstanding
+    local pool={Status=status}
+    local live,stopped,nextRequest,failures=nil,false,0,0
+    local function destroy(path) pcall(function() path:Destroy() end) end
+    local function reserve()
+        budget.Outstanding+=1; status.Outstanding+=1; status.TotalOutstanding=budget.Outstanding
+    end
+    local function release()
+        budget.Outstanding-=1; status.Outstanding-=1; status.TotalOutstanding=budget.Outstanding
+    end
+    local function deliver(entry,ok,points,path,reason)
+        local accepted,result=pcall(entry.Callback,ok,points,path,reason)
+        if not accepted then status.LastError=tostring(result) end
+        if path and (not accepted or result==false) then destroy(path) end
+    end
+    function pool.IsBusy() return live~=nil end
+    function pool.Invalidate()
+        if live then live.Valid=false end
+    end
+    function pool.Stop()
+        stopped=true; pool.Invalidate(); live=nil; status.Live=false; status.LastStatus="Stopped"
+    end
+    function pool.Poll()
+        status.TotalOutstanding=budget.Outstanding
+        if stopped then return end
+        if live and clock()-live.Started>=timeout then
+            local entry=live; live=nil; status.Live=false
+            local report=entry.Valid; entry.Valid=false
+            status.Timeouts+=1; status.LastStatus="Timeout"
+            failures=math.min(failures+1,5); nextRequest=clock()+math.min(16,2^(failures-1))
+            -- Outstanding is decremented only when the worker actually returns.
+            if report then deliver(entry,false,nil,nil,"timeout") end
+        end
+    end
+    function pool.Request(params,start,goal,callback)
+        pool.Poll()
+        if stopped then return false,"stopped" end
+        if live then return false,"busy" end
+        if budget.Outstanding>=limit then status.LastStatus="Saturated"; return false,"saturated" end
+        if clock()<nextRequest then return false,"backoff" end
+        local created,path=pcall(C.CreatePath,params)
+        if not created or not path then status.LastError=tostring(path); return false,"create-error" end
+        local entry={Path=path,Valid=true,Callback=callback,Started=clock()}
+        live=entry; status.Live=true; reserve(); status.LastStatus="Computing"
+        local scheduled,scheduleError=pcall(C.Spawn,function()
+            if stopped or not entry.Valid then
+                release()
+                if live==entry then live=nil; status.Live=false end
+                destroy(path); return
+            end
+            local ok,points=pcall(C.ComputePath,path,start,goal)
+            release()
+            local current=live==entry
+            if current then live=nil; status.Live=false end
+            if stopped or not current or not entry.Valid then destroy(path); return end
+            if not ok or not points then
+                status.LastStatus=ok and "No path" or "Error"
+                if not ok then status.LastError=tostring(points) end
+                destroy(path); deliver(entry,false,nil,nil,ok and "no-path" or "compute-error"); return
+            end
+            failures=0; nextRequest=0; status.LastStatus="Ready"
+            deliver(entry,true,points,path,nil)
+        end)
+        if not scheduled then
+            if live==entry then live=nil; status.Live=false end
+            release(); entry.Valid=false; destroy(path)
+            status.LastError=tostring(scheduleError); return false,"schedule-error"
+        end
+        return true
+    end
+    return pool
+end
+
 -- Recommendations only, using currently observed characters and map destinations.
 local createTacticalPolicy = function()
     local policy={}
@@ -4710,15 +5037,188 @@ local createTacticalPolicy = function()
     return policy
 end
 
+-- GENERATED by export_sheriff_policy.py; actual PPO actor, not a hand-written substitute.
+-- Simulator v2 Sheriff policy. Live observations are an approximation; guidance only.
+local createLearnedModel = function()
+    local metadata={Run="ppo-20261016-004753",Checkpoint="final.zip",CheckpointSHA256="33fc99335b9547c76fd5f9ba8deb37698552b5a10a615e069f53c7bed6b0d01e",EnvironmentSHA256="427a75b1c44cd200cecbc573c2097b2fca9dc64d31b4e6ab841d767042a471a0",EnvVersion=2,Steps=155055,Role="Sheriff",ObservationSize=115,ActionCount=10,TrainSeed=17}
+    local layers={{W={{0.129825652,0.092350319,-0.135437474,0.229440615,-0.378009737,-0.156267256,0.25261426,-0.0384757444,-0.083882086,0.0047168741,0.158150509,0.114811592,0.166941524,0.0989343971,-0.047203809,-0.00637018634,-0.118888132,-0.0280527938,0.210669398,0.0409982204,0.0515868813,0.0805200636,0.11749544,0.134483635,-0.380073607,-0.0224634577,0.237269461,-0.021977257,-0.111559853,0.00548393652,0.135352179,-0.17579864,0.142607436,-0.0432018936,-0.0236217547,0.150573567,0.121500582,0.09756127,0.137246102,-0.0512330607,0.261582613,0.0427195616,-0.265932143,-0.144014433,0.0918426514,-0.184513509,-0.0612108596,-0.144194946,0.258673131,-0.00128631585,-0.0518759899,0.166735485,-0.0480350032,0.0908077806,0.0528807789,0.129410967,0.0941401049,0.0689180344,-0.151840702,0.087898612,0.331851363,-0.0206776951,-0.190032825,-0.264692903,-0.0136023127,-0.0561633147,-0.347194284,-0.0815052092,0.085199751,0.0587237142,-0.127743542,0.0905955583,0.0625949875,0.0666082129,0.0213326737,0.198105738,-0.0562526509,0.132344633,-0.0832660794,0.122100338,0.294173837,0.201661333,-0.0372836664,0.0554804876,-0.0690934435,-0.170497671,-0.160066798,0.0590069517,-0.0449730679,0.0766658187,0.0746339262,0.0968322381,-0.210112333,0.128876254,0.16540356,-0.452921599,-0.0781294629,-0.087513797,-0.0214880407,0.0834712237,-0.177333921,-0.18413198,-0.137445584,0.0453159958,-0.109681532,-0.270848453,-0.0195626616,0.105173916,0.0348821655,-0.312500715,-0.0363332964,-0.0255041346,0.206155926,-0.186703399,-0.211369798},{0.103928074,0.0648284629,-0.198426247,0.0569602251,0.215275377,-0.211702868,0.0896829963,0.117386937,0.0177449118,0.244458809,0.0388829745,-0.150039345,0.149711177,0.0180449393,0.354656667,-0.141063005,-0.244069532,0.20677124,-0.262059927,0.0993173793,0.149055183,-0.0657923073,0.104717769,-0.0900537968,0.00625041965,0.0781828165,0.00954877771,0.210761458,0.267586738,0.0162869785,0.0374878161,-0.259162843,0.0749798566,0.0239237323,-0.135078743,0.0712871626,0.00204739114,-0.0468087047,0.230079785,-0.0158627015,-0.111188479,0.175297141,-0.00736842491,0.0924279317,-0.0743921995,0.0736396238,0.0902113691,-0.11315988,-0.175868154,0.262132257,-0.0589486212,0.114775531,0.426618218,0.0326710865,-0.217672542,0.283067912,-0.059981361,0.004431081,-0.0991569161,-0.2329247,-0.326015711,-0.0591900088,0.253519207,-0.408660859,-0.277029574,0.0582742132,-0.0533188358,-0.0249145776,-0.0506218076,-0.0923003107,-0.29910022,-0.0914908722,0.270974219,-0.263604522,0.0452513471,0.121035494,0.268430948,-0.151035652,-0.13126561,-0.0212324988,0.0122673316,0.0372839645,0.0808042586,0.121054038,0.0602883473,-0.00718578789,0.00298083504,0.229843214,0.152329788,0.241692469,-0.0719994754,0.285015911,0.106943391,0.275152564,-0.122771889,-0.0553350635,-0.288493425,-0.112622119,0.0687206388,0.0786922723,0.145880044,0.0680550337,0.00640918314,-0.106936164,-0.076353617,-0.0846720785,0.101895832,-0.0227067545,-0.112901278,0.0180791281,0.0383345038,0.0183078907,-0.178180248,0.113002263,-0.185998932},{0.0500889607,-0.0321149267,0.0931528509,-0.0921330228,-0.120939828,0.067973122,0.130407915,0.11441312,0.00067066215,-0.0797575265,0.0748147592,-0.198848277,-0.101738058,0.317049205,0.133350521,-0.114998445,0.283784151,-0.155042827,-0.166148946,-0.0212317538,0.0357461199,0.0680471286,0.053979218,-0.00817162357,-0.261140674,-0.00784062874,0.160444647,-0.187781319,-0.0899181217,-0.0362448879,0.233874679,0.185914963,0.0302235465,-0.146299243,0.230441362,-0.153697506,-0.00553223444,0.0437715128,0.0903882012,-0.0773239508,0.272448897,0.0621003062,0.0310098939,-0.0436272919,-0.170004889,0.142440498,0.0281908493,-0.263429999,0.134007081,0.465591848,-0.214527145,-0.127404347,-0.0574286729,0.285028279,0.0552260578,0.079414539,0.205199957,-0.0137048298,-0.0954812318,-0.32192409,0.173659801,0.0101571362,-0.282958508,-0.146056652,-0.195710555,0.163882986,0.0538424104,-0.0689592361,0.0649190024,-0.108351208,-0.0669742674,0.0837746859,-0.131210625,0.0259156488,-0.126835078,0.0799781457,-0.0156528745,0.184587434,-0.250549644,0.127621591,-0.091250062,-0.00939503126,0.0863437057,0.0820053518,0.17760694,0.194885358,0.216544494,0.0704316273,0.282300264,0.0806273445,0.0297788158,0.0946748257,-0.0215350594,-0.326405346,-0.0720501319,0.0641082823,0.216276854,0.0864052698,0.17996639,0.15894486,0.0208043065,-0.0449788198,0.0559366643,-0.204164222,0.0607016236,-0.080819875,-0.197485477,-0.271021456,-0.0790354386,-0.13099654,0.226567224,-0.0100582512,0.0468005091,-0.108577728,0.212870345},{-0.00550022768,-0.00279497681,-0.00264105666,-0.0226929151,0.196390584,0.025586063,-0.0886668712,0.126270294,-0.0137401791,0.472329617,-0.0214066505,-0.251534194,-0.212580353,-0.104767241,-0.200699821,-0.0610335767,-0.0449402928,0.2016709,0.241684631,-0.120221302,0.146541566,-0.0993852168,0.378356129,0.0346751325,0.0376856439,-0.257472247,0.212299019,0.00465360563,-0.011849422,-0.00297516654,0.0825921074,-0.11268951,0.259846479,-0.0246382486,-0.121045999,0.0511885621,-0.081545949,0.243110061,-0.130069509,0.173774227,-0.169238374,-0.241788551,-0.201786414,0.0336390994,0.180107296,-0.0593877919,0.0112807993,0.322164178,0.0763888881,0.00641836412,-0.131240085,-0.145582139,-0.128687084,0.0642084703,0.147427425,0.0587507114,0.00299470779,-0.104811318,-0.0995287523,0.126920372,-0.115969852,-0.09884765,-0.0420029275,0.0632948279,0.0948058814,-0.214656726,-0.29030481,0.103334956,0.178906769,-0.0180455148,-0.0101568084,0.117642865,-0.0664516911,-0.0405676141,-0.215953171,0.0345929377,0.140558884,0.223430604,-0.0567347147,-0.13051407,-0.212563872,0.153618425,0.192401737,0.246856749,-0.00244242931,-0.0590933226,0.0433968343,0.189120889,-0.167100891,0.0465160869,0.216627106,0.153199762,-0.0304963086,0.112107426,0.0377858207,0.0501401909,0.144738838,-0.122836761,-0.142630175,-0.163353086,-0.0393383987,-0.00589034008,-0.0549504496,-0.099436909,-0.00381727167,0.0871314034,0.13264823,0.0335197821,0.0692428425,0.0304293185,0.229082674,0.0747730881,-0.0281193871,0.149961263,0.24873437},{-0.3340424,0.0153073287,-0.0740440413,0.0888045803,0.388182729,0.283033311,0.232900158,-0.153160796,-0.143545493,-0.0634812117,0.0268217791,-0.00561557338,-0.168022409,0.0547703244,-0.197994769,-0.16623427,0.0775787309,0.162327528,-0.0388050675,0.053342279,0.0479044095,-0.0896639079,-0.350371242,0.0740243793,-0.0656177476,-0.0503258891,0.115592346,0.0870712325,-0.200362056,-0.258703291,-0.0576282255,-0.00873142667,0.0468915626,0.140532687,-0.170644805,0.0655617863,0.194878921,-0.291274339,-0.0726899281,0.264161706,-0.147531852,-0.055934839,0.0861749277,0.0010969349,-0.20306249,0.214273691,-0.077314347,0.178602546,-0.0158196203,-0.265887678,-0.0973587111,0.112885907,0.0763856545,0.0349690206,-0.111375332,-0.108456232,0.160145134,-0.128494546,0.0694729686,0.0578469001,0.00996090658,-0.214693129,0.286178797,0.316751271,-0.108287469,0.223654673,0.276346534,-0.0395240001,0.162581906,0.0438021012,-0.179549813,-0.0210964102,-0.204615861,0.0535164326,-0.238487229,-0.0288546849,-0.0351375528,0.0538538136,0.0654648617,-0.0914540216,0.125740558,0.0204964429,-0.0984380096,0.0753542781,0.0256321616,-0.0255525652,-0.0276184343,-0.0849195048,0.0374034047,-0.0305065289,-0.0683713928,0.0254111979,0.104906142,-0.144835562,-0.0257238541,-0.00440162839,0.0363539234,0.0797773451,-0.119786836,0.0947073251,-0.00800688099,0.0683496743,0.0571069382,0.0588767827,-0.33507508,0.0386127047,0.0978934392,-0.0823240504,0.0805213749,-0.0695566162,0.0586966388,-0.0380142704,0.172976539,0.0607877858,0.0544168502},{0.0133362645,-0.104168944,-0.0652895644,-0.3339881,-0.169870868,-0.388403445,0.197874308,-0.0110752927,0.083532311,0.0183891859,-0.157491684,0.0486464202,-0.13924624,-0.143366769,0.132507935,-0.304259241,-0.270580918,0.0929644778,-0.102026179,0.0926745087,-0.0290787593,0.0391728468,-0.221421227,0.133860499,-0.213916957,0.0243764184,0.0199811496,0.28518486,0.233103991,-0.0502650477,-0.185634613,0.0101109622,0.031382177,-0.275265068,-0.0564356558,-0.0198549125,-0.0269464403,0.0374558941,0.143790871,0.0184849389,0.259398609,-0.0602374375,0.154957309,-0.229441091,0.135857463,0.260814339,-0.133484662,-0.118975475,0.0334438905,-0.0422840677,0.251445949,-0.0869331658,0.0844155475,0.34929496,-0.132410645,0.115468606,0.241096258,-0.220771611,-0.140204623,-0.0833436027,-0.0893623903,0.0840132907,0.0634352639,-0.172115356,0.0171372909,-0.0499911867,-0.0768555105,0.0848831087,0.166578129,0.0881259888,-0.00768132834,0.102275439,-0.00238931435,0.218254462,0.00578583963,0.00833156612,-0.101007923,-0.0386179909,0.0971314237,-0.201172113,-0.147336155,0.0694445074,-0.0724937692,-0.00256355968,0.105150633,-0.0627937689,0.0687845126,0.162246898,0.0214880556,0.0770053491,0.175542355,0.122306749,-0.0900696665,0.271367699,-0.204433084,0.134350643,-0.273667991,-0.0527865663,0.0255885683,-0.101661541,-0.16988036,-0.128697693,-0.00519471243,-0.0263512451,0.114182279,0.0814913884,-0.179530248,-0.0778939202,-0.00797731802,-0.184033304,-0.189238876,0.201780275,-0.31894359,0.0800521597,-0.0449828506},{-0.124861434,0.072235316,0.116527997,-0.154638633,-0.085985519,-0.0859966651,-0.103386365,-0.00142737501,-0.167193711,-0.289474338,-0.0457562767,-0.0636860803,-0.162327722,-0.245159507,0.405459404,0.0175891165,-0.158607677,-0.08921808,-0.36898011,0.202122942,0.203844145,0.0349447392,-0.232079431,0.108663231,0.205453515,0.395967841,0.11285115,-0.112101957,0.0493038855,-0.247152522,-0.120194219,0.184307426,-0.108735189,-0.106799588,0.0752285048,-0.0695140064,0.115701936,0.0655639917,-0.0135963783,-0.042921152,-0.00510699209,-0.0417733192,0.0219282303,0.0919352993,-0.122980036,0.156745389,-0.142578542,0.185802057,0.172052369,0.191952169,-0.196389392,-0.00533026038,0.00979589857,0.0344072208,-0.0668817461,-0.209347472,-0.182928994,-0.0914171413,-0.0653287247,-0.0741116628,-0.378452867,0.314510524,-0.255162716,0.138739705,0.121451184,-0.060122814,0.168793395,0.152383894,-0.137493029,-0.226283565,0.195639536,0.174927875,-0.00418533664,-0.080676198,-0.150191739,-0.0434377119,-0.0937595516,0.019992888,0.0159386043,-0.175286144,0.292225748,0.0530210361,-0.265534848,0.114334978,-0.0654441789,-0.0998112038,-0.0669216216,0.116057321,0.0725019053,0.162544668,-0.0870017707,0.0532606691,-0.0996587873,0.193516999,0.167257503,-0.0787770525,-0.0738890618,-0.120889895,0.0617328547,0.0250968374,-0.0300733671,-0.167630017,0.0967926681,0.290808558,-0.166510224,-0.0194839723,0.0690518245,-0.0549422875,0.00680690352,0.188686743,0.01230927,0.00793466996,0.175577104,-0.141076908,-0.174039841},{-0.0413292311,0.0445368439,0.0392622426,0.117070444,-0.0663640052,-0.068940185,-0.0447639711,0.106830604,-0.107141249,-0.194832414,0.103037201,0.123338692,0.0568081327,0.109883606,-0.0734928176,0.0493471846,-0.123589374,-0.056296818,-0.187447205,0.0997146219,-0.0134669933,-0.0981851742,-0.0442677364,0.341064423,-0.0846991837,0.0329462662,0.00715826685,0.080349192,0.280611515,-0.267136037,0.0489720181,-0.0880266502,0.0543274917,-0.0290393755,-0.10788399,-0.105324417,-0.0897074938,-0.0666715726,-0.317769647,0.0262498297,0.206538245,0.0264554042,-0.162018046,-0.186827302,0.203698605,0.0443757102,-0.233226717,-0.14504081,-0.380666614,0.004489752,0.00860057957,0.150761083,0.0450164415,0.0778587833,-0.234430373,0.0725635439,-0.157392919,0.205649152,0.138078526,-0.379483372,-0.065867506,0.197731793,0.0428459123,-0.217976108,0.172512516,0.15325211,0.0500196479,0.157388672,-0.0990763456,-0.151783764,0.202686891,0.038990777,-0.0705427527,0.0599417835,0.0752047822,-0.136998326,-0.0966661796,0.175201386,-0.135964036,-0.166783005,-0.122234985,0.0177519433,0.0827002153,0.064709574,-0.274381816,-0.0184976514,-0.0864127055,-0.146669269,0.199231431,0.239263237,0.0240822788,-0.106215619,-0.195248485,-0.0326217636,-0.0621923022,-0.041666422,-0.0385030955,-0.132352665,-0.0767719299,0.00194162666,-0.258752495,0.295558363,-0.063224718,-0.157987729,0.0946346372,-0.15592213,-0.28028515,0.121331722,-0.0485363454,-0.0196510665,-0.0306011438,0.281596839,0.202283204,0.152892679,-0.0125381891},{-0.00362778804,0.294161379,0.0128757646,-0.170183122,0.0388271585,-4.99730813e-05,0.123018421,-0.0189139321,0.113527253,0.0244260095,0.0676241219,-0.157497376,-0.0271315258,0.169095084,-0.158997968,0.153056949,0.250975937,0.0688714385,0.258203477,-0.242052332,0.156190634,-0.081985645,-0.391785771,-0.0311328173,0.34023881,0.0848383307,0.195237353,0.189580575,0.160394669,0.158731729,-0.181347698,0.00776456622,-0.0704280064,-0.247966856,-0.13035576,-0.194292277,0.09571141,0.10464029,0.107638419,0.34224391,0.0462548956,0.329334766,0.0722929314,0.0632771626,-0.0875051767,-0.104073316,0.00632870477,-0.112958945,0.0541720465,0.1547786,-0.198871478,0.138843596,0.0268738233,-0.0148325861,0.108182698,-0.0894484222,-0.00465202704,0.0246121995,0.0355706625,-0.0207337905,0.217594206,-0.0363739803,0.0408454612,-0.120332688,0.0268698763,-0.0204581767,-4.71586427e-05,0.325501561,0.0456260592,0.131465077,-0.114440851,-0.0133168381,-0.206161872,-0.051239755,0.0325205103,0.0602694303,0.0311455987,-0.120855145,0.158287495,-0.0491744392,0.0709927306,0.265824348,0.0988190621,-0.0785857514,0.300962716,0.00884595327,0.00773216039,-0.0421097577,0.236590952,-0.141090393,0.118183903,-0.0410249867,0.165608987,0.280848801,-0.00990486145,0.00391712505,0.331320375,-0.00515459757,0.0419651009,-0.101579554,-0.155529529,-0.140475139,-0.0264792964,-0.0124804135,-0.108279362,0.122600332,-0.187765762,0.0805453211,-0.0555157736,0.137695953,-0.170966536,0.203400016,0.150646508,-0.0539036691,-0.137461796},{-0.0932201967,0.0890332013,0.171864867,-0.10854727,-0.11271289,0.292047858,0.0542555228,-0.0240113251,0.117141917,0.401162207,-0.026756756,-0.144113228,0.00926765706,-0.221930832,-0.0878537297,-0.165964693,0.051556129,-0.0834228992,-0.0376613662,-0.0308487918,-0.0458172634,-0.246803373,0.376943529,-0.295117736,-0.25605464,0.049081251,-0.100280851,-0.242560282,-0.0632828772,0.00968425442,-0.0887857601,-0.139918432,0.20644255,0.201084644,0.0786184445,-0.162813306,-0.116492979,-0.100151323,-0.0143583408,0.010050714,-0.0706581473,0.196013182,-0.0130622424,-0.280139089,0.0939926729,-0.0400846638,0.178478643,0.116690919,-0.100659415,0.180705369,-0.119142286,0.0389111228,-0.079643853,-0.0467827879,-0.051311601,-0.0396359898,-0.0361771472,0.1168347,-0.0433055721,-0.0565987416,-0.0151207726,-0.0827090517,0.063882187,0.166606918,-0.115254968,0.0456148945,0.0982165039,-0.0383706056,0.213964865,-0.043180529,0.0181839913,-0.141320229,0.103468858,-0.0388407782,-0.206700727,-0.0750408322,0.033588063,-0.300316066,-0.00915719941,-0.138243511,0.0908987671,-0.115109868,-0.181613952,-0.00952547695,0.00664174184,-0.167306036,-0.2724365,-0.00271547702,-0.121861197,-0.0703965724,-0.074525781,-0.3752864,-0.36245057,-0.0165412184,0.00467124628,0.00101854035,0.0941159204,0.174676761,0.0943126678,-0.187506512,0.0144468816,-0.0871984363,0.0294693876,-0.0803543106,-0.0683043748,0.147426754,-0.140693516,0.0349887758,-0.190744326,0.00804399885,-0.129849598,0.360839814,0.00944469217,-0.0330461822,-0.0672945678},{0.147827461,-0.274722397,-0.0888336524,0.00153745874,-0.217827126,0.260908693,-0.13287729,-0.0164178554,0.155844271,0.0705268681,-0.132407352,0.0229831059,-0.139807329,-0.243634716,-0.139186516,0.0141824419,-0.168693095,-0.518223941,-0.107324295,-0.037475165,0.0830014572,-0.0548777767,0.468132943,-0.230488256,-0.00713737588,-0.194945022,0.0289709512,-0.0164897628,0.0351204909,0.00826814584,0.362209022,0.00909280404,-0.0869900435,0.0994936526,-0.045232214,0.0849975944,-0.117499813,-0.0374676175,0.0466063023,0.0527981035,-0.109051511,-0.0672520325,0.0701603368,0.12584585,0.00904651638,0.116881736,-0.0932861045,-0.0888342559,-0.0584565289,0.176527008,0.24040255,0.220402434,0.0526025221,0.117524229,0.128959998,0.03907286,0.104909182,0.0791804343,-0.171955928,0.0750815794,-0.0011924858,-0.00335176731,0.0544369258,-0.193151087,0.0202394165,0.0978621021,-0.14257361,-0.0592977479,0.178849772,-0.16502057,0.0169655029,-0.0189618506,-0.0157847758,-0.0591119714,0.0390515514,0.162557632,-0.328952789,-0.0251127407,0.173090264,0.0198086109,0.246377572,0.124696359,0.212951064,0.0570034273,-0.0698467493,0.0902119353,-0.157023817,-0.12249662,0.178986013,-0.0370013006,0.225768015,0.0991426855,0.0151494592,-0.0722941905,0.0531536825,-0.253983885,-0.232102081,0.0431709327,-0.241902977,0.140724674,0.0081807524,0.030021511,0.0401535816,-0.0163071398,-0.0816576257,0.157486573,-0.167028457,-0.0747841373,0.224322215,0.216598108,-0.0182294529,0.0966454968,-0.048788771,0.14086771,-0.0102477139},{-0.0224441364,-0.13680996,-0.106494464,0.0553445928,-0.297704458,-0.149809897,0.0135394409,0.163786486,0.208178639,0.195500359,0.0719623193,-0.125084549,0.162502795,-0.161450386,0.163797721,0.184035897,0.209399715,0.190021276,-0.26437059,0.0260228403,-0.100861214,0.0809723809,0.286244512,-0.0732307509,0.0825555176,0.0231208317,-0.126723051,-0.18194744,-0.148052439,-0.119613513,0.0630499199,-0.160674602,-0.101966999,-0.0176029745,0.0994792283,0.198364794,0.0395174436,-0.218964204,0.100670956,0.0197769217,0.0115448367,-0.421282291,-0.272704601,-0.312411189,-0.257543862,-0.107770488,0.215445101,-0.228918284,-0.138430446,-0.251991898,-0.115784027,-0.0288642738,0.0861107484,0.0493955947,0.0711344704,-0.0504769906,-0.0343754441,-0.0230508298,-0.108759403,-0.0666758791,-0.16554068,0.122355059,-0.0755391046,-0.127132386,0.0798001364,0.156155497,0.0119753471,0.0760686025,-0.171682835,0.0346560292,0.0448724777,0.130103931,-0.0836483166,-0.0773104653,0.159599096,0.147723228,-0.0346617773,0.0332645513,0.0319053084,0.0400154032,0.0115890848,0.14689219,0.00479632569,0.00579857966,0.285856903,-0.0619209744,-0.183969319,-0.068351537,-0.077258952,0.285504848,5.56226696e-05,0.195943922,-0.0342309959,-0.132918969,-0.464619011,0.211226761,-0.233904332,-0.245335281,-0.312308729,-0.0558554418,-0.0937038735,-0.0264435168,0.0330192335,-0.0448821411,-0.102725998,0.136565641,-0.13216877,-0.139779329,-0.106375091,0.0540073588,-0.0386275202,-0.0361089259,0.105205953,-0.108744927,0.0208236594},{0.163152069,0.0197919775,-0.00774961431,0.115158662,0.193968147,-0.0732592642,-0.184063137,-0.162567645,0.228533372,0.374055952,-0.039897345,0.0638998449,0.0648701712,-0.301239818,0.191863522,-0.0116847213,0.144724756,0.166549444,-0.0763224214,0.263521761,-0.0669535846,-0.122612745,0.572011888,-0.0727789104,-0.351684451,-0.137035713,0.0358915925,-0.0686515495,0.0995748043,0.11082197,0.20494701,0.0906948969,-0.155668378,-0.214282006,-0.176717937,0.0546271726,-0.0285909846,-0.361800045,0.0588985085,-0.0166561231,-0.1843438,-0.0299151652,-0.0706116855,-0.0090819709,0.0359288566,0.224192679,0.000437149312,-0.0277500711,-0.188836232,-0.125591874,0.164373264,0.0292223822,-0.29513073,0.0552613474,-0.0319481008,0.0565184839,-0.259603262,0.144026756,-0.0182947498,-0.0369018838,0.172066614,-0.0398027375,0.0356087275,0.0547895096,-0.0613882132,0.218563676,-0.0755419508,0.197325259,-0.109505415,0.0808732659,-0.193850785,0.0675009713,-0.0165706873,-0.168161944,-0.100584492,-0.281045556,0.161513835,-0.0276597273,0.0733920261,0.0610824563,0.0519077629,0.352268517,-0.0936076865,0.0450339951,-0.0270470232,0.0839061961,-0.0171158817,0.219756842,0.0863661841,-0.143187582,0.0554588176,0.125900298,0.175670534,-0.043694295,-0.0504708663,0.176332504,-0.0395583026,-0.137748346,0.244818017,0.0827051774,0.0236722045,-0.015303758,-0.0197109226,0.19038935,0.0646224022,-0.121520206,-0.0836438015,0.178393915,0.00879748166,-0.0194087774,-0.0239113551,0.00497433078,-0.136630177,0.0687711164,0.106796026},{0.0534254275,0.194422483,-0.231315762,0.204733089,0.0588382073,0.0687564835,-0.136760443,0.132258505,0.244037777,-0.185986817,-0.0331787467,-0.110545591,-0.0149456784,-0.2048361,0.259049207,-0.150882334,-0.251599491,-0.0170330964,0.00633883756,0.0847129747,-0.0612873286,0.0234772507,0.49089697,0.0522581674,-0.221023053,-0.061945498,0.0314243771,0.380582422,0.0674747974,-0.0133515792,-0.0683622733,0.0897974223,0.0406414866,-0.21661374,0.292978466,0.107649423,-0.0309489314,-0.127705455,0.160533771,0.025377864,-0.111114673,-0.237671122,0.164030686,-0.00399875874,0.0310557168,-0.142087996,-0.0656648874,-0.0903405175,-0.233426377,0.00683473283,0.00472395914,0.0334791578,-0.15642409,0.0443845801,0.209240243,0.125667781,0.006459889,0.0817059204,0.0840008855,-0.0187235363,0.217784584,0.201689035,0.23395139,0.157435745,-0.0181709118,-0.205096766,0.0915904045,-0.0267764479,0.109378703,0.0956091583,-0.025938388,-0.175250679,0.162308395,0.0597388931,0.0286856052,-0.0139558529,0.106791548,-0.0847708583,-0.277836174,-0.109951697,0.0521808527,0.125689566,0.266845375,0.136274666,-0.0392304435,0.0797168687,-0.0446732454,-0.122481704,-0.0112500936,-0.0228408519,-0.0673073009,-0.101062275,-0.290289015,-0.25015825,-0.0368900821,0.00436491147,-0.089213632,0.0841976106,0.0180515647,-0.376047224,0.102876432,0.0281915721,-0.0982454196,0.356396794,-0.0519180633,0.0374394506,0.0180269536,-0.373056263,0.0771365613,0.098830618,0.0307444446,-0.0771164224,0.199124232,-0.0995336995,-0.0963867456},{0.102667674,0.0308039878,0.0233992748,0.263846874,-0.0626011342,-0.249982029,0.234046102,-0.278565645,-0.196585476,-0.0598400272,0.0392326526,-0.0590405911,-0.234490797,-0.00142006483,-0.206948638,0.149632797,0.0331669599,-0.141008794,-0.0269307029,-0.00133762672,0.0420277826,0.127945572,0.3390567,0.197390318,0.0652939901,-0.018809963,0.100024916,-0.171776101,-0.064901337,-0.0198287852,-0.106763169,-0.0503610075,-0.0416997522,-0.0413402617,0.248906791,0.457576573,-0.0770561099,0.0693720207,0.20504716,0.0248406474,0.154446945,-0.0152834533,-0.0547853224,0.0352695994,0.0390987992,-0.143594444,-0.210503817,-0.122330442,-0.102188349,-0.077780813,-0.0789607167,-0.0870567933,0.0473341383,0.268602103,0.0281916242,0.0424933881,-0.0320858583,-0.0489253066,-0.0483953841,-0.150002077,0.195557982,0.148591012,0.242116392,0.0373098031,-0.142248243,0.106878653,-0.206268251,0.182831377,-0.0256395843,-0.165070981,0.0135756014,-0.271374226,0.0548132285,-0.112008408,0.0357370451,-0.147446558,-0.0373285338,-0.12625654,0.0175247826,-0.0344606154,0.0942072645,-0.109887518,-0.00617055222,-0.172795698,0.0943971723,0.123519555,-0.113003612,0.055437956,0.0158023369,0.0727877989,-0.0483519956,0.00999614689,0.0955959633,-0.0719603971,0.072879754,0.184925944,-0.0217597075,-0.189559489,0.0679110065,-0.136557698,-0.230436251,-0.245749399,-6.21184736e-05,-0.0737554654,0.113055192,0.0531348586,0.237957314,-0.116932839,0.113908365,-0.0793476552,0.0228132959,0.148571089,-0.201318294,-0.0855090618,0.0578759462},{0.236270413,0.0938965231,0.268129468,0.212984338,-0.119289018,-0.179216623,0.00564338174,0.173760921,0.0705827326,0.116322622,0.055920098,-0.0552635305,0.0333391987,-0.013532659,0.320106894,0.0532891639,-0.327719003,0.10064704,-0.19483462,0.0797343999,0.103797898,0.0811042786,0.0842204094,0.0144516723,-0.183942214,-0.0764869973,0.0753685012,-0.414134145,-0.268636376,-0.0114451284,-0.207153127,0.239078328,-0.0386341326,-0.147165224,0.0265521426,0.0231322944,-0.0495451242,-0.170295745,-0.164530843,0.197726801,0.159880847,0.149745122,-0.011634524,-0.263422281,-0.00307571026,0.10879501,-0.0568859056,-0.136248484,-0.00191280816,-0.0349880382,0.0256111696,0.122341618,0.195243716,-0.0804341882,0.0816862062,-0.248953566,-0.0961355865,-0.00146699359,-0.0816988349,-0.303822279,-0.0185929388,-0.033234667,-0.0273301788,-0.211237639,0.245263413,0.20222652,-0.142527312,-0.20032002,-0.0545310415,0.134715468,0.0503648967,-0.100412935,0.0619819239,0.211992115,0.167067021,-0.00030112575,-0.140880808,-0.0497217551,-0.109665319,-0.274200827,-0.0437214188,0.0186559036,-0.0570556782,0.00554667739,-0.123454906,-0.0026364834,-0.0432118475,-0.0909520984,-0.171119705,-0.0162050184,-0.0718355849,0.371216863,0.255675793,-0.278486669,-0.0468957499,-0.225564986,-0.187796503,0.0288160574,0.165000692,-0.0772499219,0.0142560955,-0.0241706669,0.310975879,-0.128832728,-0.117494024,0.159019321,0.230706871,0.227091536,0.0208549462,-0.0509130694,0.160436213,0.0540098436,0.0368271135,-0.0244903602,0.205757082},{-0.205781251,-0.0763385594,0.0565792434,-0.109174214,0.0793512091,0.120698474,-0.138032556,-0.145424306,-0.0058107567,-0.141176492,-0.150472105,0.0876293704,-0.122038536,0.0173819438,-0.0763856918,-0.279555559,0.215397149,-0.143808469,-0.212645426,-0.127810016,0.0232248902,0.16336903,0.140544847,0.0948540345,-0.242120638,0.119743049,0.0386606678,0.0465031452,-0.101792365,0.186850131,0.08363913,-0.0311707594,-0.07030797,0.141429752,0.0116531663,0.0130262524,0.211221695,0.0131964246,-0.0665792227,-6.6145476e-05,0.0415062755,0.0308741685,-0.0159517117,-0.177883178,0.152801499,-0.148216933,0.0674177632,-0.101440333,-0.262669444,0.272869587,-0.0318199545,0.287245244,0.0987801328,0.0691170171,0.102692798,-0.183665603,-0.0650535747,0.0567276701,0.0927169919,-0.0799042359,0.0609680898,0.130061179,0.0624045581,-0.0332778506,0.162146881,-0.292203963,0.332144111,-0.0308452118,-0.0814445168,0.0747587681,-0.151722386,0.0900155753,0.0624209568,-0.0287153013,-0.0933711752,-0.0836286843,0.134678066,-0.0568204485,-0.0942723826,-0.274739563,-0.0984556153,0.15661256,0.0145143289,-0.0862678364,-0.0174961202,-0.0396598168,0.0755097046,0.146547794,-0.0985749215,-0.116594642,0.0918838829,-0.110970199,-0.440666527,-0.187898532,0.212516502,0.148583204,0.0111428807,-0.22204107,-0.124112517,0.271852404,0.0850818381,-0.166753992,0.292116076,-0.284444332,-0.220529795,0.0225288197,-0.0296630803,-0.0207276866,0.259176105,0.275118619,-0.0731352344,-0.097228013,-0.153677747,-0.166241556,-0.093604587},{-0.178882539,-0.105586693,0.00704659754,-0.161952868,0.0966228098,0.166650817,0.187496379,0.0538885221,0.054968603,-0.547279954,0.037508294,0.102850579,-0.153140545,0.00462323101,0.0357231498,0.106417701,0.185124516,0.171591178,0.0915971696,-0.0479864515,0.0464526713,0.0152395247,-0.246204093,-0.273088485,-0.0420250483,0.184969351,0.178614989,0.179947838,0.195024818,0.00786153879,0.0719266608,0.0202114042,0.2039074,0.177888423,0.0169250146,0.163557172,-0.0244228356,0.101205334,0.0806542113,0.172635093,-0.267844021,-0.0113594308,-0.130619764,0.102226578,-0.0120312581,-0.0566205494,-0.0780822858,-0.0409844853,0.0858163387,0.135555923,0.216190964,0.167705864,-0.153113514,-0.0368778743,-0.202553704,0.246425882,-0.214974403,0.0392319262,-0.0672390386,-0.183274806,0.160673842,0.294674218,-0.321297079,0.107191376,0.00724140881,-0.0761093497,0.000804631156,0.0908503085,0.00262517575,0.0398015119,-0.022361761,0.0813486502,0.154951617,0.0496867597,0.15185836,0.127309248,-0.133744076,0.209863484,-0.0161697827,-0.28256309,0.098250322,0.0868638083,0.0252692997,-0.0873651057,0.0753760561,-0.135818705,-0.0378166586,-0.0891777799,-0.226421282,0.00879527815,-0.105595797,-0.125964716,0.18588683,0.0791443437,0.0323065482,-0.163451105,0.0546099544,-0.0298250224,0.328713804,-0.0293878205,-0.123983897,-0.0554755218,0.0510067567,-0.226282492,0.189975604,0.163171828,-0.109154657,-0.245920792,0.0324928574,-0.0910250917,0.0617583878,-0.111361973,-0.0605758578,0.144086748,0.0848331973},{0.160504445,0.191482872,0.139219925,0.217647791,-0.159736186,0.110494077,-0.14535968,0.0148694599,-0.0448490344,-0.0113349464,-0.0704708546,0.174785271,0.0561576821,0.303276032,-0.0900698528,-0.22768265,-0.0904558823,-0.0921114385,-0.0513895229,0.0681971088,-0.30146578,0.225567564,-0.435493499,-0.0356772281,0.347531319,-0.110161774,0.14009738,0.193443552,-0.121328615,-0.0114637166,-0.175814748,0.131903812,0.145587116,0.174485356,-0.0945818648,0.138155639,0.0632713437,-0.1271265,-0.216042116,0.0424119569,0.0453615598,0.0123786628,0.030904904,0.0896848068,0.237016365,0.235901341,0.098148331,0.105277367,-0.180360094,-0.0638666973,-0.0359744467,0.20702295,0.153989539,0.016099561,-0.0615672916,-0.12153279,-0.0412065424,0.11601077,0.0164007917,0.194448963,-0.163103104,0.126339555,-0.236729681,0.158740193,-0.159907296,-0.0687549114,-0.0408736654,-0.129370257,-0.252265304,-0.124426797,-0.025350783,-0.00106654176,-0.103887193,0.0286522694,-0.210908979,0.0214101095,-0.00712228892,0.106313899,0.123416275,-0.201212108,-0.0845991001,0.249382839,0.0125430822,-0.103473701,0.29664579,0.176130295,0.0250852909,0.134731248,-0.123643592,0.00192878465,-0.0834449977,-0.225975916,0.249971628,0.0941352919,0.0649008304,-0.00852486305,-0.0363262482,0.11027988,0.0907124504,-0.0968900919,0.00568964053,0.00117095467,0.0916444063,-0.0128982766,0.104900859,-0.0912617519,-0.0930103362,-0.237189114,-0.172845185,-0.0490404665,-0.1506612,0.139758885,0.227147907,-0.167801127,0.00296961959},{0.151286304,0.0868275389,-0.353071481,0.0451619439,-0.162740618,-0.0704835355,0.170886412,-0.150758162,0.202936903,0.0872626528,-0.0156389512,0.504345357,0.214669034,-0.239582345,0.0175493956,-0.400115967,0.225466087,0.144324571,0.143741682,-0.302477807,-0.199461892,-0.0357272513,-0.239201814,0.036510352,0.370843828,0.0176623259,0.350152373,0.210574657,0.176506326,0.190427408,0.0918540731,0.0450073518,0.00513822818,0.10730166,0.120539501,0.0844717324,-0.139365599,0.0287117418,0.0979936719,0.292648613,-0.0110619189,0.251502901,-0.0651436448,-0.00964206085,0.00414480921,0.0375398397,0.0652521476,0.0151412515,-0.365507603,0.267589927,-0.04756945,-0.107762255,7.30615575e-05,0.146974877,0.0379965864,-0.122309513,-0.047556974,-0.0228043851,-0.0243859924,0.023260707,-0.0437677242,-0.25971207,-0.0700304285,-0.0171485841,-0.120315276,0.145420611,-0.0678029358,-0.0519923717,0.283912122,0.175155237,0.183996454,0.0781101286,0.0373838916,-0.0126343807,0.0979177058,-0.00319531048,0.20350121,0.0331493057,0.0180768128,-0.191329092,-0.103504874,0.0352560952,-0.0305737983,-0.0833915249,-0.00247905659,-0.0110510774,0.0825455189,-0.0317462869,0.100500464,0.105203219,-0.14930895,-0.118947849,-0.0458171815,0.0329911001,-0.0844323486,-0.0711346641,0.0246476345,0.0108037628,-0.15100266,-0.0455786102,-0.18543011,-0.093805179,-0.116084285,0.203359112,-0.129877791,-0.0961151347,0.113287956,0.132840693,-0.069293268,0.00910722744,0.117744982,-0.137891024,-0.155357584,0.137523398,0.336261511},{-0.177819625,-0.18094857,0.0190097038,0.178482145,0.0608867556,0.271907419,-0.0450301692,-0.101081319,0.134579733,-0.00883855764,-0.00148904172,-0.198747888,0.0111623174,-0.0582608283,-0.0241654944,0.117325529,-0.374664664,0.0675539076,0.0193587523,0.0209231451,-0.117788546,-0.234216496,0.332949311,-0.114051268,0.0835178122,-0.204509586,-0.210342139,0.235993505,0.274192721,-0.0447953865,0.195682004,0.0444878712,-0.0141938655,0.212341666,0.253538191,0.0128586125,0.21399799,-0.157018557,0.0154248448,-0.00380967255,-0.0139716947,-0.217983082,0.0116600031,-0.0925078243,0.155190885,-0.211116046,-0.379343897,-0.0760038644,0.0275098067,-0.0484475605,-0.00412734086,-0.168986022,-0.0948861018,-0.00789986737,-0.135836244,-0.169028729,-0.117397703,-0.0103538567,0.11684189,-0.0173922516,-0.202361599,-0.213094115,-0.203989476,0.150042698,-0.0441963971,0.0658361539,0.27546218,-0.125667006,0.192477912,0.213985786,-0.0243858211,0.0396639928,-0.105952464,-0.08675614,0.0125509035,0.0642363355,-0.0241505094,-0.117497824,0.171802551,0.109356917,-0.0559458956,-0.056485083,0.126064852,-0.0932493508,0.116282627,-0.0616750196,0.177870229,0.238208175,-0.0521186441,0.038935449,-0.260057688,0.0983075574,-0.00808694866,0.158134401,0.0787540749,-0.310031801,0.0234979875,-0.0693623349,-0.000713793677,-0.0578964427,-0.03211537,-0.00261763949,0.202410087,0.0534934439,0.0633345544,-0.277522475,-0.0915074348,0.0912514478,0.21389167,0.1114465,-0.0700935796,0.120488025,-0.0436128005,-0.213547945,-0.0363790989},{0.11404258,-0.203629315,0.262636304,-0.180578291,-0.215234697,-0.0516984873,0.181911826,0.0589805245,0.00443279743,-0.0441344976,0.0776259229,0.0413547903,-0.16780673,-0.0629960895,-0.122118644,0.0530089512,0.103160381,0.178266913,-0.13067545,0.197911322,-0.251616806,-0.0171911996,0.260249853,0.00686969003,0.167190567,-0.20042254,0.146100044,0.220069706,-0.365682721,0.239347905,0.0129302861,0.148540154,-0.0450123586,-0.165576786,0.247547567,0.0906626359,-0.256076425,0.122243635,-0.196707428,0.00238683075,0.34425959,0.00716778031,-0.079004623,0.0203707013,0.116405815,0.00584272807,0.0820686445,-0.224432483,0.257378757,-0.00892572664,0.0814341605,0.0689491853,0.0866099894,-0.0130458614,0.0315247178,0.0525396615,0.0364044309,-0.0530690551,-0.0977277383,-0.0577601083,0.199602947,0.030239379,0.0438360125,0.150821984,0.0601009391,0.00217579678,-0.13661395,-0.0105385715,0.209425241,-0.132465959,-0.0844940767,0.16016297,0.0189085584,-0.243840948,-0.130182356,0.0458349958,-0.023654189,-0.10951677,-0.112270668,0.173502296,0.0956736431,0.207925916,-0.185543567,0.0990719497,-0.131847963,0.0339724645,0.0999060348,-0.199576199,-0.175091118,0.04375045,-0.119261578,0.0247316025,0.000818220375,0.106790408,-0.0351235457,-0.00204635784,0.104492724,0.0865744799,-0.112961575,-0.171522141,0.14200376,0.370679975,-0.106080405,-0.0788774639,-0.25931406,-0.163048252,0.0287826881,0.0703379437,0.155214429,0.111116417,-0.214903757,0.171362773,-0.155548647,0.174437657,0.0613145493},{0.229221418,-0.216983959,-0.0712866634,-0.0259952415,0.0321723111,-0.129801661,0.0439764373,-0.0542655326,0.0308985449,-0.298244148,-0.0929468647,-0.221631452,-0.148712412,-0.199417025,-0.0462723598,-0.458521307,-0.129322365,0.0037353579,-0.277986556,-0.0138048017,-0.092445381,-0.0970442668,0.446957231,0.0346919559,0.028610548,-0.0787223354,0.0698039085,0.23700884,0.113783389,0.0643098429,-0.0211542938,0.20655486,0.0892331973,0.127447858,-0.262807548,-0.0695704892,-0.0759265125,0.000291229197,0.0183028877,-0.0216629244,-0.436109126,0.016169833,0.0350912362,-0.0755400509,-0.139578313,-0.284864128,0.00726957992,-0.214262888,-0.0789501518,0.0696787238,0.00771305244,0.0732002556,0.0401603766,0.157698348,0.183762848,0.0568652414,-0.140731856,-0.0894383267,0.0388885774,-0.081432201,-0.112061292,-0.149141058,0.0134600429,-0.0549208634,0.030977428,0.252428323,-0.145623788,0.104743801,-0.0884078145,0.0181795098,-0.0648872331,0.113848917,-0.34776476,0.0207542516,-0.0976808071,-0.167814553,-0.0404012725,-0.000182369404,-0.205380067,0.0129774362,0.0334093943,-0.109310947,-0.121329375,-0.217855796,0.0351111479,-0.161983296,0.0680108964,0.0798782557,-0.118638329,0.0814665407,0.0239245798,-0.160294443,-0.0716422051,-0.112622194,-0.0334198028,-0.0904830843,-0.0629537404,0.289816439,0.0119041521,0.0207434241,-0.027320493,0.0140063697,-0.214529768,-0.0425499417,0.244670466,0.075595893,0.0694785416,0.156999066,-0.0749630705,0.0549690686,0.150552988,-0.0427423306,0.0289217252,-0.0775773302,-0.349025309},{-0.0120581416,-0.00375838787,-0.196011379,-0.0270464756,-0.0474609472,-0.00159853185,-0.00343575305,0.0833484977,-0.157922074,-0.136363447,0.358265668,-0.303851157,-0.114419997,-0.184713483,-0.148005635,0.0126549173,0.191171259,-0.041387707,-0.0181979742,-0.247029573,-0.190463692,0.034476772,-0.363157272,0.119151287,0.041099567,-0.0182229076,0.0459194146,-0.080020383,-0.0161321703,-0.0839090422,-0.188067392,-0.135503486,-0.165453091,-0.143521503,-0.0714216381,0.0589726642,0.122909553,0.12242163,0.0666689426,0.0237308759,-0.229544714,0.220091805,0.286220819,-0.0525088832,0.170724437,0.00919692684,0.0110876653,0.063152805,0.00958362501,0.128826559,0.295998573,0.113137141,-0.0962869301,0.106058553,0.165581703,0.117876425,-0.028528953,0.0149943391,0.0353972614,0.10912139,-0.0978366584,-0.015735697,-0.305186391,0.337213427,0.0173596926,0.239154384,0.138285041,-0.0496256538,0.0810166597,-0.068252556,-0.0818817988,-0.160133556,0.0438615456,0.176139355,0.0978127792,0.174074799,0.0620180219,-0.000963532249,-0.289052218,-0.100795574,-0.253164858,0.251320809,0.0973907039,-0.00299984217,0.227855384,0.0737672076,-0.176196396,-0.0182545371,0.0597629659,0.0875341743,-0.186895028,0.0153005356,0.038624458,0.067497395,0.258046985,0.105358072,0.127353951,-0.0819672644,-0.0930465758,-0.0232827105,0.0969870165,0.130088389,0.0694329739,0.116546668,-0.000844983035,-0.159183592,-0.158028573,0.194317698,0.0166283622,0.0293648783,0.00345860235,0.000756024907,-0.116370134,0.0829610005,-0.151730806},{0.225830272,0.0475934446,0.0838613734,-0.0870478377,-0.0914011151,-0.120610505,0.0965190008,0.137913704,-0.0164281428,-0.144568264,0.00748893199,0.0291394293,0.0886663124,0.236931369,-0.157336578,0.206937596,-0.0688675642,0.211278886,-0.167141333,-0.0873399302,-0.0954924002,0.167282641,-0.252755493,0.183042616,-0.179417625,0.0274921861,0.348772049,0.119748488,0.118391484,0.126295149,-0.209098086,-0.0973198488,0.0771704838,-0.16629298,-0.0711115897,0.0630868822,0.0397751853,0.356618196,0.13071619,-0.00558360666,0.00407953979,-0.253898472,-0.0277343635,0.0585043989,0.092808187,-0.0381184109,0.0402178802,-0.215792,-0.240108132,0.242931962,-0.0557760224,-0.209078372,-0.114633381,0.10716331,-0.0227474123,0.123817369,-0.0789813846,-0.0326243527,0.0719862804,0.0369062722,-0.138690725,-0.0108919134,-0.197463438,0.179424614,0.131489098,0.191225141,0.120968871,0.181920141,0.272303909,0.223061413,0.177526996,-0.00831587799,-0.130706191,-0.283800572,-0.261067659,0.0343033336,0.0735621154,0.00932210404,-0.113019936,-0.0310011897,0.264519989,-0.142452747,0.0844249278,-0.00710995309,0.00158614002,0.0832797736,-0.0172836892,-0.241800874,-0.0474510379,-0.398887962,0.177953616,-0.0466250442,0.3136971,0.0245584343,0.122235276,-0.274266213,-0.237569198,0.0360276774,-0.107498854,0.16488488,0.0436688811,-0.0544992834,-0.0535592623,0.13331227,0.0474781767,0.0245742947,-0.0561650246,-0.124991827,0.0858020559,-0.0250073001,-0.0898271352,0.0550535731,-0.101459034,0.20507586,-0.0821877345},{-0.0149031831,0.0450592339,0.0818741173,-0.104748972,0.263119251,0.0584626161,-0.000495287473,0.26154834,-0.240667179,0.276166946,-0.0451427437,-0.0478036627,0.20924373,-0.2395996,0.0252732765,0.0510350242,-0.113159306,-0.247761592,-0.270132631,0.0324834064,-0.0226578992,-0.289728165,0.222066805,-0.0450827442,-0.220956996,-0.192252398,-0.398358971,0.0185260568,-0.348445505,-0.0749880448,0.00171601388,0.125529021,-0.168644831,0.139937997,-0.182066202,0.111483507,-0.155053958,-0.170758784,-0.362793744,-0.211528614,0.0810122117,-0.0906091481,0.0416866727,0.0916013345,-0.0249635801,-0.105995908,0.230308369,0.187905595,0.111475915,0.0939926952,-0.0928119123,-0.0189391021,0.051071547,-0.0486892983,0.0705174208,-0.514579475,0.0362635516,0.135710835,-0.0981507972,-0.203854755,-0.0042593251,0.119119503,-0.0219652727,0.0865460709,-0.100248344,0.0487237796,-0.130465835,0.136246979,0.153499007,0.116939493,-0.0568992868,-0.00849328283,-0.00333554903,-0.1775112,0.0568517037,-0.0855191499,0.0942131281,-0.131246477,0.257598758,0.145324975,-0.0688142926,0.168412626,0.117272116,-0.254023463,0.0104246754,0.158610985,-0.0542015247,-0.0778068081,-0.292528987,0.0092652468,-0.11105454,0.00945412461,-0.330910355,-0.139947757,-0.181524038,0.0260543246,-0.0696065053,-0.00870571099,-0.00156084658,0.0375543498,-0.323150486,-0.0504838824,0.0288416818,-0.0871594474,-0.0154859712,-0.152882218,-0.110006519,-0.134850025,0.115383253,0.00880622864,0.164644271,-0.23624377,0.0654579327,-0.0429607593,0.0210435353},{0.222174242,-0.131091893,-0.157694221,-0.384352446,0.000418292504,-0.205597699,-0.190016806,0.129598558,0.0628517866,-0.0437857881,0.0687559247,-0.0301990248,-0.0404171348,0.165308684,0.0321925543,0.14806363,0.108323321,0.187198892,0.183432892,-0.248504952,-0.0228765551,0.0114306379,0.0406720005,-0.074058257,0.00813652668,0.0092416741,0.111673869,0.131946355,0.309619695,-0.139034793,0.279937774,0.0582782738,-0.0623287223,-0.0131275328,-0.0523366742,0.143665865,0.101324186,0.372501731,-0.0156223802,-0.0613882467,-0.0604796559,0.233921707,-0.183672115,0.0841725916,-0.015345755,0.208686829,-0.0754745007,0.00317940931,-0.121047698,-0.143313244,-0.108064204,-0.0869686007,0.193873987,0.195645675,-0.109615237,0.188857689,0.0805292651,-0.0465745404,0.070296146,0.22788164,0.15762201,-0.023135582,-0.173242569,0.262315214,0.0479104035,0.109449528,-0.188373715,0.00110572251,0.391070575,0.0995381698,-0.100721397,-0.129643515,0.013490703,-0.105332769,0.0268520527,-0.284244359,-0.0672407895,0.254956186,-0.0894318148,0.150407508,-0.0195219982,0.208616734,0.0411109924,-0.0104916412,-0.223462656,0.123968966,-0.104165532,0.111628495,-0.0925286412,0.071232453,-0.161689401,-0.215228826,-0.0898502395,0.159433499,-0.205046713,-0.210333765,0.0574382022,0.144197136,-0.15756093,-0.0831868723,0.146389991,-0.123873465,0.11859075,-0.0169124119,-0.123366028,0.246840745,0.186669394,0.0819449723,0.0503164493,0.107670002,-0.207893834,0.0889811516,0.149197683,-0.294605345,-0.0432170406},{0.173268333,-0.117122889,0.0475632921,0.0410534404,0.267336398,-0.24551034,0.0451439545,-0.183618724,-0.00640785648,0.102628022,0.0641144738,0.20989278,-0.0221326742,-0.227805465,-0.0444922931,0.160284296,-0.0205648057,0.273436219,0.317229718,-0.110668518,0.15527299,0.226643205,-0.228175476,-0.28926748,-0.0879114643,-0.026103491,0.265936941,-0.00218811049,0.256821096,-0.0395821035,-0.28002277,-0.0661231577,-0.0435242057,0.10975416,-0.0616346747,-0.101170965,-0.156329826,-0.0921520069,-0.161901817,-0.00549525721,0.0669083446,0.217698604,-0.0277682617,0.063122198,-0.0326621123,-0.145444393,-0.192199692,-0.39699316,-0.19070667,0.0932854414,-0.0477581434,0.091895856,0.034113057,0.0230146535,0.0312996916,0.126553923,0.1175678,-0.0878278092,-0.0604529791,0.0524690524,-0.347060353,-0.0484445617,0.0375680253,-0.246251002,-0.310897619,-0.0454444475,-0.0608719438,-0.0229190309,0.0177204739,-0.0203626808,0.0464476086,-0.237194404,-0.323788166,-0.00882886909,-0.137745515,0.00131513702,-0.053339459,0.265994966,-0.290811032,0.198856518,0.0783014596,0.0470565148,0.00751937972,-0.0190461557,0.0161869619,-0.0639790073,-0.235360935,0.10072241,-0.108388312,0.149372563,-0.0191241279,0.0173004624,-0.156562731,0.248034537,0.0448654704,0.160048261,0.00630437816,0.0221308731,0.0969821066,-0.152684659,0.00164856622,-0.0299562477,-0.00934909843,0.151261955,-0.0845051706,-0.186124817,-0.102064669,-0.051467035,-0.0142400395,0.0787444264,-0.0554157905,0.0304613262,-0.150379404,0.210073709,0.201028332},{-0.0239913054,-0.166350111,-0.204109296,0.115387619,-0.039357502,0.0898086131,0.135872856,0.00893737655,0.0894874334,-0.192175925,0.0412303545,0.325552046,0.00848264713,-0.0294142775,0.223066196,0.272163421,0.151702821,-0.108666189,0.120009698,-0.175165847,-0.0486618318,-0.178526357,0.253176451,0.225466549,-0.129487395,-0.247433603,0.173412472,-0.0114451367,-0.188183233,-0.0392710827,-0.0672379285,0.043602556,0.0118749244,-0.144197732,-0.114953652,0.0745654553,-0.0336491168,-0.134827062,-0.00736018363,0.219000906,-0.231205627,-0.0643495247,0.00553502236,0.115971468,0.209853798,0.0141072152,0.312135309,-0.0703494847,0.178145304,-0.0989992544,0.0167782437,-0.142762214,0.0936238468,0.0490633734,-0.109873883,0.252191454,0.160240427,-0.171990529,-0.134604335,-0.19292894,0.18810077,0.0128152352,-0.274784774,-0.383499891,0.0984493196,0.143764243,-0.0986233354,0.0396164358,-0.159522727,-0.0453172177,0.0625059605,-0.106824748,0.182321757,-0.0491845272,-0.173828885,0.00958804972,0.313822001,-0.0953537375,-0.0165768843,0.14452377,-0.0853528678,-0.0724888816,-0.0710956752,0.182113603,0.0810180604,-0.0245207138,0.0342286117,0.0312998556,0.116451442,0.103019454,-0.0517381392,0.0324138701,-0.270326793,-0.0237542614,0.195008203,-0.0266392194,-0.231685817,0.0779996291,0.03632484,0.0434274189,-0.214647546,-0.146998912,0.185870513,0.0559208691,0.117604844,0.157373264,0.096117422,-0.0830379203,0.134544641,0.265094787,-0.0951899216,0.163765132,0.0250781234,-0.0815492943,-0.104665309},{-0.109589726,-0.0191321447,0.134219825,0.118852422,0.194159195,0.392184049,0.00737788761,0.0819496438,-0.23296006,-0.240992367,-0.0925271288,-0.0363337211,0.101066075,0.146201,-0.279346704,0.173666567,-0.213136896,-0.265348881,0.131916538,0.0194662157,0.0122335767,0.0830439404,-0.0646641776,0.171667561,-0.0126552442,0.0125747155,-0.0718577728,-0.0347744972,0.0905523747,0.439062387,0.25018847,-0.0404273421,0.00438777125,0.04723965,0.0783664584,0.0452426635,-0.434932977,0.101113908,-0.143667191,0.124708593,-0.205863938,0.0458630025,-0.111165754,-0.0989781395,-0.0592456423,-0.100073837,-0.00966322795,0.356746882,0.228648782,0.00915682223,-0.00651290501,-0.107764959,0.0948031247,0.0512093045,-0.0465178303,-0.10544727,0.210343122,-0.0443103649,0.17157726,0.359444112,0.314448982,-0.0596154481,-0.0148697905,0.422660381,-0.18190448,0.23947674,0.132217661,0.0961880013,-0.245947868,0.19984585,0.18768467,0.0758277774,-0.0234612767,-0.0600448288,-0.0993751511,0.125892833,-0.0952062607,-0.143972069,-0.0909296945,0.0897560418,0.0373726003,0.199392885,-0.234783337,-0.00619626092,-0.0444378704,-0.0495105982,0.157383993,0.129207492,-0.0515925884,-0.103510268,-0.137692332,-0.269216865,-0.106151186,-0.0240409374,0.0871575549,-0.185927436,0.0551980697,-0.194826156,-0.115717642,-0.257745773,0.336653322,-0.0263295323,0.223699182,-0.102926098,0.0786662698,0.180360585,-0.250621945,-0.0173022319,-0.0501897,0.144589469,0.0551472753,-0.0191052407,0.0401503481,0.126248062,0.0409999266},{0.106862955,0.176115423,-0.259207129,-0.113989875,0.169952974,-0.0567976013,-0.133903816,0.0252563432,-0.0648801848,0.101646163,-0.0697975159,0.104352593,-0.277707458,-0.27196458,-0.13907285,-0.352609456,-0.0833988413,0.131447375,0.110078767,0.0817671493,0.0876687989,-0.110240407,0.115951933,-0.00570824509,0.017455928,-0.111604765,0.177545443,0.17370823,-0.000188260659,-0.000582321372,-0.0241713729,-0.245089591,0.129890919,-0.130070031,0.129962727,-0.0102081373,-0.314270318,0.150834918,0.160727724,0.107283123,0.175967932,0.164154679,0.0994815379,-0.00499854237,0.228762731,-0.0780770406,0.0976840407,-0.0314584412,-0.0471223034,0.0800360888,0.00304581318,-0.107975639,0.169390261,0.181771442,-0.06672851,0.379924774,0.0649845153,0.223550275,0.106044047,-0.0586562268,-0.235518619,-0.231582373,-0.103928298,-0.283370465,-0.092077978,0.0337652452,0.117426611,0.180841297,-0.10726732,0.381295204,0.144999743,0.0863187835,-0.0739259943,-0.134607568,0.318549305,-0.0312622599,0.0167731978,0.114301883,0.0338283181,-0.00929441955,0.0734038725,0.0130114164,-0.00837779418,-0.0569943711,0.228709787,-0.0300129838,-0.212207273,-0.141669989,-0.144099161,-0.0749863535,0.0304037686,0.223409683,0.136832088,0.146250024,0.165839627,0.356821597,0.110071436,0.169533879,0.0940046757,0.381307989,0.0301541742,0.107249081,0.113804974,0.00923444983,-0.235269189,0.0569119938,0.116113484,-0.0242734179,-0.0384513848,-0.109401919,-0.105544403,0.107352585,0.0604116358,-0.147396162,0.148241073},{0.0879650265,-0.203860283,-0.115843534,-0.161209419,-0.151763514,0.069934167,-0.163802892,0.0870306939,-0.101187877,-0.0950682238,0.0416006222,-0.00307399733,-0.173170581,-0.0336741023,0.136061206,-0.0877714306,-0.0782154351,-0.138143152,0.0581450723,-0.0586988032,-0.0586667061,0.0762875229,-0.247140467,-0.0838156119,0.0788407028,-0.01654494,0.0936685205,0.334402353,0.152467921,-0.0746946037,-0.205723643,-0.0163421109,-0.0425661393,0.113533929,0.0256952941,-0.167009026,-0.00985677261,-0.0681949034,-0.0165325757,0.291421264,0.104200937,0.199928775,-0.19949545,0.166021183,0.133413419,-0.245711654,-0.121401548,0.27092436,0.158215582,0.108893983,-0.0324781835,0.0278179683,-0.272166342,0.203407019,-0.237486154,0.117215633,-0.0429132953,0.00204284466,0.099206388,-0.187616825,-0.0587561727,0.123963811,-0.0686248839,-0.0179299638,0.0769332126,0.0315554515,0.154131383,-0.345144063,-0.215923682,-0.224080876,-0.0854010209,-0.149686188,-0.169334203,-0.156487331,-0.101423502,0.0782395527,0.093164131,-0.0372620523,-0.200918004,-0.00282702409,0.0433016047,0.00652476912,2.27382243e-05,-0.0215617418,0.0026275136,0.110279776,-0.167960361,0.0115336012,0.0537259988,-0.357893795,-0.00258146552,-0.0799562931,-0.0415936448,0.0440422446,-0.447537601,0.147472173,-0.142544642,-0.253059566,-0.133173093,-0.0460657515,-0.0764435306,-0.242812127,-0.0114228819,-0.0204397198,-0.109559581,0.0188860428,0.0141656874,0.181536824,-0.154193118,-0.239074558,-0.0559142269,-0.131658256,-0.0136785489,-0.0265657119,-0.0104476344},{-0.0399168618,0.0245063342,-0.0297535732,0.0311750416,-0.0239357445,0.12926814,0.0421019383,-0.0167520288,0.0781933889,0.249034896,0.0189208109,-0.171920449,-0.0970110223,-0.192897916,0.154858783,0.13037923,-0.212371543,0.403248012,0.0580924563,0.0466678441,-0.140986413,0.139593005,0.0457127355,0.208905786,0.162563443,-0.202014342,-0.155358851,-0.0300648641,-0.0128285857,-0.243958667,0.338635117,0.0868808404,0.0134431953,-0.191029146,-0.131199658,0.0289722662,-0.276932687,-0.266904145,-0.0899739787,-0.286465049,0.0348255336,0.266335368,-0.110983975,-0.0124175362,-0.0929060057,0.108508974,0.0255828314,-0.124681488,-0.242808327,0.176948577,-0.0165558513,0.156908631,0.0389046259,-0.121132985,0.292966694,-0.182076097,-0.159854025,-0.217373654,-0.100713477,-0.00159591867,-0.107519083,-0.494120657,0.124993868,-0.245544657,0.0993751734,-0.279209644,-0.187975913,-0.133367866,0.121457279,0.169699758,-0.0327167138,-0.0270097423,-0.0164160412,-0.266743511,-0.0380538367,-0.0520985611,0.12623328,0.0482642241,0.0793870315,0.0985953659,0.117061995,-0.0814705566,-0.0600440018,-0.139174059,-0.113747813,0.141557604,-0.0982970521,-0.0319767557,0.00939000677,0.043933548,-0.312010944,0.20622687,0.221929133,0.0253321398,0.188644394,0.233947977,-0.289839566,-0.117899485,-0.0872230157,-0.00900900178,-0.138926446,0.0291463528,-0.0131300287,-0.0698080584,0.0646419004,0.156045631,-0.0886622667,-0.176381454,-0.170577109,-0.320525527,0.0504523106,0.100432016,-0.0503519811,0.050543122,0.0263239834},{0.135784015,0.0801840648,0.302628458,0.179764464,0.0474042743,-0.207263991,-0.362042457,-0.0832388997,-0.126149431,0.217056856,0.0560331568,0.112316348,0.0948168784,-0.388746113,0.150061473,0.201185852,0.0130444858,0.0048329304,-0.0744324178,0.192728981,0.0904737413,-0.112348109,0.313621193,0.0681291595,-0.0381575488,0.00321051734,0.00997744035,0.179998755,0.169620201,0.123653017,0.122187734,-0.382180512,0.218823254,0.0184732843,0.115499362,-0.00416374207,-0.136172205,-0.336873293,-0.201311752,-0.333313465,-0.100685365,0.077107653,0.173772439,0.169374987,-0.172776118,-0.105219245,-0.00225481903,0.0275736842,-0.0403524414,-0.169413477,0.0448810309,0.144188672,0.127148733,0.138331562,0.264339149,-0.031590376,0.165848777,-0.337177724,-0.246987015,-0.165676102,-0.0844065472,-0.159339666,-0.0372965746,-0.0251274928,-0.0620069541,0.038171161,-0.059868481,-0.130917862,0.331643045,0.0488973707,-0.100889035,0.106703997,-0.0962994322,0.159507796,0.117132008,0.0335628204,0.072369881,-0.0334435962,0.0139006209,-0.0193511192,-0.0257918108,0.0258392263,0.0679441988,0.123634689,-0.0707788765,-0.06860926,0.161267892,-0.23506932,0.0064999368,-0.0838078558,-0.110406816,0.0501921587,0.20665361,-0.114755087,-0.0482326224,0.126611516,-0.175763726,-0.173546046,0.0430505686,0.0425430872,-0.114471249,-0.111835808,-0.109826744,-0.148581788,0.120933056,0.0369436257,0.119997926,0.107281454,-0.202066839,0.141696036,-0.0422564931,0.195140705,0.0684924722,-0.170887917,0.0383896865},{0.052957885,-0.100720651,0.060858734,0.12757729,0.15684095,-0.30629167,0.0182347838,-0.0766366869,0.0151624288,0.0867543966,0.218490615,0.0473536253,-0.092664279,-0.19278039,-0.149091184,-0.0462017879,-0.136251137,-0.0212204568,0.18470633,0.179186165,-0.202115223,0.0183913223,0.398023099,0.00941159111,-0.136156693,-0.0103927832,-0.0597108826,-0.0951845795,-0.263405412,-0.0952866599,0.179658577,0.152809978,0.0169043839,-0.0292099044,-0.0618816912,-0.185035199,0.00185522367,0.0401054025,0.249975726,-0.0310726445,-0.0648645312,0.0588734969,-0.00959908403,0.351932108,-0.183647022,0.0484910533,0.20570223,0.13268812,-0.159171149,-0.058740288,-0.024824325,0.0544858314,-0.176761225,-0.171789423,-0.0625911057,0.0243687518,0.040631339,-0.0910769626,0.0630882829,-0.159933671,-0.128351569,-0.0980022773,0.0662495792,0.0233252198,-0.11651966,-0.120767653,-0.118775137,-0.12163873,0.139254451,0.196140498,0.0663287044,0.190916553,0.142289162,-0.23036845,0.0344808958,-0.0273791086,-0.0609999113,-0.0175617635,0.126006722,-0.0597095601,-0.0395307019,-0.0964916348,0.194163427,-0.240434274,0.100591175,0.0277908705,0.0646778196,-0.0227472074,0.086104922,0.138512954,0.0603460446,0.164588109,-0.220680475,-0.428910583,-0.113204315,-0.0649489239,-0.171583384,-0.254612476,0.251152396,-0.21042724,0.145619512,-0.0290614665,0.0321828164,-0.142173156,-0.166225359,-0.0518652163,-0.0450858213,0.179990917,0.0411969423,0.0447013155,0.0322448201,0.356330603,0.153097525,0.0640616268,-0.162267998},{0.0725100264,-0.32017079,-0.145850122,0.13626188,-0.212513775,0.0971390828,0.0183960646,-0.126972705,-0.110251434,-0.293504357,0.0885036588,0.0242666043,0.0530376583,-0.202175587,-0.0804924816,0.327447444,0.0864137337,0.168489933,-0.272367507,-0.120866396,0.187067658,0.0461294651,0.0786608383,0.0752304271,-0.201126084,-0.286250532,-0.0655341446,0.15556781,-0.0112658003,-0.0229044631,0.0682498366,0.11051175,0.109650113,-0.193488434,-0.059436202,-0.06554389,-0.1558,0.315538406,0.183135927,0.0910945907,0.0564874634,-0.110915355,-0.401505113,0.180698708,-0.117279917,0.135808825,-0.144284457,0.0385625549,-0.0788103342,0.187022775,-0.0570319071,0.131329641,0.201980978,-0.153567865,0.00775785418,0.168574199,0.0888153389,0.0117572872,0.166697755,0.0684809759,-0.122361995,0.200917736,-0.0949504152,0.401641935,0.16314356,-0.0967492238,0.0378019847,-0.158642933,-0.0490485802,0.191837192,-0.024314994,-0.222477525,-0.23364228,0.190050021,-0.0254222471,-0.0828022063,-0.106213532,-0.345499277,0.17598477,0.0992549658,-0.296121597,0.03240012,-0.0908497423,0.228464261,0.16829887,0.0530513451,-0.0226884708,0.0156401657,-0.0101030525,-0.0535905212,0.144907773,-0.163533866,0.054538887,-0.0117943827,-0.0403838493,-0.158658251,0.081591621,0.162597626,0.0463175438,0.000350384304,0.0562649444,-0.0937315673,-0.131449789,-0.00502025336,0.0436695665,-0.225758806,-0.0487362742,-0.0949182212,0.110763758,0.0137822842,0.0986790434,0.00714583462,-0.028208375,-0.0777769312,0.0997439101},{-0.223617017,0.0347836688,-0.0189301986,0.179023549,0.434880525,-0.131437317,-0.0385508388,0.01192973,0.0992144719,-0.000682678714,0.0567653477,-0.133312494,-0.0813464075,-0.411531836,0.154010519,0.172154367,-0.00287731597,-0.0289606452,-0.275910705,-0.00259769103,-0.31518662,0.0529980734,0.411685169,-0.132340506,-0.290502846,-0.0141718974,-0.220156729,0.124542877,-0.383580327,0.18650198,0.155497015,-0.0785484314,0.135188654,0.106742017,-0.160499781,-0.0219636317,0.169331133,-0.218451008,0.0636663064,0.0416078269,-0.0409867577,0.0764378309,-0.11952126,0.042817872,0.0518249348,-0.132864565,0.0110266758,0.254660875,-0.0780868083,-0.015100847,-0.0921406448,-0.263302624,-0.0786088258,0.0663239136,-0.0575848781,-0.201885283,-0.138244212,-0.0155170681,0.0364190787,0.214329556,0.0375538953,0.0800329447,0.0653569624,-0.212135151,0.152461901,-0.108985312,0.202545851,-0.0438688025,0.0326424502,-0.263570189,-0.0498357341,0.0708516091,-0.064712204,0.116090901,0.182739124,0.0281684585,-0.108931333,-0.0354657359,0.0788184702,0.126670882,0.0740116313,0.00716207689,-0.074231565,0.0117948325,-0.0282371212,0.245466828,0.159989744,-0.00445253123,-0.0232276022,0.032521721,-0.113698848,0.0676695853,-0.319974661,-0.132286012,0.00927386433,-0.17900905,0.256023765,0.0483683161,-0.161555097,0.131069511,0.193154201,-0.179918721,0.0951697305,-0.0020402933,0.278716922,0.0593723841,0.103516802,-0.141989276,-0.163281262,-0.0293826591,-0.123651199,0.337368876,-0.016948821,0.0997388586,0.0260485169},{0.0294123683,0.0506221391,-0.044403322,0.197164237,-0.0175273791,-0.0380895808,-0.0969678611,0.0314745307,-0.0639904514,0.151777193,0.13531965,-0.0358566605,0.101236023,0.178818926,0.173035145,-0.147485003,0.141184822,0.104507156,0.318769306,0.0957755074,0.231033131,0.111947075,-0.441301584,-0.0975277498,0.140077904,-0.244038537,0.250697434,0.0481659286,-0.00650693383,-0.183607399,0.0191556923,-0.121689886,-0.182872027,-0.173187494,-0.0277122576,0.115219243,-0.0774008632,-0.0570642799,-0.0984106213,-0.103709981,-0.252834976,-0.0356327891,0.00141045486,0.00155143859,-0.176678911,-0.172647998,-0.353586763,-0.0607608259,0.0321010426,0.162187651,-0.0853470638,-0.0298145227,-0.0977871567,-0.189900175,-0.210324734,0.122145899,-0.125708342,-0.263332725,0.103421167,0.0277228225,-0.00188725709,-0.079796806,-0.0831198469,-0.0457718074,-0.231200323,-0.127323925,-0.0111606903,0.238190755,0.0531033278,-0.10751991,0.0126191191,0.0629873276,0.0271448847,0.00541358069,0.161249727,-0.0386665426,-0.169342324,-0.182507694,-0.00327445054,-0.0758388788,-0.309330016,0.196270868,-0.390367717,-0.0450229794,-0.00160203804,0.0290916935,0.107479148,0.0123651419,0.0408793129,-0.06064317,0.103667296,0.0625652,0.0644508973,-0.212400407,-0.164519981,-0.259625524,-0.0918186009,-0.00908176694,-0.0903639197,0.107923001,0.0344000608,0.0387885571,-0.163182318,-0.00419118442,-0.0234702788,0.0553668439,0.0827179402,-0.0360088721,0.0699576959,-0.141714975,0.0541172698,0.163848564,-0.209371343,-0.112656333,-0.00174909155},{-0.235891402,-0.12803264,0.169249117,0.226323783,-0.00853699166,-0.0609672926,-0.172058329,0.0866301134,0.071682632,-0.285321832,-0.119531311,0.15191704,-0.00790918339,-0.0296095889,-0.196088478,-0.277808577,0.0109220687,-0.0186452772,-0.0762604177,-0.297927827,0.0798040852,-0.131045505,-0.362599403,0.226232454,-0.0920188129,0.105948679,-0.0641132146,-0.0986568555,0.11813987,-0.20366323,-0.124741927,0.0955351517,-0.144212663,0.0996902809,0.138860658,-0.0304395705,0.140214324,0.098524794,-0.0129723921,0.0776992887,0.058705043,-0.0374608748,0.0881149173,0.0484120995,0.437676936,-0.0341535248,-0.148790807,0.114995196,0.0868103355,0.149765328,-0.115114249,0.124970376,-0.0333792828,0.129365504,0.0883226618,0.224846408,-0.10553775,0.00256675552,-0.186431289,-0.0469535962,0.0220083017,0.330872238,0.189361319,0.0777921677,0.107446261,-0.108923987,0.138408244,-0.113593519,-0.259687722,0.23142758,-0.19371146,0.196653813,-0.114712678,-0.0902468339,0.116021968,-0.094111681,0.111760989,0.0369183645,-0.191418543,0.239772156,-0.0162224751,0.0730473474,-0.213244542,0.088264063,0.179567873,-0.0663625002,-0.0482972674,0.0317141823,0.243186265,0.112891071,-0.0911036879,-0.0327603444,0.200094134,-0.0368734859,0.00579733169,-0.478231996,0.0816323385,0.109061845,0.0922011882,-0.0439725108,-0.13035427,-0.0627614036,-0.0451582931,-0.0537364446,0.0503443554,0.211854771,-0.111131057,-0.184592903,-0.0717862844,0.115452692,-0.0976895466,-0.102289557,0.0179994721,0.141063884,-0.0901743919},{-0.084954083,-0.0142555898,0.164601311,0.105834901,0.175769672,0.431195438,-0.167269289,0.0844515115,0.204005957,-0.52853936,-0.0336514004,-0.0306626502,-0.0486636274,-0.0535616577,0.087888293,-0.0619959943,0.0953743234,-0.0791541487,0.0373876914,-0.10214375,-0.0327977389,-0.135235995,-0.0194266997,0.157639921,0.150595754,0.248703733,0.0171591379,-0.248374254,-0.0575388074,-0.0222507026,-0.342091113,-0.0451760329,-0.0189045295,0.0635403544,0.0281454492,0.0946737602,0.160049036,0.225775257,0.0121066133,0.0798773468,0.228399768,0.137500197,0.251322776,-0.177013069,-0.148106545,-0.0409916677,0.122667193,0.132276997,0.085843645,0.119518101,0.119936749,0.0591775998,-0.196877837,0.245333001,-0.0533332229,0.265798688,0.162342206,0.0615380183,0.384445369,0.200519651,-0.0149981035,0.0650876537,0.113470152,0.0431999452,0.121728994,-0.0849284083,0.0980748162,0.134277433,-0.23078607,0.157564014,-0.0469050258,0.030382907,-0.0602481328,-0.13084659,-0.187530667,0.0198530648,-0.0522848628,0.0663220957,0.0991907418,-0.0951705202,0.0325822532,0.117382787,0.00209064176,-0.00896358583,-0.154717386,0.296408504,-0.182500154,-0.0723659396,-0.10253495,0.0514526181,0.0598769449,-0.314563572,-0.26378423,0.044932209,-0.110146791,-0.368729055,0.0154347811,-0.0899262056,0.11019361,0.0490547903,-0.0355124809,0.064748317,-0.124892183,-0.0440344848,0.102919966,-0.191368476,0.0464555956,-0.0762342364,-0.0598804913,0.0582641177,0.0882580876,0.132912129,-0.216030791,-0.0699973926,0.119830802},{0.117310695,0.0436503924,0.0876595005,-0.111243248,0.103751577,0.0658391342,-0.202384979,-0.117311373,0.197859809,0.0448029488,0.215828925,0.080054231,-0.12296319,0.250477225,-0.235184997,0.138648033,-0.200619981,-0.275363475,-0.0898637921,0.0584659241,-0.107230633,-0.0643649623,-0.0252596643,0.0484237634,-0.139027536,-0.0284914579,-0.300498933,-0.295411438,-0.101988502,0.168835327,0.143654659,0.0675294772,0.0745172575,0.106778085,-0.0135601899,0.149351329,0.0653709099,0.0306930766,-0.421426326,-0.0857591107,-0.0120070567,0.257615834,0.0178851392,-0.237974659,-0.246389374,-0.106613845,0.00912058633,0.148452923,-0.137592331,0.135654643,-0.0334181078,-0.0721665025,0.0099226078,-0.0601525903,-0.0593247637,0.115858048,-0.121474013,-0.256109029,-0.0324699134,-0.189806879,-0.0419738814,0.156304911,-0.0839475244,-0.148719251,0.288241118,0.0667434186,-0.114455223,-0.0684361458,0.000658220437,0.16698885,-0.00362631353,0.0758025274,-0.0346329696,0.189403608,-0.120299451,-0.0771418363,-0.0845021456,-0.372730583,-0.0179070942,0.0762137547,0.326302111,0.108073287,0.105254449,0.114665054,0.1259588,-0.171009526,0.199335203,0.171425492,-0.0809233263,0.144565955,0.105338372,-0.130800813,-0.0275674481,-0.377565324,-0.117987566,0.19584392,0.111262113,-0.0249764752,0.0546901748,0.0401382782,-0.025595665,0.0723046213,-0.112032764,-0.00972634833,-0.305009186,-0.0941030085,0.0590492934,-0.220955655,0.0127226291,-0.199317351,0.0105184568,-0.0900750384,0.0266025364,0.181274682,-0.0921174064},{-0.000610339222,0.122724608,0.0338046364,0.20983769,0.176114365,-0.152858987,-0.0937289074,0.113388658,0.0312174372,0.179892331,0.00611902215,0.0794472545,0.187191963,-0.0355939455,0.202029958,-0.142756313,-0.216924593,0.38395375,0.261324883,0.196634725,-0.0921257064,-0.234525606,-0.500294566,0.0546453521,0.325593621,-0.00255477964,-0.126730874,0.00201539183,0.105311871,-0.255477726,-0.226618305,0.0372700617,-0.251460671,-0.0194644835,-0.157864511,-0.100867614,0.129674152,0.118546329,0.096958302,-0.0173663907,0.0910026655,0.291744024,-0.242265835,0.0537768528,-0.183505118,-0.115591258,-0.0363016985,0.122984491,-0.362656325,0.0469168276,0.0905390978,-0.0748082623,-0.0668974593,0.0598995872,0.269028515,-0.0786521137,-0.0372358821,0.0141259618,-0.0376264378,-0.312546879,-0.155823648,0.153640747,0.112440459,0.0134345694,-0.199429035,0.15734379,0.0815673247,-0.00859881006,0.0954022482,-0.162572831,0.0234073102,0.0399699956,0.342163861,0.303339958,-0.172371507,0.187330604,-0.102691934,0.146124408,-0.0817573741,0.152675197,0.189730778,0.00309354695,-0.162040547,0.198285371,0.162809178,-0.0539531372,-0.0386306196,0.0804177746,-0.0801299736,-0.119284578,0.0191402119,0.00667785713,0.173417553,0.129345968,-0.0921094269,0.220754564,-0.103538729,0.0879184082,-0.0253259148,0.209312126,0.0358125083,-0.110149488,-0.0317718871,-0.218458891,-0.00876536127,0.0365363173,-0.0101944786,-0.106416628,0.129077688,0.0766640753,0.0932657048,0.156145185,-0.0765737444,-0.109492876,0.109351344},{-0.476216793,0.275201648,-0.209600523,-0.122477241,-0.0525152683,-0.269413054,-0.229749918,-0.0835940763,0.156741455,0.0306677334,0.0239778962,0.102714829,0.146046594,0.00584372552,0.36820972,-0.0753951743,0.198612764,-0.123703964,-0.172402129,0.208152622,0.0262585878,0.0645980462,-0.0456436984,0.0779933631,0.00446160138,0.0407572612,-0.188927054,-0.149773836,0.00707124919,-0.0696960688,0.00012547271,0.0648544505,0.0413928181,-0.210869282,-0.102256715,-0.0885407478,-0.185806647,-0.0585879721,-0.101424456,-0.0462899134,-0.122494571,-0.0987265632,-0.0818190351,0.0943118408,0.136263311,-0.28620103,-0.184741825,-0.223635644,-0.0676870719,-0.215360373,0.312507629,0.104404062,0.117574617,-0.0621849298,0.0371431857,-0.0787247568,0.0144773582,0.0526688136,-0.100126944,-0.421109915,-0.15270935,0.0900545642,-0.0597335473,0.035856761,-0.146468014,-0.028618766,-0.0257229656,0.00939021725,-0.173846737,0.0228408761,-0.0289457906,0.0796612725,-0.200342596,0.15613924,-0.150357544,0.0640129596,-0.0159239434,-0.0481223948,-0.0802582651,-0.0759906843,0.0788283348,-0.142739102,0.0861127079,-0.0826304182,-0.00423774309,0.307063401,-0.0793387294,0.262747616,-0.0469972491,-0.00801375695,-0.0569974072,0.306345493,-0.0276887156,0.156234995,-0.211641401,-0.175492138,-0.144454643,0.22603108,-0.118564896,-0.0838960782,-0.0349186584,-0.154877409,0.117781781,0.0423234217,-0.222262979,0.00141015451,0.0268568248,-0.0634613335,-0.264850944,-0.00635305792,0.123730898,0.169500023,-0.0980132967,0.120178521,-0.042101901},{0.0980873406,-0.330082238,-0.0040081921,0.283754438,0.0909558386,-0.349486291,-0.0997225419,-0.0113679143,-0.00889890641,0.0751873776,-0.0160496775,0.0521616675,-0.0304446612,-0.199789122,-0.0498654656,0.0555282608,0.0830714256,0.127884299,-0.0395525284,-0.236725301,0.104016609,-0.00439431937,-0.202871427,0.247307673,0.259113789,-0.00210176478,0.0080798557,0.0679175928,0.160455838,0.171564326,0.024263544,-0.0838248283,-0.0341205448,0.0842293054,0.0961629227,-0.12537697,-0.148754045,0.34341839,-0.023718521,-0.0489597917,-0.140470222,0.132484511,-0.0743950233,0.0160144959,-0.0254427735,0.129766896,-0.169176981,-0.47663033,0.111996464,0.083845593,-0.00784075074,0.0231446419,-0.187673107,-0.0683879182,-0.264995515,0.0679783151,0.0977784768,0.0527831055,0.0485416092,0.0598927513,0.00856526755,-0.294674963,0.0241945609,-0.16715236,0.0453387611,0.0844784826,-0.142195404,0.0682177991,0.133042738,-0.108202703,-0.400814742,-0.120885253,0.15877983,0.107333943,-0.257391661,0.0740093067,0.080253996,0.0146318935,0.20793727,-0.0985768735,0.152813867,0.0220268164,0.102901421,-0.125556245,0.0639671236,-0.188505068,0.0919973254,0.00572462194,-0.093379505,-0.062289618,-0.0381177366,0.0229431801,0.0650180355,-0.14871271,0.122450672,0.0326293483,-0.113008082,-0.031203663,0.000904451299,-0.011882863,0.0562833212,0.192666113,0.114032924,0.243958592,-0.0803157315,0.216734648,-0.135667488,-0.0188281741,-0.291177034,-0.189827845,0.0665018111,0.0720852911,0.152273133,-0.260686427,0.278170943},{0.127275154,0.0325876027,-0.277884662,-0.176583335,-0.16271846,0.0313053578,-0.00225657527,0.0307776723,0.0765943378,-0.27431199,0.0961816162,-0.123402923,-0.369624138,-0.125885665,-0.0615197159,0.0397041701,-0.00758768944,0.0195804797,-0.1973515,0.114711329,0.109907284,-0.1373083,0.790509582,0.11326801,0.0484630316,-0.303239524,0.113955371,-0.147650287,0.147164688,0.224596396,-0.00355669949,-0.0771808401,-0.0387583785,0.149738923,-0.103547618,0.255267829,0.0735912472,-0.119278461,0.00737480773,-0.0755572021,0.120605893,-0.00280271959,-0.0807912722,-0.126231447,0.247575879,0.043203745,0.305362791,-0.130457178,-0.246909201,0.263986886,0.13686341,0.0865044147,-0.096882917,-0.0555240922,0.12747255,0.14867647,0.346111715,-0.0949693173,-0.164971963,-0.266635835,-0.0784520879,0.175836742,0.222013071,0.0549448505,0.0459553599,-0.194115862,0.129711792,0.123741575,0.072276257,0.0116193565,0.151212335,-0.051797539,0.026024133,0.136855051,0.0349671021,-0.0156249749,-0.00205376581,0.133765057,0.145099655,0.122369625,-0.0379040428,-0.0354623236,-0.182987601,-0.0911645591,-0.0228588227,0.0368744507,0.100546405,0.115813911,0.0472384654,-0.100969814,-0.0869960338,0.0235367622,-0.14291063,-0.157677248,-0.247204646,-0.235382125,0.0734096915,-0.00321938214,0.0383177027,0.0374180004,0.14103213,-0.115459301,0.206176892,0.199507669,0.106811069,-0.135845155,-0.119908728,0.0519451536,-0.111753508,-0.107806854,0.101296052,-0.066958636,0.137478784,-0.0218451265,-0.106089748},{-0.144726977,0.0336682312,0.321706384,-0.257673681,-0.202865824,0.17020838,0.0341296718,-0.0312934667,0.100024961,0.105338864,0.0745681152,-0.0441592,0.0176873263,-0.113033809,0.324816793,-0.00820521358,-0.147423491,-0.0651081502,-0.177629516,0.133242503,0.0808570758,0.0210059509,-0.261953235,0.116547972,0.0284531415,-0.050940346,-0.22525683,-0.127266198,-0.358352989,0.0193711482,0.421245337,0.0869041234,-0.250590414,0.42991814,-0.113255046,0.136513889,0.0543408506,-0.00813316833,-0.252399296,-0.0961140543,-0.0572697856,0.100163832,-0.187581941,-0.0166816637,0.03156491,-0.0561371446,0.0585275255,0.0640401691,0.0868041813,-0.206626981,-0.129918739,-0.119910225,-0.021861149,-0.241223559,-0.117030203,-0.280713201,0.251962543,0.0400454886,0.0441649929,-0.328549266,-0.0677976757,-0.0222434755,0.182299808,-0.133878648,-0.0437818877,0.08209005,-0.122376218,0.0836910978,-0.118789569,0.135684982,0.025486704,-0.217305332,-0.0555999428,0.0494961664,0.107477911,0.0860240906,-0.00360016804,0.108887836,-0.237906411,-0.271615297,-0.0471248478,-0.0133754816,0.0993176252,0.122438066,0.0595251322,0.0226280205,0.0663316026,-0.00170640997,0.0404621288,-0.123546973,0.106704079,0.141471133,0.256071717,-0.119813815,0.0688359439,-0.0730777159,-0.0182622243,-0.099519521,0.124141522,-0.0874394625,-0.00727689266,-0.00930077024,-0.323132485,0.087939918,0.0659273565,-0.0877651125,-0.0018711515,-0.0796280652,-0.00035928344,0.0970827267,-0.19636023,0.182018995,0.0431551188,-0.145818993,-0.0240252689},{-0.0349661671,-0.120447136,-0.142610386,-0.21924977,0.133835167,0.126177713,-0.0538239218,0.0174682382,-0.0177486707,0.113938309,0.0766128153,0.168675363,0.0312357675,-0.0628376678,-0.330333322,-0.11431589,-0.0752325431,0.016570216,0.0749209449,-0.270433038,0.0641598403,-0.251386434,0.163232684,0.135609031,-0.131528065,0.0930892974,0.00671771169,-0.0847573504,-0.164021179,0.208388641,0.223425508,-0.0417602248,0.163590848,-0.144453332,-0.0739003047,0.0758389905,0.0181173235,-0.144995138,-0.181144565,0.176562518,0.144679099,0.109689906,-0.0728831515,0.189223245,-0.307593912,0.0675302297,-0.0368516296,-0.0184008311,0.0768661872,-0.0453156531,-0.177801073,0.0584186129,-0.280973047,0.128005102,0.183080032,0.158004478,-0.0559129603,0.312101573,-0.134352461,-0.0192366354,-0.239702627,-0.113100789,0.0199187193,0.0132657895,-0.0216674246,-0.156709328,-0.269240439,0.127920017,0.0939857066,-0.168255568,0.145791873,-0.0229812805,0.0710789338,0.0820696056,0.0888643116,0.0589154139,0.0913760215,-0.120742455,-0.228701383,-0.000716676877,-0.0127219157,-0.0138595691,-0.0986978561,-0.067859225,-0.100919597,-0.0482589677,0.154305726,0.080471538,0.0431844406,-0.199035957,-0.00708928704,0.075508967,-0.000485283905,0.033309862,-0.145802289,-0.0940356106,-0.0146031277,0.106345154,-0.0576893948,-0.108755082,-0.136704892,0.239681035,0.410754442,-0.0489879549,-0.0291922316,-0.201278001,0.0291962251,-0.122213803,-0.115522057,-0.0678018034,-0.204440042,0.00682122353,-0.181831449,-0.202600613,-0.130684137},{-0.0322565436,0.156461522,-0.0926537216,-0.0694554597,0.211423129,-0.135133266,0.069849439,0.295907557,0.225097045,-0.0327069946,-0.159344822,0.0788204595,0.00897653587,-0.0742539242,-0.287504405,-0.0723272264,-0.00168969773,0.0897914097,0.112159304,-0.120909996,0.12825343,0.0329172201,0.187856257,-0.140097633,-0.0236254483,0.0841148049,0.205354735,0.116015844,-0.165865913,0.122880518,0.279292047,-0.187694848,-0.195248216,-0.0534647815,-0.0545015633,0.212708756,-0.298921078,-0.0296033341,0.163570672,0.335462928,0.0766150206,0.188818872,0.312546402,0.0664706156,0.211651325,0.0876612961,0.288932383,-0.230337292,-0.00368483108,0.146998256,0.123096019,-0.179218918,-0.17772226,-0.148934767,0.0783156529,-0.105741173,0.0985022411,-0.119895615,0.287697613,-0.0537400395,-0.154397413,-0.220893458,-0.164671034,0.00742631452,-0.061232537,0.029092541,-0.04019228,-0.138348684,-0.0212201923,-0.10564103,-0.0784176886,0.0664435551,0.014707596,0.192090869,-0.109338924,-0.328858852,0.0138861351,0.0277656317,0.103590548,0.13997601,0.0527927838,-0.019496141,-0.0929019377,0.290660441,-0.102399267,-0.0524986498,-0.0282662045,-0.0622533113,-0.115223959,0.0714740083,0.0358057767,-0.0488721989,0.266816437,0.0167851597,0.0558184758,0.284929365,-0.117332324,-0.165468439,-0.0509787984,-0.0868679136,0.0115037914,-0.036034517,-0.133071899,-0.224353597,-0.107431911,-0.174889982,0.0401160866,-0.0406962112,-0.0715367496,-0.177681252,-0.112486027,0.027787026,0.0615233146,-0.104833923,-0.181119308},{-0.233072877,0.053820353,0.0190877747,0.138170794,-0.237381622,0.00579099543,0.287170887,0.0230211522,0.182325795,-0.24852021,-0.0813669637,-0.0134991901,-0.0397390276,0.218687609,0.198185474,-0.0353260413,0.120911285,-0.247379184,0.237870604,-0.112237468,0.0224811081,-0.292337656,-0.325234175,-0.122700989,-0.0952182114,0.181060523,0.0571306199,0.00279441755,0.075102061,0.159436673,-0.279989064,0.0902957395,0.00279326132,-0.11466153,0.102962919,0.00714240689,-0.160219193,0.176794022,-0.00286251516,-0.0160407983,-0.181534931,-0.134675652,-0.143399641,0.011013302,0.0155679565,0.0709376261,-0.243373558,0.165805221,-0.141444474,0.0684492067,0.0766444728,0.0466636419,0.0218683798,0.153061375,-0.0749748498,0.0713849813,0.0262929052,0.0702375174,0.0301569216,0.170261055,-0.144210353,0.589302897,0.0389273539,-0.100437991,0.144999787,-0.0373773426,0.0518853143,-0.0118807983,0.062125314,0.100448899,-0.160364702,-0.212573647,-0.0938746035,0.0446069948,-0.230524361,-0.204967365,0.0290296078,0.183612049,-0.0516650192,0.00656262506,-0.0154821286,0.0256331749,-0.151217133,-0.0673727021,0.220804304,-0.0601551831,-0.00740239862,-0.0839806795,0.113983832,-0.160336435,-0.271851391,0.275446802,-0.155666068,0.0374134593,0.0748898983,-0.0799417645,-0.0716214404,-0.14455618,-0.179374531,0.117550828,-0.0215297733,0.162051097,-0.13856253,-0.159627661,0.119232334,-0.111126803,0.197477162,0.217802644,-0.115569003,-0.0180107653,0.0849648491,-0.000796060427,0.182555199,-0.0521607921,-0.0863226354},{0.0196458101,0.0537103117,0.262946069,0.184350878,-0.343997568,0.153186321,-0.0306003578,0.210032552,-0.057342086,-0.274011999,-0.0158020575,0.201361224,-0.0988055915,0.0121985832,-0.0647196621,0.115682535,-0.0965842307,-0.0893151015,0.0318417065,0.323215932,0.122628644,0.0654094219,-0.355735689,0.0272516459,-0.101685852,0.00862377789,-0.0518925115,0.0763282329,0.284727991,-0.0181802157,0.248569325,-0.0311111547,0.0333428048,-0.321279883,-0.20687452,0.199249536,0.162796259,0.225451067,0.0295097437,0.105044633,-0.0588176847,-0.33004275,-0.0395786799,-0.150684461,0.0339786895,-0.127493218,-0.0869760364,-0.24358356,0.0791554302,0.0916865319,-0.0774478838,-0.0631170571,0.0828345418,0.13251783,0.040186625,0.276705503,-0.188778237,0.0550078303,-0.114899412,-0.127480865,-0.266651541,-0.26546067,0.0896163434,0.00889580604,0.0250754468,-0.146139055,-0.355916589,-0.131061688,-0.0733250603,-0.131369576,0.0560379103,-0.129244402,-0.022685539,0.115619257,-0.0177805349,-0.0890552774,0.251751631,-0.024306817,0.0821890011,-0.0307201259,0.076519914,0.0171495453,-0.116782121,-0.0478025191,0.0533956401,0.0272567756,-0.0642557219,-0.218255728,-0.00685445266,0.121126629,-0.15016827,0.180403471,0.0774865374,-0.211968273,-0.157417789,0.0331723206,0.0217779204,0.118327156,0.0890264809,-0.0377065726,0.189267904,-0.10210982,0.011730223,0.0318639055,0.0696901008,-0.0136150178,0.00474320911,0.358513176,0.158324838,0.0184164941,-0.0786408633,0.0645869374,0.00693344092,0.0605550632,0.104098566},{0.00927053019,0.0182015002,-0.130709201,0.0749220923,0.0882022008,0.222653657,0.20478791,-0.180744797,0.141777635,-0.0854863599,-0.0858963504,-0.0811275989,0.109724537,0.152313471,-0.0336905941,-0.107722588,0.0168956183,-0.130438447,0.0967576802,-0.0289392658,0.123379558,0.0956518427,-0.491595387,0.124534473,-0.0318817608,-0.206726998,0.123471163,-0.203204036,-0.378801137,0.327881724,-0.0912684575,0.00638080714,0.0968226045,0.0191132668,-0.143611997,0.207800388,-0.233178109,0.104243055,-0.131388575,-0.198080301,0.493677408,-0.215010777,0.232992634,0.154297113,-0.116975106,-0.133597985,0.0866709054,-0.0437379889,0.0183912721,0.102343187,-0.125251293,0.132564276,-0.238003835,0.0125212576,-0.111401059,0.0445519313,-0.0576417185,0.158772007,0.132319301,0.0501346886,0.159554869,0.0811487883,-0.117979094,0.040032398,0.0925274938,0.114618182,0.0283201896,-0.198439941,0.207257763,-0.0249608271,0.0578561574,0.0654556304,0.00905296858,-0.102934025,0.215000615,-0.195413545,0.0645936057,0.0364084877,0.110038772,0.00627151411,0.017060915,-0.0472776294,0.054613892,0.193709448,0.0618107244,-0.115218364,-0.156372473,0.168208614,0.0261341464,0.193174928,-0.0333698131,-0.167101011,0.299485713,0.0481149629,-0.0218124688,0.132127002,0.0553692393,0.100435913,-0.108023129,-0.115915611,0.178646222,-0.0631937087,0.0370524526,0.0475853123,0.0924522504,0.217262834,-0.109317712,0.102212891,0.0130014047,0.190230578,0.277150005,0.195841298,0.0803914443,0.000489873462,-0.00815914385},{-0.0370584317,-0.235042393,-0.0100914957,0.121504702,-0.297151089,0.349967271,0.169071525,0.145538092,-0.00844357535,-0.165930867,0.158999979,0.0451594144,-0.0418966375,0.305027813,0.0843593404,0.060327448,-0.288252026,-0.101088546,-0.0916495919,-0.0067814202,0.121131055,0.154745936,-0.362456203,0.0590100326,-0.085476093,0.341407239,0.0505663864,-0.0102035301,-0.000165039412,-0.128243655,-0.0898706913,-0.166476637,-0.266245514,-0.117848173,0.000519519148,-0.145342529,7.11974135e-05,0.144415379,-0.343718201,0.22194916,0.233010441,0.0459125675,-0.177914754,0.00464570895,-0.0200174972,-0.162449047,0.18707034,-0.158267766,-0.124657676,-0.0661185831,0.299335897,0.0122860326,-0.0364757665,0.0624217764,-0.271050602,0.266185254,0.0945400819,0.075769119,-0.1895172,0.354830384,0.017475754,0.0795867592,-0.0636265948,0.169006839,-0.058754582,-0.0807812363,-0.110117219,-0.0318985246,0.0534440018,-0.0992233232,-0.00980219524,0.380974114,-0.188726023,0.0485772863,0.0585212782,-0.196969435,0.0380664207,-0.0134376166,-0.0581258126,0.088194795,0.0787632093,-0.0798636228,0.100244656,-0.0621856041,-0.0700662807,0.039901711,0.0396514945,0.0892485455,-0.0650114417,-0.213187128,0.0454597957,0.14430128,0.0430913419,-0.096749723,0.369391859,-0.106232703,0.444462031,-0.155771196,0.22426948,-0.127221093,-0.0707950294,-0.00034307639,-0.0934238732,-0.0328702442,-0.00861748122,0.173907489,0.066952996,0.0787110105,0.0581583604,0.211544067,0.179616645,-0.00962422322,-0.0443602428,-0.243347973,-0.000955337309},{-0.270497024,0.0498010293,0.097196281,0.0352154188,-0.405264974,0.0261114407,0.0826088563,0.235879183,-0.195901603,-0.0473165624,-0.0267085172,-0.338938177,-0.0773372501,-0.0825122967,-0.23348321,-0.0859675333,-0.000670667738,-0.28945899,-0.163029328,0.0848024115,-0.0470119379,0.00796952285,-0.238650367,-0.0163609013,0.0153595516,0.226177797,0.188883126,-0.06433139,0.16137743,-0.0139858322,-0.127018556,-0.0231269207,0.119006112,0.0796166137,0.0637172014,0.102172583,0.172357216,-0.0191332549,-0.151599586,0.0203130711,0.298826098,0.172019869,-0.0882868692,0.329834282,0.0138611486,0.0973799527,0.111229286,0.0177844334,-0.1368756,-0.0646105409,0.240572557,-0.0683182254,0.0503103137,-0.0270609129,0.00757017825,-0.0396408699,0.0348289236,0.303434432,0.125123248,-0.186802953,0.123433188,0.0131565901,-0.195878863,-0.518000484,0.0338241234,-0.125593022,-0.120035954,0.113733962,-0.0728722364,0.247520536,-0.220995098,0.0764832273,0.0397851393,0.0932282656,-0.0509793572,-0.0796592683,-0.123771615,-0.256537348,-0.249699339,0.0408016555,0.125285551,-0.106972031,-0.140459403,0.0576865785,-0.0913212895,0.0465729833,0.0231932737,0.177651867,0.000513675215,0.202104628,-0.108481295,-0.140184969,-0.0531968661,-0.182712898,0.037458308,-0.0689450428,-0.212387338,0.052967336,0.0398166142,0.0179440156,-0.111906908,0.0364420749,-0.00489378627,0.266652852,0.0171344876,0.0936888829,0.101169348,0.0832983255,0.202171877,-0.0658422187,-0.128809825,0.0367092453,-0.0603483692,0.00319753378,0.241446286},{0.0952480733,-0.0864142329,0.173911706,0.161201224,-0.0492936745,0.141972691,0.181032509,-0.0493205152,0.33437112,-0.356833726,-0.0929648206,-0.129657388,0.0594767742,0.0907865092,-0.225151703,0.0480295122,-0.0336165987,0.0230578128,0.219751656,-0.323314697,-0.184831917,-0.104575209,-0.0257722978,0.126329795,-0.181543171,0.0870347694,0.239012986,0.288519859,0.121300593,-0.250691652,0.0242690723,0.0680120513,-0.0466040298,0.0746762827,0.0542339943,0.0140291611,-0.238472804,0.265865505,0.0220453739,-0.288256556,-0.224845842,-0.22413753,0.101476014,0.157688394,0.087532416,-0.0149756512,0.123595633,-0.114800304,0.0487206914,0.129817784,-0.0400482863,-0.111087762,0.125676885,0.159685031,-0.0625972152,0.195296407,0.00221495656,0.15389967,-0.0853652805,0.0893988535,0.107653104,0.135620117,0.108438551,0.0790033415,0.0776083991,-0.0859544575,0.0313755348,0.0674584508,0.00017727165,-0.202113777,0.109467186,-0.132678896,-0.301207334,0.0828041732,0.221670941,0.210749492,-0.0720165297,-0.193810031,0.0578995384,-0.132072166,0.119626716,0.0857628211,-0.0956086069,0.228324607,-0.124896325,0.227703691,0.104699917,0.200846508,-0.118195988,0.0327208973,0.0956320167,-0.146344945,-0.0392527916,-0.110788435,0.125157773,-0.182275549,0.208002463,-0.134690985,0.0217916779,0.144818619,-0.0797066092,-0.120715722,0.220787957,0.11646802,-0.234567881,-0.0405110903,-0.0821780264,0.298500001,-0.219071582,-0.0475062244,0.01991947,-0.150305256,0.0174091421,-0.00463033095,0.0903088227},{0.0333683044,-0.00278682797,-0.253744274,-0.0682215467,0.117522009,-0.0813916326,-0.257068723,-0.063584134,-0.0292932596,0.148796052,-0.187167734,-0.165628865,0.2216703,-0.250983506,-0.0851578042,-0.102663226,-0.0105835404,-0.124585196,0.488083571,0.0327543803,-0.140430152,-0.103416741,0.678244412,0.112200469,-0.158759817,-0.0612237006,-0.0335022025,0.106765375,-0.0802945495,0.0528349914,0.0916864499,-0.0622676127,-0.12763159,-0.0739248246,0.139324263,0.124813862,0.127476558,0.188375562,-0.124850072,0.111656226,0.079253763,-0.0405756682,-0.0467933826,-0.0168379415,-0.0349946432,0.252238989,0.0340005495,-0.0350669287,-0.242299542,0.19093363,-0.134126976,0.213717476,0.0520300306,0.0747956038,-0.286540806,0.0586541481,0.117952317,-0.0432059728,-0.136156172,0.0365057997,-0.0168950688,-0.149415195,-0.118142314,0.0593786612,0.168505326,-0.00669666519,0.0464707129,0.0437636338,0.0323974192,-0.123677015,-0.10874556,0.0299540274,-0.214930445,0.11132171,0.0643436462,0.244141325,0.113579527,-0.149044305,-0.15480265,-0.0325734355,0.0734061301,-0.191517636,-0.142576545,-0.101008333,-0.0820392892,-0.0179583393,-0.0788897499,-0.196961254,-0.10319718,0.0715380833,-0.168440565,0.325613052,-0.049703978,0.0435785018,-0.0926474929,0.0525349639,-0.000816059823,0.0486340635,0.252419502,0.0118151931,0.0789503977,-0.117523439,-0.230137929,0.0404506475,0.146756142,0.0875964016,-0.0933120921,-0.137716994,0.0882438794,0.00537848566,0.0150906527,0.0186021011,-0.0907076225,0.0262444206,-0.136228368},{0.141557589,-0.10918466,0.12009719,-0.269489557,0.0225463267,0.0161250979,-0.0824930593,0.0305523034,-0.147678867,-0.241666272,-0.143909201,0.177875668,-0.0884826705,0.070681639,-0.0575317815,0.0736866817,-0.0662369654,0.101403765,-0.0683666244,-0.0106192864,0.0483815596,-0.000419278018,0.446073294,-0.276555866,0.0552994572,-0.12147446,-0.0841512159,-0.221700758,-0.0420758165,0.179219127,0.101169787,0.11899747,-0.0216713678,-0.0972611159,0.180632472,0.0169506911,0.242314026,-0.0266151614,-0.0228003599,-0.145549446,0.0430783778,-0.25381273,-0.00138704665,0.150665492,0.00890302192,-0.188367814,0.18398118,0.136665761,-0.0869139284,0.101346001,0.121543683,-0.0986734107,-0.131257907,-0.084903948,-0.159955323,-0.252750993,0.0973301157,0.0666736141,0.31659776,0.210168645,0.230285302,0.0392395444,0.224302188,0.183720946,-0.00727089541,0.0188765079,-0.0939375684,0.0458456464,0.0932147801,-0.0437280238,-0.0973583981,0.024764115,-0.233744144,0.137266502,0.190498188,0.0763486698,0.213804096,-0.142360568,-0.023191819,0.013140507,0.0821949616,0.178621948,-0.124300241,0.188942045,0.124469146,0.0353848673,-0.123589732,-0.0535526238,0.0192402992,0.118813545,-0.0485784709,0.161939114,-0.221752793,-0.0453434549,0.187156171,0.0425826274,-0.173144564,0.204616353,-0.062305972,0.00897746719,-0.273747891,0.0974937081,0.142869115,-0.0740843043,-0.053620927,0.135373995,-0.0449334383,0.0272286125,-0.0695676059,-0.146295458,0.146116525,0.237465262,0.0141125135,0.0586229153,-0.0899292529},{-0.189003274,0.139162719,-0.0890527815,0.0294694752,-0.106365934,0.203352809,0.0184608698,-0.0630173162,-0.0870408565,0.0597445518,-0.0558906756,0.00840748847,0.0497592017,0.215900868,-0.153803691,0.255987525,-0.15602088,0.243160352,-0.109851763,-0.0707218722,-0.305547833,-0.142197266,0.102215827,-0.0973187983,0.0117825866,-0.047334604,0.0542769581,0.0441455431,-0.304476231,0.0999598429,0.269654036,-0.0337715559,-0.0621540509,0.0783757493,-0.152959168,0.161107123,0.125479236,0.35323903,-0.111174971,0.11074014,0.171246096,-0.0656887889,0.168886378,0.0909088776,-0.153624624,0.0737395957,-0.0879659578,0.108926632,0.111098386,0.257537395,-0.0540091209,-0.0254963376,-0.173283607,0.160429418,0.0896370709,0.203643426,0.194537476,-0.105467595,0.14145346,0.113955706,0.356855601,0.201740146,-0.110700317,0.154541999,-0.0629235059,-0.19207342,0.184109777,0.145078078,-0.152652442,-0.0349744521,-0.180927187,-0.0111438632,-0.0669101849,0.0407618433,-0.168896839,-0.0374768488,-0.190654933,-0.0334759839,0.0529824495,-0.076796107,-0.149645224,-0.0599067509,0.244760379,0.0365407206,0.00902905222,-0.137319028,-0.146227881,-0.167840287,0.0807828754,0.0029123025,-0.234297588,-0.197934523,-0.142528132,0.0198821556,0.103609048,-0.128588527,0.131863251,0.0207707193,0.15906401,0.0924772024,-0.0676773712,-0.0976329893,0.127215862,-0.058937192,-0.223446146,0.17200546,0.0840378776,0.18015638,-0.090646483,0.0726707727,0.184906021,-0.143789619,-0.192319527,0.0486466698,-0.106051467},{-0.00234920252,-0.335345954,-0.152928934,-0.282084465,0.17023766,-0.0371006206,-0.202304617,0.0686720535,0.128706962,-0.149342462,0.0811496302,0.0770753846,0.0354059599,-0.00340510439,-0.0136446701,0.0893250704,0.184965551,-0.228058487,-0.0460475981,0.112956747,0.0146933263,0.0729705468,0.318126917,-0.0444547683,-0.0181054864,-0.0205471106,0.154866874,0.387463003,-0.0398826078,0.0410808511,-0.0286010057,-0.0517971255,-0.0165739469,-0.124627382,-0.100890554,0.148765683,-0.0407264382,0.0495614037,0.168997541,0.0870679021,0.0455517024,-0.0759559423,0.251323253,-0.171543822,0.223935053,0.111310795,0.17825456,0.114584297,-0.280296087,0.141251251,-0.195359379,-0.138485089,0.00445321482,0.116217472,0.0802400783,0.125417084,0.016716741,0.0907496586,-0.123820923,0.201898441,0.28298068,-0.0180757958,0.0497038588,-0.0735695213,-0.109507769,-0.200739205,-0.145107523,-0.0879754424,0.00492153876,0.00196153531,-0.0172426291,-0.0929846615,-0.0258866884,-0.0689557269,-0.0964637771,0.00467393268,-0.192682475,-0.2420775,-0.304111779,0.0649382621,0.0470992588,-0.245150894,0.0121222129,-0.100354634,0.222071722,-0.330572844,-0.122266449,0.0839491785,-0.0119166812,-0.0386582725,0.0151257291,-0.116978355,-0.0399304181,0.262081504,0.17452769,-0.32704854,0.106491685,-0.151320979,-0.0454193354,-0.00409300625,-0.164150864,0.155607045,0.102934092,-0.0235012714,0.0185363106,-0.0507216826,-0.0458788238,0.145445406,0.147524193,-0.113587558,0.226107344,0.128481448,0.0833421052,-0.113762341,0.238330647},{-0.142566592,-0.0768610537,-0.111625202,-0.0498578362,0.220199421,0.289658934,0.0257434342,0.0372178219,0.00562991016,0.0608966015,0.0205342975,-0.0229636636,-0.105760522,0.138942182,-0.245554969,-0.198035777,0.00221143733,-0.108613707,0.172811195,-0.0313274935,-0.127069145,-0.176497206,0.346763223,0.0731704459,-0.116399802,-0.167082861,-0.211454436,-0.00981201604,0.317366362,0.285134375,-0.251790136,0.0347571075,-0.137612253,0.128317684,-0.171827972,-0.12523672,0.0161432028,-0.0369603671,-0.067085661,-0.0154179223,-0.164260611,-0.282682449,-0.116892666,0.0636828691,-0.0338592641,-0.00919362903,0.111096889,-0.00101440994,0.252568513,0.359036058,0.0186710861,0.0521903262,0.0568790138,-0.141305894,0.0932202265,0.0196137875,-0.12792708,-0.0798544884,0.133018434,0.398722202,0.264033675,0.114097625,-0.00974800531,0.456411183,-0.046073664,0.190641895,-0.100196667,-0.131193861,-0.0344712473,-0.063454248,0.0158634,0.0178679843,-0.175850719,0.0360067822,0.208603248,-0.26005885,-0.106226929,0.013746039,-0.123524636,-0.193308413,0.0757846758,-0.137608513,0.16229333,0.0602568835,0.13921234,0.0661662892,0.110517345,-0.213493839,0.126308054,0.0924799815,-0.0357157849,-0.258380085,-0.261942834,0.0926407203,0.0679248869,-0.112672903,0.0841644108,-0.261663526,0.0484665446,0.0147347674,0.0454628393,-0.0717375576,-0.00742141949,0.0730804875,-0.165698305,-0.0498829819,0.285732538,-0.209104523,-0.00418527797,-0.0508657433,-0.255098939,0.197302222,-0.121963821,-0.163650155,0.233605921},{-0.0544607118,-0.109114833,-0.101799496,0.105252638,-0.392325133,0.223681301,-0.126846999,0.139404833,-0.153852656,-0.264009714,0.115947969,0.0718066692,-0.0966980308,-0.0520239137,-0.138479114,0.0589956939,-0.00499464059,0.124739431,0.27087599,-0.0180645529,0.18106252,-0.0513698682,-0.120024338,-0.185262412,-0.215865418,0.241549656,-0.0965540707,0.0877964422,-0.198127419,0.216218337,-0.125600293,0.0701631382,-0.0282321163,-0.052728802,-0.0650916994,-0.136027098,0.0793227032,0.354329467,0.0281675085,0.200228453,-0.0429292507,-0.0700194165,0.213398576,-0.0858692527,0.159410194,-0.000214569605,-0.00465084473,0.0697852448,-0.181282535,-0.162563324,-0.182302579,0.107049771,0.121062227,0.126092196,-0.0190876704,0.0843612403,-0.0731483772,-0.0189709868,0.0165237561,-0.312969625,0.449989915,0.158811972,-0.0241921786,-0.118690103,0.0663520023,0.0228000432,-0.0322029032,0.123101942,-0.0270635877,-0.168952689,0.158752486,0.0807877705,-0.0732800588,-0.130448073,0.0567090586,-0.19434087,-0.100807346,0.151549339,0.0559838116,-0.0430023968,-0.000965083134,-0.128532961,0.035475634,0.0417877957,0.0710258409,0.100718461,0.0378527939,0.227709666,0.0620712638,0.0798268467,-0.300627172,0.0346889049,0.0949542001,-0.0759247988,0.362559468,-0.208171278,-0.197038889,0.00938142743,-0.209264383,0.110627338,0.0603111684,-0.00873046461,-0.0877293423,0.120751023,-0.0575385429,-0.162853822,-0.154656291,-0.139658272,-0.127806351,-0.0752067193,0.0100480011,-0.0717376098,-0.281849712,-0.194939852,0.028482087},{0.300420761,0.0449746922,0.00259756576,1.33448702e-06,0.092948854,0.200964093,-0.0264167767,-0.0826834515,0.0251719523,-0.280239493,0.174492285,0.0103553915,0.0219614562,0.351497948,0.018241141,-0.319673181,-0.0636224076,-0.0788971037,-0.312054396,0.17953524,0.233104184,0.0226599537,-0.348744392,-0.00376999332,-0.224527404,0.157409817,-0.0411695093,-0.231842816,0.0820914134,-0.0899992511,-0.0515873022,0.049132105,-0.0104176002,0.235047519,0.0821138397,0.0290823206,-0.0642155856,0.122101665,0.190544933,0.232313782,-0.0396157168,0.0657802001,0.113395572,0.220532596,0.165853694,-0.0252221357,-0.222110212,-0.101664081,-0.184691072,-0.0262544286,-0.133677468,0.146855086,-0.132428363,-0.0750116408,-0.00328830886,-0.10069105,0.174032316,-0.0305659622,-0.288016975,-0.029454723,0.0297889076,-0.0755839497,-0.210989356,0.0332135484,0.184814662,-0.0722907335,-0.0627905801,0.130021662,-0.18646799,0.157095701,0.00822550245,0.111729525,0.0745849907,0.0105421543,-0.035704229,0.15229708,0.101611264,-0.185600847,0.0479322262,0.0968392938,-0.012244028,0.0752200931,0.0905316398,0.149132922,0.013259124,0.087575905,-0.0392025299,-0.152228728,0.00625803787,0.0735087097,-0.141132072,-0.0427277572,0.0144814923,-0.034676712,0.0446757525,0.177018419,0.193452388,-0.0693726391,-0.22484611,0.0495567657,-0.0615381338,0.169043407,-0.0838001072,0.02555052,0.13892594,-0.0422669463,0.173962459,0.0922577605,-0.183166444,-0.0100307018,-0.0140868174,0.190628216,-0.169482991,-0.0108125582,0.13636151},{-0.191998735,-0.255291969,-0.254884511,-0.0585852526,-0.366173595,-0.108373992,0.0063555548,0.238841683,0.166596249,-0.366730124,-0.0453258045,0.0944009721,0.0677759498,0.131423995,-0.239085883,0.170817405,-0.0738086328,0.38922137,-0.0727315843,0.131695837,0.14375177,0.14320308,-0.210556567,0.313861072,-0.113890216,0.0401235782,0.323162645,-0.235158429,0.0758701265,-0.0206564944,0.0592696071,-0.0124886222,-0.0470738709,0.112023115,0.010048327,-0.152415588,0.08063218,0.120187737,-0.00145852729,0.00216985773,0.0605134964,-0.203236863,0.116681002,-0.00664997101,0.0486009084,0.0724761933,-0.189897612,-0.0686260685,0.187974155,-0.060777925,-0.00754997553,0.0390798263,-0.235080764,0.232533574,0.0362742953,0.0420894399,-0.00409931829,0.0689914152,-0.15643318,0.168702185,0.0725219399,0.023610007,-0.128110304,-0.210335627,-0.196817935,0.0536301769,-0.245221272,0.00340429577,-0.00987854134,-0.0024348835,0.0567177646,-0.249112815,0.0600273125,-0.173642322,0.0305610746,-0.0132202962,-0.298512578,-0.316232204,-0.0244024452,-0.112585276,-0.0529059581,0.0251177847,-0.109948412,-0.0442374684,-0.00602712296,0.149005085,-0.00331117422,0.0646219179,-0.0819256008,-0.130760238,-0.158051908,0.233702108,-0.0353575908,-0.0113811549,0.260172099,0.0951145887,-0.00219351845,0.0858468711,0.10341797,0.190091804,0.111275405,-0.0793591961,-0.28107509,-0.294912368,-0.068667002,-0.00710829766,0.110886142,0.0244673043,-0.0437097512,0.138131887,-0.109177701,0.0196900275,0.240279049,0.112778865,0.0767676458},{-0.044502724,-0.0736230984,0.0415978394,-0.147543073,0.202975243,-0.093522884,-0.0946611241,-0.0126530211,0.0135937911,-0.105103925,-0.258960068,-0.14589496,0.0310051851,0.112686455,-0.0969844609,-0.257519007,0.36622408,0.314718306,0.0833319202,0.0136366505,-0.20862712,0.0483301133,-0.0877862796,0.108673595,-0.0431362577,-0.156437322,0.126932144,0.176098481,0.264688671,0.0608596317,0.142644793,-0.113021955,0.0702089071,0.0240705479,0.0747343004,-0.00799605157,-0.0146681042,0.0417593718,0.105755821,0.292446226,-0.210398585,0.20742172,0.00922837853,-0.0188570004,0.180337116,-0.107891694,0.140042782,-0.177776873,0.0461635962,0.148044303,-0.199869975,0.158545509,0.200478584,0.104637548,-0.0164452121,0.271006554,-0.0336808413,-0.0828098878,-0.119383283,0.0967762843,-0.307786584,0.0074369451,-0.132544264,-0.0563583113,0.00800847355,0.0555099957,0.087243937,0.145498067,0.206830323,-0.0720410496,0.138864502,-0.146410733,0.173268855,0.244808167,0.144873574,-0.0890725255,-0.103992626,-0.0460820347,0.242533207,0.161768511,0.2612468,0.0151821794,0.0856762752,0.00510742608,-0.0560360476,0.165560156,-0.325164676,0.192870975,0.235267743,-0.244133234,0.0133374808,0.0664343461,0.105855301,-0.0209817793,0.00134765392,0.0959287509,-0.347374052,-0.027948305,0.0976109207,-0.256219387,-0.161154896,0.211291686,-0.113315031,0.039043203,0.0316753797,-0.155103818,0.0592439584,0.106508277,0.109899372,0.0105475066,0.254280925,0.0222199261,-0.0633437335,-0.0956954435,0.0420125797},{-0.0179525632,0.0218063518,0.0347157493,0.0515705496,-0.0444126315,0.221560717,-0.226638511,-0.269420534,0.00330211199,-0.00765870418,-0.0372264497,-0.0165353157,0.116530411,-0.0496327393,-0.124675028,-0.133426026,0.249300033,0.167071283,0.0808232874,-0.190796807,0.0151780611,-0.0669244081,0.178529575,-0.0354893543,-0.119425833,-0.174772754,0.195926487,0.166642651,0.0653028935,-0.0399720483,-0.0546097569,0.0897138864,0.0177548919,-0.0771682486,-0.264068544,0.00613413192,0.224010602,0.35110727,0.0284286793,0.245129526,0.176382244,0.156532437,0.310144097,0.119385637,0.0489633754,-0.023943916,-0.127223313,-0.176869288,0.0285590272,0.272221416,0.2253782,-0.20475325,0.219249666,-0.011823399,-0.165370703,0.268355817,0.204273492,0.10992419,0.102031223,0.0684751198,-0.151816562,0.0472081713,0.134592772,0.109883472,-0.0196344983,0.136287078,-0.0955033749,-0.0593023263,0.0672934428,0.0891734362,0.0495158881,0.119697891,0.18678315,-0.259128183,0.138951913,-0.117683694,-0.239391506,-0.0166937429,-0.180404037,-0.012325909,0.169759616,0.0979065895,-0.0737085789,0.0415938124,-0.0591339879,-0.174521267,0.110441841,0.00571944332,-0.0563013069,-0.163433135,-0.0974395424,0.0751837865,-0.193876684,-0.051720228,0.0930626765,0.192655981,0.146607146,-0.210577756,-0.197782248,-0.158732831,-0.101198465,-0.0895494223,0.128649637,0.0242165979,0.239224344,-0.0235176776,0.0455460772,-0.152483955,-0.134714648,-0.200066254,0.0922882259,-0.0233856477,0.216894716,0.0779293552,-0.0254986379}},B={-0.0116714956,-0.0279642679,-0.03899673,-0.0541641787,-0.0158365369,0.0430577584,0.00638742745,-0.0165415481,0.0497241169,-0.0673983991,-0.085645251,0.03854689,-0.0310725793,-0.0598754883,-0.0563359223,0.0317128897,-0.0143613778,0.00148158742,0.0473363288,0.0246140826,-0.0783511177,0.00459660031,-0.0581927225,0.0151394559,0.062376976,-0.0237348545,-0.00704293884,0.0416140966,-0.0059594023,0.026893504,-0.0128321862,0.0014331264,-0.028239008,-0.0274089258,-0.0036862269,-0.0663450658,-0.0674110427,0.0130220084,-0.000784088334,-0.0370513126,-0.0423285477,0.0768843815,-0.0181966443,-0.00422705105,-0.0245865397,0.0416420363,-0.00179311913,0.0277463105,0.00180683436,0.0448763855,0.105838835,-0.0283383932,0.0505991504,0.0149108795,-0.0519318916,-0.046461124,0.0231349748,0.0241709948,-0.0171315353,-0.00975472759,0.0826352239,-0.0182256009,0.0113717904,-0.0443084873}},{W={{0.291186363,0.399171203,0.171676382,0.505567253,-0.569906056,0.288954705,-0.0808342323,0.294927269,-0.0311465897,-0.0266826749,0.17222999,0.309175014,-0.204563707,0.0366676264,0.141841471,0.281847805,-0.109882236,-0.264273733,0.181169122,-0.323935777,-0.00783435255,-0.172386169,-0.0178437438,0.029902475,0.00186904939,-0.30540669,0.257048279,0.20596461,-0.0296549276,-0.066506274,0.249554768,-0.0157867447,0.457935661,0.191418409,0.0284541938,0.0765086189,-0.0355009325,-0.186214298,0.278569072,-0.0199302528,0.262173593,-0.0772031918,0.0949466676,0.142301783,-0.0478542931,0.130624413,-0.0545970425,-0.0657382011,0.358953029,0.215011701,-0.453746259,0.037535999,0.101615019,-0.309797347,0.350153327,0.0423152149,-0.167778268,-0.258190334,-0.124708496,0.0794742256,-0.0451980457,0.229084954,0.0123752281,0.0629168451},{0.156920418,0.100678749,0.334228694,-0.177507579,0.332690805,-0.0447307788,0.156799883,0.382265329,0.102998786,-0.221744612,0.207211956,0.123665147,0.268015653,0.795486331,0.280461162,-0.0790263489,0.279564172,0.443409264,-0.275993794,0.255824834,-0.00536927255,0.00917435251,0.334797055,0.110417888,0.0280520748,-0.0251392517,0.295045078,-0.197758079,-0.00537411589,0.210650295,0.0991738662,0.216283605,0.195344761,-0.168280944,-0.121957399,0.20916976,0.0541562326,0.200636938,0.229565993,0.154468805,-0.391665459,-0.324252278,0.0553448908,-0.118103221,0.109867886,-0.277545124,0.0456980094,0.0244660694,0.104355343,-0.100221917,-0.208884269,0.000437673123,0.103660651,0.192498446,0.257590383,0.336903632,-0.159353003,0.15154922,0.025028903,0.309825838,0.176811963,0.237964198,-0.055601798,0.0644161999},{-0.443626851,-0.258990556,-0.00517973257,-0.146852016,0.0224513914,-0.108751267,-0.418090343,-0.0277735256,0.532708228,-0.0452616774,0.123445049,-0.135762289,-0.456537306,-0.108790062,-0.28057,-0.210430607,0.289144576,0.203471467,0.185340494,0.249864072,-0.269440204,-0.322173506,0.068651408,0.238725051,-0.0692546144,0.308301061,0.0467671305,-0.229144648,-0.0987253636,0.235073984,-0.0318716802,0.132550478,0.158947721,-0.0430767089,-0.585120559,0.073619239,-0.183848783,-0.0101126693,0.455957234,0.113930881,0.116038866,0.0956379473,-0.103259832,-0.0835644901,0.0174722504,-0.127258673,0.0119273337,-0.277857125,-0.115812443,0.120271303,-0.129084587,0.0373652726,0.0671022311,0.0926095396,-0.224880815,-0.00848376472,0.0121188303,0.0573954359,0.407890469,0.130211279,-0.227734104,-0.144497246,-0.0282328855,0.109817445},{-0.0408005156,0.0344087593,0.0745080039,-0.221823558,0.0020611193,-0.10833437,0.266961247,-0.140721828,-0.349227071,0.254944265,-0.00916848704,0.271743178,-0.219750762,-0.104567446,0.353594959,0.212458625,0.0335988291,-0.319282472,0.219185188,-0.184321955,-0.186307862,-0.125751063,0.0512411371,-0.323289871,-0.256823093,0.189519942,-0.266987711,-0.171625823,0.0886400118,-0.487344086,0.224143028,-0.244183615,0.33130157,0.224695772,0.0848606527,0.0658626705,0.188948676,0.192248628,-0.251997143,0.0494632274,0.080606848,-0.0047278339,-0.250324428,-0.311953872,-0.0438922681,0.34544754,-0.200925648,-0.0747476444,-0.214707404,-0.304751068,0.00161170587,0.0580486506,0.161964744,-0.188810259,-0.0430601463,-0.0443285666,-0.437106907,0.00920941029,0.0156974625,0.00503401831,0.0689709634,-0.444709718,-0.484286487,-0.394716293},{-0.370153785,-0.211862326,-0.0792061761,-0.239294037,0.0809055567,0.0994579419,0.211024925,0.266849488,-0.0742543265,0.266630977,-0.283227772,-0.165604994,-0.252190799,-0.138544217,-0.26222232,-0.0407012925,-0.128831133,0.0653946549,0.101124488,0.229762793,0.425608963,-0.546529591,-0.300274402,-0.139018431,-0.177566752,-0.305417061,-0.129616737,0.0231267158,-0.156855196,0.0698087662,-0.203041434,0.304208398,0.227183551,0.0594467819,0.122347295,-0.182665959,0.120368026,0.242619127,-0.227854818,0.0510634109,-0.210776925,0.262370974,0.226066053,0.0530334301,0.139949739,-0.0371022634,-0.0859163553,-0.328518629,0.348155797,-0.301567197,0.149065763,0.0632786527,0.225115493,-0.231256425,-0.306169003,0.0340376906,-0.146044284,-0.230567396,0.105831102,-0.314326882,-0.12088225,-0.044022847,-0.0999369398,0.498533905},{-0.110035263,0.0719004199,-0.0242390819,0.0088392375,-0.143363103,-0.0327991433,0.107219487,0.382125288,-0.4034473,0.0404411294,-0.187712356,0.351478726,0.410288543,0.0540209673,-0.242722839,-0.0546491742,0.206405506,0.0569694191,-0.272506535,-0.186420515,0.318813145,-0.0156907253,0.185047239,0.230173543,-0.0886802226,0.318457216,0.0676947385,-0.133130357,-0.0684020519,-0.311633319,0.394820631,0.0903903022,-0.27470085,0.165535644,0.2032938,-0.0882235914,0.266950309,-0.230567992,0.324307919,0.194456145,-0.0874553174,-0.180238292,-0.449724615,-0.0374578796,0.554843485,-0.414742798,0.0612278767,-0.0394269451,-0.252595544,0.1038289,-0.133116737,-0.0637659132,0.0199593175,0.225832894,0.430648237,0.184780806,0.0430281349,0.0532046407,0.142034784,0.295326024,0.00651775301,0.0647761896,-0.242041558,0.214224428},{-0.0264036972,-0.111112572,0.119344063,-0.269430488,0.0349818729,0.0435594805,0.26588583,-0.450836152,0.247744486,-0.248948619,-0.14587678,-0.185225412,-0.56348449,-0.124829777,-0.223083958,0.19416447,-0.0214725751,-0.446003973,-0.0946100205,0.227136403,0.0242536981,-0.19642669,0.0825982168,0.241414338,-0.171711519,-0.107759461,-0.130476817,0.303034514,-0.367026746,-0.146522045,-0.0767356753,0.399045229,-0.0447190255,-0.0991762131,-0.0617598034,-0.0711251572,-0.288344473,0.0411715657,0.0692936778,0.221601829,-0.164202869,-0.0683950633,0.0145248398,0.0852290094,-0.366448045,0.0220461562,-0.279801726,-0.0502648801,0.0790569931,-0.0918032229,0.0804811418,0.212694719,0.324696332,0.240224048,-0.525165677,-0.0894681811,0.133762404,-0.124448292,-0.0585402325,0.0987358168,0.15006429,0.315321654,-0.20477508,-0.377529323},{-0.065248467,0.36133486,0.230774701,-0.0198630374,-0.352889389,-0.107444637,-0.194191292,-0.0792731717,0.0383988023,0.0780965015,0.437298715,-0.099210985,0.016108267,0.0366754793,-0.0117896451,0.117816485,-0.287361026,0.0450017452,-0.313114226,0.175055131,0.0544360839,-0.17862986,-0.0655881613,-0.263530821,-0.181253165,-0.0160138365,-0.304062366,-0.362154573,0.514874637,0.0169091225,0.219097733,-0.298875093,0.146058753,0.0814571679,0.520320654,-0.159888789,-0.171034276,0.105166771,-0.0853437781,0.218787163,0.0320862718,0.0342632569,-0.310008854,0.246505558,-0.345500708,0.229480386,0.322815239,0.300439745,-0.292163312,0.172040239,-0.188102916,0.0202405415,0.0267926417,-0.0197079759,-0.0499847569,-0.188406721,0.055855006,0.23319298,-0.237872779,0.0834247768,0.0414336547,0.310501009,-0.0578423142,0.20858629},{-0.171543822,0.0538351722,0.24132666,-0.141739905,0.291053712,-0.106058948,-0.323258728,0.10199178,-0.245677754,0.142840728,-0.00654201629,-0.0343389548,0.335877717,-0.100238964,-0.0421365499,0.206464991,0.0905194879,-0.177797973,0.0259324145,0.153891489,0.247088909,0.288009942,0.131005064,0.156655386,-0.159055412,0.164194435,-0.00518419035,-0.289147258,-0.0809744149,-0.182611093,-0.0765327439,0.0828267559,0.0757965222,0.104671828,-0.107382543,0.209446117,0.320692509,-0.498587012,0.0866779983,0.111614868,-0.211578384,0.0762818977,-0.201232567,-0.185744449,0.40018183,0.410182714,-0.088029258,0.104643598,0.0261868779,-0.313299477,-0.402311057,-0.163355067,-0.257659316,-0.0128575349,0.531901181,0.00336055574,0.32685557,0.208285302,-0.00920479,-0.361007124,-0.0413265042,0.135280907,0.0706812069,-0.121541448},{-0.224918991,-0.511757731,-0.0856665969,-0.158003226,-0.0842218027,0.0255108811,0.208393812,0.0331401452,-0.196211055,0.164421484,0.391483784,0.313746929,0.236404479,0.0199003201,-0.0206715297,0.0815116987,0.00476036267,-0.337793648,-0.0125487782,-0.48059696,-0.136195645,0.123883754,0.250234962,-0.361817151,-0.0043463856,0.143231735,-0.406707466,-0.1561331,-0.0351042151,0.106256291,-0.172751606,-0.369876981,0.215758726,-0.153661102,0.0237357877,-0.0158529207,0.199183226,-0.228374168,-0.101969741,0.233204871,-0.0786099136,-0.0748545378,0.0818477422,-0.138633668,0.276677102,-0.128290981,0.220193461,-0.27103442,-0.0700279176,-0.00938452221,0.165251091,0.185136989,-0.0215339884,-0.0725275353,0.333201557,0.426775903,0.153543442,0.171481863,-0.22126469,-0.138133049,-0.00501795718,0.384425521,-0.498764724,-0.102738291},{-0.189281359,-0.0750468597,-0.0669338107,-0.200453758,-0.308572769,0.234430954,-0.0332605653,0.208434433,-0.0787622929,-0.230677947,-0.110129595,0.184569612,-0.322482198,-0.150562033,-0.135371312,-0.244408146,0.160225824,0.433792382,-0.0275648255,0.166669756,0.142677516,0.114031382,0.0979608372,0.412444592,0.390276194,-0.237495646,-0.250203222,0.078423053,-0.301260322,-0.10621988,0.322707415,0.135557011,0.12088494,-0.314880669,-0.201909229,0.152021468,0.156858504,0.158287793,0.268103957,0.0825328156,-0.0999830738,-0.174957365,0.357970864,-0.253413737,-0.283602506,0.0317246206,-0.0166171603,0.315680951,0.265976667,0.0692579374,0.00798940938,-0.267416328,-0.00550756045,0.0878193974,-0.498184413,-0.446752578,0.0103413537,0.13488026,-0.131052971,0.0581231415,0.0346685722,0.210800171,0.00411640061,-0.0853589773},{0.0474059433,-0.10419748,0.198623359,-0.383479595,0.109219275,-0.00759855472,0.147396863,-0.0377848931,0.155600175,0.042498596,0.106463201,0.249154821,0.154685363,-0.254962236,0.0420569703,0.165788129,-0.152864307,0.0896199048,0.0850898027,-0.29310438,0.150963709,-0.430368572,-0.374959111,0.188328207,0.0406888276,0.275995314,0.153534055,0.00153888867,-0.180236712,0.163802609,-0.456748992,0.213129252,0.0535536371,-0.179494753,-0.067417644,-0.279896826,0.0619647279,0.0769640356,-0.0277357902,0.0959102362,0.285170168,0.401313722,0.122442313,-0.616906404,-0.327438146,0.20838289,-0.114511959,-0.0223954245,0.0747857764,0.00248174206,0.357483238,0.180071682,0.0268882848,0.0199637376,-0.442226738,-0.174764007,-0.0826340988,-0.0272258297,0.127963766,-0.0473627895,0.252433151,0.0785003901,0.0020901016,-0.204925105},{-0.297785759,-0.454668671,0.17309545,0.140707016,-0.0198961366,-0.180139065,0.247857183,0.484764755,0.31339249,0.0954782441,0.0434228145,-0.344641834,0.0363849699,0.0714080632,0.2851578,-0.105101772,-0.18182461,0.230295911,0.0424707271,-0.334204704,-0.258048445,0.176951572,-0.0538224392,0.297532767,-0.114144012,-0.0763959587,0.144005984,0.0421875715,-0.352124691,0.3001858,0.22999835,-0.112151675,-0.554809451,0.175355941,-0.132660791,0.154751316,-0.156097963,0.0991450399,-0.0681301132,0.410390377,0.212648734,-0.0229234397,-0.0129254228,-0.0949212685,0.114712633,0.0787654221,-0.0772189796,-0.00724013336,0.288863599,0.169573784,-0.0998777673,0.239482045,0.163051099,0.297093332,-0.383165181,0.0569449216,0.126169235,-0.128724098,0.132742286,-0.209201947,-0.0662530065,-0.0370517783,-0.00381863839,0.0577749126},{0.087432757,-0.0574840717,-0.252636671,-0.303391188,0.154602125,0.0179799646,-0.0344491415,-0.182868406,0.0936650336,0.0839216486,-0.0358861201,0.0864823312,0.0343399607,-0.563757896,-0.15781489,0.174503341,-0.0774616152,0.00564801274,0.299406707,-0.157034919,0.265396833,0.0522015132,-0.239306882,-0.262809247,-0.0918478295,0.382790118,-0.055497244,0.299575686,-0.19249855,0.109608419,0.115034312,-0.345326215,0.12721929,0.0553734004,-0.0994959772,-0.181272596,-0.356575638,0.402418792,-0.150183126,-0.171918541,0.104838744,0.115963794,-0.116235875,0.161971763,-0.187978074,0.224283606,0.134024665,0.0449763648,-0.0990200117,-0.48885107,-0.330642313,-0.36277467,0.300547034,-0.0311899986,-0.192956224,0.189279482,-0.0967806578,-0.446123809,0.282984674,-0.398565382,0.0976136327,0.195191592,-0.0343824401,-0.0791168734},{0.0335275866,-0.318169236,-0.27541697,-0.312942713,0.212985694,-0.150111049,0.159477249,0.0564593263,0.168117225,-0.101255238,-0.237635419,-0.323358208,-0.356408566,-0.11196965,-0.0460264906,0.0746202767,-0.0530596897,-0.08883553,0.283662021,-0.0305191465,0.224073887,0.10076014,-0.339776725,0.273192972,-0.304709673,-0.130118877,-0.165434733,0.315824956,-0.121223792,0.236850455,-0.144742534,-0.0269543417,-0.220154494,-0.231758147,-0.170774132,0.0750891119,0.107157007,0.200460523,0.502399027,-0.113805272,0.104020245,0.326809108,0.233276218,-0.00646860711,-0.425845981,0.345369935,0.288032055,-0.327992588,-0.113142543,0.0860439539,-0.237045258,0.230284899,0.165723041,-0.13258332,-0.365945756,-0.270920753,-0.287069708,0.206578463,-0.374727845,0.315735906,0.186243162,-0.0177225545,-0.111122772,0.0404997729},{0.0650981069,-0.0719098896,-0.192476615,-0.0237869322,0.192163125,0.0355974995,0.387546659,0.0252350401,0.357023895,-0.151657492,-0.304823667,-0.14704746,-0.109188303,0.222903967,-0.272408843,-0.172977269,0.133378565,-0.0711115077,0.288436532,0.0596774407,0.0311553907,-0.206520215,-0.128520682,0.34747541,0.215349719,-0.340139568,-0.0934332386,-0.0290032458,-0.075935863,0.435030401,-0.15426594,-0.0485130362,-0.0559878312,-0.0963411853,-0.104342625,0.12277101,-0.0170312244,-0.258702546,0.009573875,-0.00328261964,-0.00384420971,0.0470246226,-0.545414805,-0.216338485,0.105442904,-0.120666608,-0.131882742,0.344691634,-0.132274106,-0.185282409,-0.0353467874,-0.129283562,-0.352941602,0.0992804766,-0.392174274,-0.208763465,-0.0549782887,0.0515959673,0.0241200533,-0.0501144789,0.0898197964,-0.0665402338,-0.50783813,0.100689799},{-0.146450207,0.374851555,0.0700049177,-0.309464365,0.00160707743,0.151633471,0.340536088,0.21250774,0.148785532,0.0362768285,0.0268607363,-0.00918252114,0.063170284,-0.219453618,-0.286755323,0.148789763,0.319711447,-0.0598052144,0.0550127737,-0.19291766,-0.14146778,-0.13547577,0.168995336,-0.164506331,-0.197212532,-0.0215519313,-0.101988539,0.352814555,0.15994437,-0.0522103347,0.038847819,-0.172383323,0.397510499,0.227229029,0.230460912,0.183239937,0.460386187,0.0768834427,-0.527085543,-0.138358787,-0.100583225,0.418331891,0.245398298,0.212004587,-0.173670113,0.0451078899,-0.138267398,-0.237348616,-0.0829642639,0.091579549,-0.25468874,-0.254872799,0.0165249538,-0.0272216238,-0.306020796,-0.158853352,0.212107182,-0.267732292,-0.132152066,0.197415143,0.172631934,0.0564172603,0.324535728,-0.252524167},{-0.134531155,0.0198733043,0.0951298252,0.144819319,-0.014866598,-0.337176174,-0.246375144,0.263487637,-0.120258108,-0.170687601,0.201696575,0.192028597,0.120606765,0.011877046,-0.200226396,0.0624996834,-0.201999038,-0.428975761,-0.14088513,0.153330132,-0.0558814518,0.134019822,-0.0593591593,-0.0930679515,-0.241437107,0.0440531932,-0.155205891,0.300634623,0.0494231358,-0.157658026,-0.414922774,-0.330355138,0.0930358991,0.400168449,0.176441208,-0.185827881,0.149259955,0.100089945,-0.218710139,-0.225502089,0.0431167483,-0.240200147,-0.0800255686,-0.0459109433,-0.326905459,0.142245054,0.308047384,0.034872476,-0.112049229,-0.0907960683,0.0393265374,-0.0573360585,-0.459553212,-0.121430285,0.0374451317,0.130651191,-0.155133411,-0.157911554,0.581099987,-0.236246958,0.132309854,-0.173581287,-0.129795492,-0.268841535},{0.18212086,-0.284602821,0.210346475,-0.183071315,-0.12022227,0.249466836,0.254061043,0.173594445,-0.0471918061,-0.325189769,-0.0653343946,0.0265589673,-0.321254194,-0.249889299,0.00540958764,0.0617610551,0.017178515,0.36208722,-0.0799845681,-0.0508822463,-0.0592118874,0.206090346,-0.285209566,-0.0480218492,0.357187599,-0.0675252378,-0.0552085079,0.338668048,0.0971667841,0.144408301,0.281803131,0.325226218,0.00407698657,-0.022671992,-0.295002282,-0.0880348757,-0.273024857,-0.199252591,0.125314802,-0.0348807536,-0.246705994,0.150348723,-0.0747488141,0.172136396,-0.286239207,-0.315539271,-0.225843623,0.0711575821,0.13647525,0.322845966,-0.348099202,0.597733676,-0.197840273,0.112554029,-0.220345929,0.0318612792,-0.151268169,0.433130473,0.095758073,-0.00851606485,-0.0234230477,-0.0628219321,0.198858678,-0.00725782989},{0.287594289,-0.168097571,0.394430339,-0.0884966627,-0.425901562,-0.154556736,0.0541498661,-0.0806099325,-0.231438458,0.182880849,0.189927861,-0.0774806961,0.245528683,0.315574259,-0.0270634312,0.143901095,-0.214101568,-0.166923419,0.112141356,0.154303387,0.0116988774,-0.122035995,0.249908388,0.472547919,0.03532001,0.166627407,-0.406378865,0.0376913808,0.657214701,-0.0218843129,0.289565593,0.0605134629,-0.112599649,-0.124971151,-0.191713721,-0.167914912,0.296453089,-0.154260114,-0.00437167194,-0.0115298405,-0.0869174078,-0.32809341,-0.0147020305,-0.143026918,0.643329382,-0.0100665633,0.0679984763,-0.12303222,0.0555066131,0.0645987988,-0.0966368839,-0.295503974,0.128094926,-0.0112894941,0.18093276,0.347299784,-0.061848741,0.142958567,0.000210324783,0.154916987,-0.120632775,-0.0804463625,0.131374285,0.135584876},{-0.0699047893,0.585891485,0.129507348,0.36026904,-0.265419275,0.206048027,0.310412943,0.0262158383,-0.0499844328,-0.240313426,0.138809323,-0.134274453,0.488916248,0.0194828138,0.116584547,0.19560951,0.114152461,-0.268770039,0.236583412,0.295483679,0.262691259,0.150160819,-0.236046582,-0.311215162,0.028107129,0.228128091,-0.249036282,0.106194086,-0.131993517,-0.246033832,0.100956127,-0.0265547372,0.421444893,0.305003613,-0.107687652,0.0592193417,-0.0785512626,0.141088665,-0.0041476069,-0.240458235,0.0129306456,0.103933334,0.120426863,0.157234803,0.410617769,-0.0801650137,0.320683241,-0.0367920212,0.250254333,0.338032454,0.0257054493,0.172385827,0.168648422,-0.0526094884,0.0669798702,-0.331321537,-0.141766712,0.0910412073,-0.0647978187,-0.0932831243,0.033722572,-0.00195908383,0.0171370115,-0.283679307},{-0.110943533,-0.0178052168,0.307027936,0.049594935,0.220577702,0.214740589,-0.0319539942,-0.129665226,0.234575838,-0.046536088,-0.430442423,0.0569488667,-0.122406855,-0.141270056,-0.0259392671,-0.414298356,-0.0700090975,-0.0750874802,0.0481662229,0.225833133,-0.14492175,-0.0740546584,0.246330798,-0.0230015106,0.138222367,0.36753118,-0.123858295,0.264974356,-0.138318062,-0.0348437615,0.0802332535,-0.208449379,0.168239236,0.0881622285,0.312156409,-0.40213123,-0.175527185,0.052670341,-0.350989014,0.0958355591,0.0731917247,0.0277486928,-0.0623725727,-0.14812316,0.129405066,0.14118132,0.301163793,0.114930794,-0.213541076,-0.487919092,-0.118909292,0.156182393,-0.148817256,-0.630919039,0.0554751083,-0.333561748,0.0849795714,-0.0121857533,-0.0789957643,0.110744081,0.106300354,0.0306633245,0.359832913,0.0885287002},{0.321495801,-0.188634008,0.0984729081,0.116448887,0.202845544,0.2792117,-0.103971407,0.21212998,0.142708629,-0.0177332312,-0.234942853,0.212413669,-0.13635461,-0.289963633,0.00263428502,-0.0238821525,-0.104315363,-0.278298199,0.184512258,0.391418546,-0.0947498903,-0.198161095,-0.00456709834,-0.284587383,-0.0991884768,-0.210259512,-0.0342889875,-0.0334725678,-0.0554704182,0.155333847,0.121440165,0.257488996,0.0588179976,-0.0520414896,-0.483918011,-0.0595646463,-0.102464408,0.32181406,0.217002064,0.0129374284,-0.111579068,0.297057927,-0.0912570581,0.294007003,-0.416955203,0.156839088,0.333286673,-0.0263015237,-0.203207448,0.0584816746,0.231870562,0.0675198585,0.045794189,0.0151775563,-0.562039614,-0.590128839,0.149810344,-0.562114835,-0.148514688,-0.144648507,0.0334572494,-0.0672196597,0.274779856,0.00217703474},{0.0887170658,-0.0646886304,-0.0400170423,0.221327201,-0.421496481,-0.363564938,-0.131718174,0.0231464356,0.140527546,0.0748847872,0.303062439,0.253839254,0.452123582,-0.0975610763,-0.120590508,-0.0976685137,-0.0294222999,-0.305965394,-0.244742513,0.168185905,0.110727526,-0.0276208222,-0.271619588,-0.249859869,0.122268237,0.264981955,0.29043299,0.113861814,-0.232106224,-0.254228115,-0.18801792,0.114974506,0.369263411,0.268185109,-0.034347903,0.151317462,-0.125812858,0.0299687851,-0.5937289,-0.196563378,0.0416567512,-0.220546633,-0.213782206,0.142603442,-0.0495515764,0.231943265,0.078491345,-0.28899017,-0.282261312,-0.440383762,-0.171424925,-0.419903547,-0.0285793059,-0.0811527893,0.300425649,-0.116770759,0.191956297,0.056342274,-0.431684077,-0.0289885215,-0.284829944,-0.340215206,0.0975988954,0.103427507},{-0.113333113,-0.0429961085,-0.180643335,-0.275406092,0.116379946,-0.142672092,-0.17140837,-0.114412285,-0.340625525,0.181375399,-0.0409606472,0.0179248657,0.217459694,0.0762455016,0.0675904229,-0.0724176913,0.0102809016,-0.431854427,-0.00951849669,-0.0776737109,-0.00463694474,0.270673692,-0.157141551,-0.0394255184,-0.0636217073,0.336982787,0.0457587354,0.00183830108,0.270432234,0.469393611,-0.22316353,0.0347020626,0.469303906,0.463910043,0.326192379,-0.139013648,0.265662163,-0.00696533453,-0.286983162,-0.0136557063,0.238140941,-0.39786002,0.0912988186,0.0263354909,0.187139958,0.202548176,-0.0384570211,0.285168827,-0.40328455,0.152856678,-0.175978944,0.136609033,0.261924267,0.0374540798,0.193258613,-0.111043617,0.11265073,-0.32456103,0.0066838325,-0.137616485,-0.25698787,-0.0590408817,-0.16663307,-0.0720891505},{0.185122758,0.240470365,-0.0682085231,-0.277918041,-0.0830593854,0.0251243599,0.224493518,0.0788637474,0.0861876905,-0.138158917,-0.486295849,-0.0859832242,-0.387760103,-0.372386605,0.0974145383,0.14713949,-0.241364807,0.051523,-0.105942138,0.0817070082,-0.385883272,-0.3808842,-0.320644826,0.341341376,-0.139266521,0.032831315,0.0389393717,0.326774418,-0.0787545741,-0.119640507,-0.106557891,-0.411387414,0.201024085,0.172433347,-0.386151731,0.0695747584,-0.309854507,0.131621867,-0.0242056809,-0.0993739069,-0.413301468,0.140822351,0.174064472,0.0918911472,-0.206504494,0.031450972,0.159485653,-0.0257053543,-0.0301901791,0.0306041259,0.375955254,0.0961380526,-0.0836072341,-0.128415167,-0.0930750147,-0.329980552,0.0773428604,-0.214448527,-0.208047375,-0.0197409596,-0.147761524,0.283023,-0.0413481779,-0.0579366609},{-0.150682211,0.0866933987,-0.407538652,-0.175199613,0.36442253,0.179527253,0.230843723,0.0868522376,-0.041168239,-0.149816141,0.0177318733,-0.185504869,0.0970182866,0.00732562272,0.286870629,0.00120131439,-0.375151068,0.12408147,0.0433123372,-0.00491419248,-0.163810596,-0.249953672,0.151289299,0.279647321,0.545300901,-0.316952407,-0.42497915,0.308046877,-0.149023011,-0.457857758,-0.113816179,0.277642459,0.179216161,0.0289797764,-0.0215943456,0.239565209,-0.397913992,0.132950902,0.20774354,-0.00910473894,-0.207673088,0.288962632,-0.0901317224,-0.109091103,-0.171731979,-0.186407655,-0.0493979193,-0.155816957,-0.0575092956,0.237718612,-0.156434,-0.0284663979,-0.0688344985,-0.0068070041,-0.179344356,-0.158881739,-0.0564118251,-0.353912771,0.0332460254,0.0113864401,-0.114091061,0.0223622508,0.365711838,0.236061022},{0.116089329,-0.467695087,-0.220441341,0.258693397,0.133569479,-0.220451578,0.465304047,-0.266049892,-0.244713083,-0.210508808,0.0665080175,0.164729506,0.0258320924,-0.35868901,-0.0269612875,0.364988714,0.287822157,-0.148351684,0.0409464911,-0.085642837,-0.197008029,0.0286084544,-0.0247655362,-0.183331087,-0.490458697,0.508653522,-0.0679723844,-0.389090985,-0.0550976917,0.200736925,-0.295384794,-0.000449938263,-0.215659156,0.0770374537,0.105740517,0.0272612926,0.152727067,-0.119229242,-0.294748485,-0.0248380993,0.00153287232,-0.0794526413,-0.0225408655,-0.48060149,-0.145282909,0.429800451,0.132755354,0.170113146,0.173190653,0.20502533,-0.0161689166,-0.0962087885,0.0785002038,-0.481343597,-0.152323842,0.227592796,-0.067338407,-0.0305087082,0.04102825,0.166537181,-0.339384288,0.185889676,-0.171246052,-0.00123831024},{-0.11346148,-0.101788938,-0.231606111,-0.0884303898,-0.299845815,-0.108657911,0.165049642,0.0711523592,0.0966943279,-0.322844535,-0.402191639,0.0894256011,-0.0425155796,0.169943452,0.181410521,0.220879391,-0.0616733357,0.111223333,0.475646377,0.0823968798,-0.0952216387,-0.0150885331,-0.231768221,0.0241544191,-0.0967281088,0.265596628,-0.0181061495,-0.0207290873,0.175180882,-0.0610621311,-0.0212925002,0.132175371,-0.064659901,-0.344339818,0.0146657238,-0.252059281,-0.0169095416,0.298405349,0.0701748133,0.0388144292,-0.468918145,0.223429725,0.192933038,-0.221666232,-0.340195298,-0.018783303,-0.403215051,-0.260688484,0.173934117,0.110582806,-0.080305323,0.163677275,-0.296351165,-0.121563621,-0.0913951248,-0.385017782,0.215731502,-0.373041064,-0.0850463435,-0.164632708,0.118841015,0.0530645885,-0.359025568,-0.157982379},{-0.0500253849,-0.0633694455,0.191667065,0.331341773,-0.0664768666,0.0656390786,0.227076247,-0.229844049,-0.232128367,0.392433286,0.323221058,-0.253687739,0.146578953,0.308317721,0.03429785,-0.15477398,0.348323196,-0.38668263,-0.36807555,-0.145051554,0.259863526,0.312294543,0.163812339,0.0987876058,-0.0591736473,0.325670958,0.215462729,-0.0146342032,-0.225741118,-0.114403807,0.0616959631,0.103388019,0.261666119,0.32046932,0.169079751,-0.232792765,0.0414166264,-0.0768088177,-0.135201529,-0.133791611,-0.0297622979,0.36283192,0.119139001,-0.0402637571,0.207908809,0.0492554381,0.155575648,-0.0795912817,-0.392723799,-0.157265738,-0.0594136603,-0.387731999,-0.290083081,-0.243393108,0.469558686,0.138956964,0.134696692,-0.223412946,0.239842176,-0.3047764,0.0179887861,-0.234808221,-0.189521968,0.33444339},{-0.381549597,-0.537602484,0.242410064,0.0474518612,0.440858096,-0.063796781,0.145035893,-0.146974802,0.217839107,-0.170183718,-0.163711295,0.148581252,-0.0487817526,-0.0614018179,-0.0635279194,0.0533051938,0.0937530994,-0.273038268,-0.12894012,0.128967762,0.117757954,-0.0970263034,-0.612071693,0.304756492,0.107591137,0.126520559,-0.1295003,-0.199459463,-0.0348002687,-0.0671585873,-0.111316338,-0.583014488,0.247408807,-0.372637004,-0.0348783024,0.0383119211,0.188445747,0.121539965,0.145479351,-0.0680783838,-0.0954241902,0.140690163,-0.153747812,0.10997349,-0.300223768,0.0818951577,-0.243539825,0.134470716,-0.0426901355,-0.142817959,0.404046357,0.0497897193,-0.045317065,-0.0191146955,-0.173098177,0.285230726,0.228245676,-0.341311067,-0.0394277833,0.316187233,-0.0203582533,-0.0112369834,0.15231213,-0.190083683},{-0.14087975,-0.142011672,0.189875573,-0.198604643,0.308879614,-0.305652797,0.0913636759,-0.203027621,0.331969261,0.141036764,-0.480979294,0.0431745872,0.0119053889,-0.710338593,0.0116898706,0.167676121,-0.206111789,-0.0392925106,0.122367732,0.0209736899,-0.251241565,-0.0947170556,-0.0970026031,-0.0393978916,0.294538379,-0.0928204358,0.0897484794,-0.144286007,-0.170478433,-0.0848417282,-0.110165641,0.116148002,0.0823202878,-0.0957296491,0.148881674,0.00861587096,-0.195748508,0.115152843,-0.0470125005,-0.44691211,0.192426935,0.0403220616,0.186789706,0.421114266,-0.422799855,0.0666464269,0.36057955,-0.082839258,0.0468134433,0.132989094,-0.0467492789,-0.00966555346,-0.280739814,-0.305944234,-0.60311985,-0.121890046,0.111015029,-0.488227308,0.00859677792,-0.0154976891,0.195597231,-0.08491344,-0.325635761,-0.171617165},{0.303394556,-0.0455201045,0.0348258205,0.0798737332,-0.235536799,0.491229355,-0.0148030967,0.00343011576,0.13883321,-0.168305948,0.193703279,0.0337208807,-0.0516651236,-0.0205920357,0.0743577629,-0.120044336,0.00285455654,-0.100882553,-0.112362459,-0.196973771,-0.0511466898,-0.0936537385,-0.473572224,0.0460588634,0.133226559,0.233061895,-0.195012599,-0.483687013,0.219843656,-0.0322121233,0.00957702193,0.154229462,-0.369106859,0.0555207133,0.148756683,0.435555041,0.375698924,-0.133523136,-0.0092303725,0.189649403,-0.331145912,-0.15267846,0.37227422,-0.156213403,0.248362482,0.0232162084,0.152736187,0.149237379,-0.112656608,-0.0858285353,-0.240174323,-0.116522409,-0.0369619094,0.192783251,0.434799999,0.192285269,0.00377833517,0.153622061,0.205451608,0.131540895,0.127228305,-0.0843111798,-0.165086031,-0.0981344432},{0.0527969301,-0.310876012,-0.0757320225,-0.0583449937,-0.0497456007,-0.387075067,-0.110140845,0.347183585,-0.220134556,0.197556078,0.109969243,-0.23654449,-0.0569649711,0.0705364943,0.188569725,-0.155907542,0.221057639,-0.226926595,0.150743872,-0.311398,0.314607352,-0.110379845,0.218332112,-0.0433495045,0.100286998,0.348928422,-0.143600702,-0.23166877,0.0833278298,0.400452614,-0.225801468,0.0399580933,-0.109391212,-0.207395375,0.365639567,0.296226948,-0.0444895625,-0.23367539,-0.0453558601,-0.208627552,-0.0788938925,0.0528264865,-0.285663486,0.0308758374,-0.237937585,0.24156931,0.0430295803,0.150606826,0.0856583044,-0.303829491,0.289443225,0.267529368,0.250721037,0.0219779629,0.0498601757,0.101009972,0.147431806,0.0614025034,0.466943294,0.129432365,-0.122233003,-0.00520533323,-0.104872718,-0.147906587},{-0.0418984257,-0.392546356,0.176020861,-0.261751473,0.0236962438,0.206917673,0.206985712,0.135606855,-0.307341754,-0.322182506,-0.139014885,-0.24898234,-0.300677299,-0.201225773,0.0830298215,-0.0619512312,-0.081685774,0.0665027052,0.101906888,-0.241246998,-0.0788953453,0.117960371,0.0983143374,0.0506302752,0.0497227088,0.211298481,-0.0790687576,-0.330279231,0.00516483607,0.346916765,-0.571653843,-0.175083354,-0.090383105,0.166051656,0.152975723,0.113479726,-0.168269217,0.220537812,0.277876884,0.00692646299,0.149647415,-0.0749753043,-0.263025939,-0.241590708,-0.114295699,-0.197931424,-0.303504705,-0.52935946,0.457831651,0.0196321383,0.1257779,-0.283824414,-0.0997072682,0.171291441,-0.188441887,-0.0492710955,-0.15755564,-0.230204538,-0.196020618,0.0605948754,0.287895739,-0.000218346802,0.0262680762,-0.198007464},{0.599671423,0.201416671,-0.0442598015,0.299508482,-0.203296468,0.227428272,-0.370073259,0.189945117,0.0550846495,-0.198325783,-0.142817274,-0.00644491753,0.233235136,0.0258110762,0.107074082,0.117644191,0.239629403,-0.114662528,-0.188399717,-0.176507473,-0.0300284177,-0.154335916,0.171198428,-0.166544035,0.0794542879,-0.0184396245,-0.223180547,-0.0539024845,0.0791710913,-0.45172742,-0.0278822053,-0.0865509436,0.295309365,0.267410994,0.184529871,-0.260955811,0.073728241,0.237780198,-0.224336311,-0.327425152,0.162743837,-0.0404344909,0.034294989,0.0557155758,-0.0151696252,0.556269884,-0.0354420282,-0.389452875,-0.103335194,0.330536366,-0.250986755,0.348423481,0.136233672,0.226982862,-0.244763166,0.13741605,-0.0419197269,0.0615914948,-0.225449696,-0.110989638,0.0652479678,0.313768834,-0.152341932,-0.146812379},{-0.0659004673,0.0675921887,0.208426997,0.0134389922,-0.0846966729,0.0735686645,0.132518724,-0.351644725,-0.22615923,0.0293878391,0.0592903905,0.388672501,0.410603315,0.203303024,0.151569441,-0.295339197,-0.108071811,0.113324106,0.394084811,0.266615123,0.343908191,-0.0916162655,0.329324365,-0.156836018,-0.065364331,0.202151641,0.0374962799,-0.00226543751,-0.390926093,0.0271036997,-0.241775081,-0.328602076,-0.136006102,0.283944428,0.269772291,0.133442923,0.290430725,-0.134787366,-0.00567856943,-0.227732331,-0.173093334,0.195424467,0.163839445,0.0305760987,-0.0725708753,0.0094459001,-0.204932347,-0.197626904,-0.188333765,-0.0501428358,-0.231628254,0.0803260431,-0.233959436,0.0643537864,0.0579474829,0.124828272,-0.0268353745,-0.228465155,0.107065752,-0.118588462,-0.554629505,-0.149340421,-0.0928366557,-0.0336995386},{-0.222815141,0.00473907916,0.141208112,0.196211651,0.380974799,-0.0341558792,-0.132883877,0.049537167,-0.0799396634,0.0336366445,0.234261438,-0.0624216385,-0.0367456302,0.119873881,0.262528539,-0.0286263544,0.33851859,-0.0147114191,0.403313309,-0.53830409,0.695578218,-0.116060957,0.0679467469,0.152814612,-0.244187355,0.235057503,0.00891139638,-0.190062478,-0.00354842213,0.140138581,-0.126817927,0.182011411,-0.0596133769,-0.0965587944,-0.000602880842,-0.0977748856,0.205008313,-0.0580041669,-0.215782732,0.145818949,-0.147230938,-0.543448448,-0.0412459038,0.0942174718,0.156012818,-0.143451259,0.0594798736,-0.0407474227,-0.356515378,0.0670300871,-0.0161091723,-0.301717162,-0.337822229,-0.0284226034,0.0252611898,0.177663088,0.00062628818,0.231595129,-0.0611743145,-0.091217652,-0.323348969,-0.00995635334,0.0639195666,-0.136476636},{0.0337703936,-0.0213087965,0.112917267,0.0766174272,-0.342622429,-0.0355483741,0.218227252,-0.154256597,-0.160019606,-0.098835364,-0.0651666746,0.0664389953,-0.0475226492,0.371151596,-0.150084943,0.0836510509,-0.0472661257,0.272655904,-0.0842768401,-0.468248874,-0.266697615,0.402577728,-0.0635094047,-0.1469111,-0.248947501,0.129551589,-0.265898377,-0.310812682,-0.0635034665,-0.0614621192,-0.261747599,0.210759625,-0.028467413,-0.239943877,-0.105683342,0.246334672,0.242003947,0.197247759,0.00136904372,-0.0393223688,0.304365247,-0.0655510724,-0.118180722,-0.160822824,0.250502646,-0.174079344,0.199572966,0.0831314176,-0.0875691697,-0.373260438,0.0142018134,0.192966968,-0.315805703,0.129218355,0.0627155229,0.229451701,0.0453427993,-0.0988626853,0.247637644,0.100770824,-0.299447238,0.250317276,0.179847777,0.109558262},{-0.279620379,0.219178244,0.157231629,0.0417781286,0.0672827885,0.109787866,0.271735907,-0.199679956,-0.0984665826,-0.291236758,-0.280774862,-0.0674988404,0.0694920793,-0.253697246,-0.375649214,-0.0501306728,-0.192252368,-0.0107694231,-0.159002706,-0.0170723293,-0.148693264,-0.236725226,0.0535121709,0.223195612,0.140126228,-0.382214695,0.3761684,-0.129355937,-0.127818987,0.194785535,0.0143341124,0.0353323966,0.197069794,-0.414913118,-0.160119876,-0.0713067427,-0.170273483,0.257935166,-0.359579295,-0.233537167,0.000525658485,0.285365254,0.00644070888,0.171038553,-0.58435154,0.103811778,0.2420526,-0.359949052,-0.0702338591,0.0110752555,-0.211662665,0.108828187,0.227108374,0.125476241,0.0798769593,-0.330158353,-0.323230237,-0.0977329016,-0.15166226,-0.362335324,-0.131927401,-0.0137541601,0.153308973,-0.381136},{-0.0915641412,-0.142809957,0.0416182131,-0.31184724,0.0822448507,0.247578427,0.217088103,-0.0262213331,-0.288642347,-0.153948665,-0.223304406,-0.175837904,-0.215365559,0.404599905,-0.0594144464,0.242863581,0.259729207,0.522928417,0.162659779,0.0629876107,-0.00792144611,-0.164367273,-0.091223076,0.139492512,0.578805566,-0.199196115,0.170321569,0.0362036861,0.0654191375,0.111081094,-0.251330078,0.0332299843,-0.387489676,-0.0399790518,-0.529931486,0.296849549,-0.0754439235,0.118316256,0.202816695,0.606655121,0.145253688,-0.113774173,-0.105568871,0.194770098,-0.374370068,0.164297283,-0.064557232,-0.269569457,0.109529972,0.214984685,0.159109131,0.257109135,-0.0630740151,-0.129110754,-0.350332111,-0.0395471975,0.154499501,0.0144070564,0.112871639,0.190488577,0.339156955,0.163122237,-0.0964242816,-0.0593181029},{-0.0944588408,0.186029956,-0.20799087,-0.560861349,0.016911706,0.110660277,0.401704013,0.0452402607,0.28792271,0.148045838,0.170714423,0.0613026172,-0.684112251,-0.253480405,0.184259221,-0.238380745,0.32734558,0.256948352,-0.0628010929,0.113378979,0.147891045,-0.0231799111,-0.00607913639,0.323473275,0.0867384374,-0.117967427,-0.161902696,-0.199270964,-0.156880841,0.257715404,-0.0941279456,0.196849346,-0.494881362,-0.250225335,-0.486520439,-0.419139147,0.135292321,-0.101413839,0.141284093,0.0408131182,0.0338560306,-0.21123223,-0.290644109,0.0212301705,-0.0937507972,0.283177853,-0.027065549,-0.22179769,0.402861804,0.0633723512,0.075473927,0.351424962,-0.0458894446,0.277375191,-0.049109742,-0.133956611,-0.0768638328,-0.238304913,-0.0860211328,0.249586791,0.107523151,0.0388013087,0.0692064092,-0.0354622044},{0.160589203,0.0907142982,-0.021318147,-0.171998054,0.000142068457,-0.0168901738,-0.0526785366,0.138084665,0.211602867,-0.269965351,-0.127308175,0.0248593297,-0.641486406,-0.178887933,-0.0397655964,0.0330208726,0.0164500196,0.219472021,0.182516232,0.185427532,-0.0771911666,0.215105921,-0.126227021,0.484157264,0.169085652,-0.0259739384,-0.0730948821,0.0197807401,-0.000759335351,-0.0391488411,-0.171907634,0.106334351,-0.226905867,-0.169497117,-0.171292365,0.0733429119,-0.308811873,0.253442019,-0.0816430449,0.0525823124,0.00564080011,0.54874289,-0.0846722797,-0.206580147,-0.25411281,-0.252653003,0.279076397,0.0756492466,0.106024958,0.0812115744,0.130508974,0.325535238,0.243900418,-0.268367499,-0.493408293,0.280634403,0.256848246,-0.259495467,-0.397568494,-0.0617810562,0.1246804,-0.233282402,-0.24426809,-0.391319513},{0.373148471,0.114748314,0.134020805,-0.416025907,-0.251964539,0.256896168,0.14275679,0.321260601,-0.188141674,-0.0975663438,0.254228622,0.062732324,0.214171052,0.285072356,0.102547728,0.037244264,0.322990149,-0.152128801,-0.390614539,-0.216238558,-0.0489247404,-0.304850191,0.0731971115,-0.281298131,-0.161043093,-0.20794329,-0.179138348,-0.103423901,0.0344835185,-0.346245825,-0.119352005,-0.28568396,-0.191190377,-0.268004179,0.0964667872,-0.274991781,-0.0123483567,0.110656127,0.156811848,-0.0213540401,0.117459163,-0.0531334318,0.157115921,-0.00695903227,0.429033339,-0.226045489,-0.169378281,0.221739084,0.19704093,0.0754339471,-0.395098835,-0.251455486,0.0374597311,-0.260759264,0.298022866,-0.139423549,0.222675487,0.188127026,0.0752367452,0.0235611349,-0.40848735,-0.223303556,-0.0336173922,-0.0794258118},{-0.0275245439,0.0939501747,-0.00166143407,-0.208369508,-0.347224861,0.538837254,0.0429241732,0.0309529603,0.472954571,0.108018085,-0.377464086,0.253399283,-0.0271853246,0.129152656,-0.0136411106,0.193327725,-0.436053991,-0.175400272,-0.0816331506,-0.0381043218,-0.123235039,0.257262766,0.228449017,0.054590337,0.0540741049,0.0818604007,0.0551607683,0.164999157,-0.128276318,-0.360781938,-0.386253864,0.0317105688,0.0901078805,-0.0642179847,-0.0873674303,0.273516834,-0.287684828,0.30922538,-0.19275023,-0.208449259,-0.367062211,0.147617221,-0.0678930134,0.350624889,-0.091409646,0.0415557995,-0.0560660772,0.209029302,0.109011561,0.451838881,0.0348031707,-0.0337083526,0.149344832,-0.225375146,-0.0846319348,-0.0357536487,-0.358734995,0.112563699,0.0337970778,-0.190874085,0.142229676,-0.186700314,0.0992259234,0.00201301603},{0.0465641133,-0.236470133,-0.148212031,0.0990176797,-0.0841727033,-0.636442006,-0.0316841342,-0.182885662,-0.222501442,0.403077841,0.174432144,0.120846219,0.202394009,0.156672075,0.0428442657,-0.425431669,0.361851722,-0.00246725907,-0.210673332,-0.00851853471,0.527413189,-0.362604767,0.11235401,-0.112792626,-0.352922857,0.0681987107,-0.27416417,-0.22706455,-0.136305243,0.168589622,0.00561599201,-0.111590855,0.0710810348,0.196383595,0.187106252,0.358426392,0.118013538,-0.172979936,-0.172717437,0.199407265,0.162170187,-0.161779836,-0.0189811066,0.0774445012,0.464944661,-0.246628344,-0.0773609951,-0.0366963595,-0.251555562,0.139904469,-0.307378978,-0.00860637426,-0.190960407,-0.1221736,0.447205544,0.0974185318,-0.103136733,-0.124377728,0.219212055,-0.492104352,0.341288418,0.0529852808,0.416263193,-0.217393011},{-0.0084702298,0.129498243,-0.16267693,-0.345750749,0.313388169,-0.0993066132,0.37098071,0.192551777,0.252429515,-0.0666561052,-0.079784371,-0.24069421,-0.184523284,-0.296312898,-0.553955495,-0.187979326,0.0822161436,-0.218454182,0.520500124,0.244656101,-0.186043009,-0.129192218,-0.020027278,0.125536293,0.142471388,0.308782727,-0.0636334941,-0.0592015348,-0.19405289,0.0291941036,0.0159468111,0.2367616,-0.021309616,-0.142751783,-0.0730589703,-0.0187440272,0.0953641161,0.301774889,0.238869146,0.370435417,0.139590025,0.0761530027,0.232786253,0.101068005,-0.447872311,0.239547729,-0.198765382,0.104327299,0.151256844,-0.0748016313,0.295250714,0.179850951,-0.285432011,-0.0819889382,-0.116492175,0.25740388,-0.206173435,-0.0813453048,-0.296267658,-0.253814369,-0.116421714,-0.111866638,0.0432652161,-0.0913943648},{-0.225309968,0.236210704,0.070356451,-0.312188417,-0.0318768471,0.219140857,0.253936082,0.132716149,0.0177209601,-0.379070312,-0.427513272,0.372458071,-0.292662382,0.101993442,0.348301113,0.0171725266,-0.0646296069,-0.308645874,0.273626655,0.189488322,-0.393243045,-0.165332019,-0.337812036,0.154925719,0.110235818,-0.0283824857,-0.0472811833,-0.00722212996,-0.103938274,-0.2095543,0.128919318,0.0801880285,-0.229474992,-0.0476138033,-0.141190812,0.0640654266,-0.151349097,0.181550846,0.011714167,-0.450822949,0.243911877,0.181748375,0.131635755,-0.000955163385,-0.358370483,-0.153059989,-0.11086224,-0.0150863836,-0.0756889731,0.0620681047,0.0777509212,-0.101643555,0.124270305,-0.0584914237,-0.292256981,0.0760198385,0.226867408,0.260093421,-0.167449474,-0.257010251,0.323085755,0.178572193,0.190681785,0.28263557},{0.188133731,0.104476973,0.367567271,-0.305796981,0.0820167959,0.103967778,0.0587881841,0.0287742242,0.246398717,0.139429793,0.0190761425,-0.0171278287,-0.234200165,-0.0457958095,-0.27985087,-0.303286463,0.289731711,0.28289032,0.259843111,0.104371414,-0.402203918,0.262922406,-0.529064596,0.200406834,0.0690221339,-0.360100478,0.026781993,0.0435011573,0.115285523,-0.193534017,0.0649009198,0.188173756,-0.173741221,-0.208049372,0.127778098,0.0263168383,-0.298057407,-0.0448479094,0.309724331,-0.0820839256,-0.280592889,-0.159874454,-0.209142506,-0.0494386181,-0.192845061,0.139270499,-0.0548333563,-0.249613702,-0.0519228391,0.173218966,0.211764649,0.10558746,0.332584471,-0.234547079,-0.295049429,-0.30842784,-0.124980427,-0.0433470234,-0.111822762,-0.120010927,-0.0410083719,0.41507268,0.0858864412,-0.080486156},{0.17729497,-0.237398654,0.318142503,-0.198155582,0.33944723,-0.376866698,-0.185778275,-0.13384819,0.0552685112,-0.0104560098,0.124167494,-0.211101025,-0.615083158,-0.124720767,-0.174059495,0.162364274,-0.0250762645,0.144312292,0.0802063718,-0.155202061,-0.230742544,-0.312918097,-0.0805962086,-0.0833090842,0.197099984,0.203288019,-0.202415809,0.288029373,-0.316998035,0.148384333,-0.032675676,0.0133691644,-0.173092633,-0.0561970808,0.159038216,0.123349786,0.418578923,0.420307547,0.0423101969,-0.122605205,0.315563649,0.0830573142,-0.404782772,0.0726146549,-0.167250335,0.146511391,0.118238203,0.00291787344,0.206540301,0.234898314,0.275734514,0.0752256289,0.179493323,0.11784374,0.10934332,-0.405219674,0.0789265633,-0.158461422,-0.115099266,-0.119172662,0.0213628579,0.0688003004,-0.299826682,0.0921916589},{0.122446999,-0.169107899,-0.184492365,-0.320023,0.274068475,-0.371185571,0.0375236757,-0.158935875,-0.202950343,0.131041512,-0.238151699,-0.0360362679,-0.196168289,0.4142946,-0.107591733,-0.137304038,-0.101816587,-0.253560871,0.390216291,-0.250958174,-0.0752495602,0.0261725485,-0.347349703,0.154943511,0.0986525565,0.122704148,0.0887939781,-0.461209595,-0.503417671,-0.0741133839,-0.0918037519,-0.121430911,-0.0278046336,0.0861730725,0.00342102838,-0.250780016,0.00534622092,-0.0647674873,-0.167223141,0.152761474,-0.261652708,0.191134855,0.108863451,-0.140001491,-0.204025626,-0.248701602,0.229346171,0.00303056091,0.467648149,0.0121940225,-0.0867676735,0.0378367603,-0.198659346,0.1685168,-0.334955335,0.0154895922,0.0925030559,0.0411102138,0.183051586,0.296193421,0.0204093345,-0.0671594962,0.0773165375,-0.0263529122},{-0.32172659,0.132137701,0.0371941142,0.278768122,-0.140173465,0.0892823413,-0.452721208,-0.171629742,-0.402180374,0.6852054,-0.0339585654,0.0291458927,0.435297221,-0.0237311162,-0.0454819761,-0.0984301269,0.316067606,-0.392799467,-0.151380867,-0.00746831624,-0.285798132,-0.321867347,-0.255621403,-0.107853942,-0.364317119,0.398949325,-0.272698641,0.306484133,-0.213527054,0.255293399,-0.0591498017,0.156337038,-0.130257264,0.0893823504,0.0970940813,-0.0978709757,-0.0363949016,0.019002948,-0.206078887,-0.123427749,-0.144685209,0.106822498,0.0186216012,-0.00868898816,0.0762228519,0.0161439329,0.0489323176,0.174633667,0.106439479,-0.281397372,-0.254627168,-0.163366184,-0.176726043,-0.140957311,0.076017417,0.174652189,-0.16306527,-0.0511176363,-0.254257739,0.0228452515,-0.0623505041,-0.235584497,-0.127005473,-0.138280243},{0.115025021,0.171150595,-0.0672046095,-0.0197957885,-0.303176075,0.0753692985,-0.36619702,0.00637514377,-0.106189877,-0.591417551,0.185394973,0.210975021,0.117783941,0.0429310501,0.348096371,-0.155542821,-0.0644201338,-0.226089716,-0.195004985,0.223759457,-0.247077048,0.288356274,0.13488321,-0.0167839825,0.233862162,-0.133097276,0.603479862,0.323791683,0.144243732,-0.360403746,0.0250045303,-0.0566731282,0.0613484345,-0.312402099,0.175364226,0.129726231,-0.0227489695,-0.0190240629,-0.20517002,0.210670352,-0.139708325,0.187186778,-0.0206707846,0.543702662,0.529168069,0.0442878045,0.140539393,0.160914719,-0.0916515812,0.103392795,-0.136176392,-0.0610791594,-0.221962705,0.117979094,-0.131243974,0.00299392804,-0.530015647,-0.0573043451,-0.012134687,0.00438021217,0.0151187629,0.16900228,0.0746893063,0.228148714},{-0.0773677602,-0.0303778742,0.0538174286,0.171199933,-0.279191554,-0.00496456493,-0.000580427703,0.0774203837,0.0959461629,0.0551192947,0.174904585,-0.378770322,0.0903262794,-0.0538839325,-0.121349141,-0.0948403105,0.260502487,0.102606967,0.0691507831,-0.0161637943,-0.127030998,-0.2977314,0.202558771,0.0391826965,0.0630364046,-0.231809631,0.142672494,0.0425809957,0.357212186,-0.481947541,-0.107528955,-0.0456783026,-0.185133547,0.179404199,-0.249908715,-0.314119101,0.326771975,-0.227908403,0.265496969,0.0285374559,-0.235327005,-0.0798212141,0.082401894,-0.134141773,-0.0841210485,-0.353657305,0.173014611,0.598843634,-0.0402159467,-0.264350235,-0.323568255,0.0770581886,0.490761876,0.0638708994,0.21775347,-0.0902621597,-0.156366795,0.0417826138,-0.299427211,-0.0531010218,0.201559648,0.0245936345,0.275605738,0.408890009},{0.0774965733,-0.233467773,-0.131766319,0.0651930869,-0.014808014,0.379827946,0.0835091323,0.109037131,0.0564413406,0.108032808,0.216306746,0.421380132,0.0171800368,0.488650531,-0.0360838622,0.243917808,0.196005628,-0.0260210745,-0.125297114,0.179714352,-0.076519005,-0.0485787131,0.198390424,0.289440334,-0.0168570429,0.182415187,0.220320076,0.0966098681,0.646797597,-0.410876095,0.1634911,0.0193881299,-0.233962446,0.206165373,0.135208517,0.227727249,-0.234361544,-0.0651622713,0.106765538,-0.183700457,0.168108761,0.113455176,0.233307436,0.00741716241,0.121954717,-0.213830903,0.249021217,0.0764708593,0.377326548,-0.100252129,-0.0902667046,0.0480032749,-0.284227401,0.326964498,0.21718815,-0.33157143,-0.151795819,0.149103254,-0.173896208,-0.027171351,-0.304312944,0.195249394,0.103643455,0.0135476654},{-0.146819413,-0.024095064,0.0466516465,-0.236877054,0.299019307,-0.0161357205,0.33688429,-0.102881022,-0.157321468,-0.409777254,0.118007831,0.120813057,-0.162208751,0.1160025,-0.314546049,0.0737625808,-0.0519922897,0.208555907,0.0432415195,-0.408950657,0.0288919397,-0.33195585,-0.0573945679,0.0240882393,-0.241083428,0.295490324,-0.197390482,-0.0955433473,0.102042057,-0.0337106436,-0.0362041257,-0.0568344854,0.0685236007,-0.213760495,-0.0282357931,0.148415104,-0.144123226,-0.10880179,0.317849845,-0.190855518,-0.129410729,-0.258479685,0.165964112,-0.1080973,0.0509753674,0.455360383,-0.0609961376,-0.0329086669,0.273969054,-0.0722931698,0.104699619,0.314898044,-0.0467239767,-0.0692277104,-0.441390097,-0.0696781129,0.172378317,-0.324395388,-0.353284121,-0.137169734,0.26249063,-0.449329078,-0.0265257712,0.162206128},{-0.00359999691,-0.229671761,0.145860732,-0.0827642828,0.153094679,-0.104204886,0.412006944,0.130424619,0.0571524985,0.00568231987,-0.381618559,-0.0565909445,-0.317776531,0.0552995913,0.147792488,-0.343616843,0.0730866864,0.526965737,0.20912905,-0.0122799743,-0.0444754586,-0.0527042337,-0.0666552559,-0.142815173,-0.223753959,0.178497195,-0.113752991,0.224476799,0.0916210786,-0.168353721,-0.319088578,0.225735664,0.0670247525,-0.398004681,-0.119039975,-0.1143841,-0.0701240376,-0.398444861,0.202793613,0.378058523,0.288734049,0.144923687,0.00320486305,0.0121656228,-0.170860797,0.231366575,0.217969969,0.0326881111,0.273967624,0.176565647,-0.0124225579,-0.257364869,0.089349106,0.530154467,0.053474199,0.24216938,0.0598598644,-0.0564930625,0.000831435842,0.100731142,-0.0138316164,-0.000175434208,-0.190417901,-0.157943413},{-0.211449474,-0.0901299715,-0.00965816434,-0.523246467,-0.149638399,0.107839197,-0.0443764962,0.004045662,0.160233498,-0.501636386,-0.188280463,-0.0675595254,0.155291781,0.247133106,0.0566153936,0.105664626,0.00751265837,-0.0284355152,0.0925178304,-0.294218421,0.0979149491,-0.212262228,-0.0527414083,-0.170484453,0.00607309211,-0.217523769,-0.341291666,-0.0963574201,-0.0989833623,-0.128896207,0.27410239,0.189481273,0.0602660514,0.589184582,0.0460055619,-0.240088537,-0.00968420506,-0.153669447,-0.135292381,-0.254568368,-0.0294763837,0.309761137,0.148752689,0.107822731,-0.0979901105,0.24841252,-0.12496309,0.116289549,0.0107337143,-0.00652099214,0.193602845,-0.249326989,-0.0313115939,-0.285100996,0.122353069,0.00415311428,-0.406514317,-0.343949854,-0.363398641,0.0418654345,0.00984689686,0.0666428655,0.00149450626,-0.42731756},{0.140889794,-0.094693765,0.00495242095,0.0262212511,-0.329900026,0.264189839,-0.415119946,0.0483128577,-0.0314072035,0.14324525,0.216309026,-0.358412147,0.363478243,0.0533711351,0.058968246,0.342480421,0.219259545,0.0509781055,0.102811836,0.305967748,0.00635531638,0.0960086286,0.10775923,-0.0276387669,-0.230367258,-0.212988719,0.153792337,0.12161655,-0.133052796,-0.0774380937,0.313245952,-0.146945834,0.125205219,-0.221593022,0.43206954,0.0517267995,-0.0976558328,-0.250413775,-0.263951778,0.065952152,0.171321735,-0.458771706,-0.171913996,-0.183693588,0.142243877,-0.203074142,0.344871879,0.0938880816,-0.336256981,0.0822801292,0.111445554,0.148227155,-0.0156502556,0.194344848,0.543536901,0.166809797,-0.0595835596,0.0184836816,0.162123531,0.0968131796,0.0611126758,-0.242059186,0.24385342,0.321392119},{-0.00213865866,-0.213636562,-0.427349597,0.473085344,-0.000558970729,0.218500704,-0.147320569,0.0227331761,-0.28549698,0.260867059,0.358257204,-0.118782163,0.226077944,0.0467623137,-0.0871828943,0.0283203535,-0.363672107,-0.0264286026,0.131464452,0.326885223,-0.153582141,-0.00570954941,-0.0434462912,0.0300678089,-0.22102055,0.273219734,0.301824212,-0.108352348,-0.363367409,-0.101066798,-0.0637105182,0.00691569271,0.402105689,0.232558593,0.376769722,-0.337758362,0.25182271,-0.0796696246,-0.346600652,-0.35411495,0.0944661349,-0.0455818661,-0.175550416,0.481199116,0.340151489,0.148636296,0.063322708,0.148471966,-0.457880259,-0.233037561,-0.153662428,-0.20446901,0.0137529382,-0.278399169,0.239006832,0.107047603,0.100888491,0.158046037,0.0162502732,-0.179399103,-0.046811834,-0.0783836097,0.0132698491,-0.462852091},{0.227668673,0.00126059959,0.0687936246,-0.104493223,0.0310810693,-0.1602301,-0.0376399532,-0.098116599,0.240120679,-0.134501368,-0.0578751005,0.157415643,0.0377675034,-0.277677327,0.1981204,0.220280543,0.24207522,0.157988653,0.155033201,0.0261814464,-0.346189439,-0.0684431046,-0.00343765458,0.635490596,-0.21473749,-0.198375762,-0.38170892,0.031233944,0.00738448277,0.111866638,-0.278075695,0.126343399,0.147842571,0.165517554,0.0474414602,-0.0932546929,0.000867186172,0.10863775,0.141542375,0.30570659,0.164623529,0.257273078,0.0450712591,0.658010364,-0.349424779,-0.0791163817,0.0123637365,-0.0310397409,0.344212741,-0.31689167,0.253776461,0.0831902251,0.339145273,-0.0731119215,-0.172160536,-0.344828159,-0.016178526,-0.0115600191,-0.0171854198,-0.103994489,0.0932998061,-0.24388437,-0.131398886,0.267161667},{0.167777419,-0.000715062546,-0.123363458,0.00954208616,-0.322756618,-0.191128567,0.0343893953,-0.0975637659,-0.0382954478,0.13830474,0.0777250305,-0.0571937598,0.149274364,0.352823645,0.318646431,0.264437377,0.199339092,-0.0582144111,-0.416696161,-0.262973219,0.000789080979,0.0611801334,0.15170224,-0.241143435,-0.0610540733,0.308308452,0.139794722,-0.126435414,0.285063773,0.147855073,0.124663413,-0.133970007,0.032568153,0.0837150887,0.428401083,-0.0185155291,0.713458657,-0.354438186,0.479501843,0.226526275,-0.15234451,-0.306417018,-0.232537806,-0.211585119,0.331277341,-0.104654573,0.276772261,-0.0710361525,0.00677606976,-0.17543371,0.00233992515,-0.257714599,-0.0307164397,0.0628970563,0.0380490683,0.392587751,-0.0188974869,0.33510673,-0.099338308,-0.218893215,-0.248397887,-0.104440063,0.196611792,-0.253192693},{-0.205822542,-0.30281353,0.119766846,-0.0411710963,-0.00359185995,-0.297107935,0.101587184,-0.113814346,0.0174238719,-0.111779414,-0.0823236927,0.100528911,-0.113106534,-0.0919871405,-0.00285378681,0.0401046164,0.143337905,0.197330952,0.292750448,0.0846775398,-0.0115502048,0.00493415724,0.111924425,0.164064214,0.279545844,-0.531462491,0.365884572,-0.0788048133,0.0516979843,0.279983014,-0.209886611,0.117580146,-0.0117360819,0.0367674306,0.161415637,0.0529193804,-0.369516701,0.54774338,0.213564917,0.0182386525,-0.311648011,0.0403971821,-0.134976968,0.0125637818,0.430641234,0.218312383,0.128242075,0.322538167,-0.136610016,0.110428482,0.196001887,0.0773055926,-0.363691211,0.404596746,0.181606084,0.19168292,0.261586756,0.312402517,0.0978132859,0.196506485,0.182796225,-0.0198939722,0.25169608,0.0244229659},{-0.12470299,-0.0210779142,0.083641693,0.114375621,0.0720623806,-0.285816252,0.109535627,0.176901162,-0.0576201677,0.16850026,0.014900716,0.271047384,-0.240650877,0.0686911121,-0.0844865218,0.718530059,0.172147587,-0.208990321,0.0561506227,-0.0123337945,-0.1080167,0.264019072,-0.0667905882,-0.177849039,0.207616419,0.651101768,-0.465720922,-0.263091743,-0.370311856,0.177060366,-0.301993638,-0.332153022,-0.011839062,-0.00194909121,0.309775174,-0.289861172,-0.0982365012,-0.324652165,-0.235914335,0.0515428148,0.008463501,0.00159055437,0.218167976,-0.154017895,0.183439061,0.362976938,-0.183289409,0.0375261344,-0.450195611,-0.130913228,0.0122811897,-0.204580322,0.0965888351,0.10125874,-0.0186502915,0.0325854607,-0.250017226,-0.0992583185,-0.0728061423,-0.134835199,0.007835906,-0.153167441,-0.0554945916,-0.154824555}},B={0.0307511631,0.00586132379,0.00733306212,0.0374559015,-0.108765475,0.0176016819,0.0532498211,0.0631610751,-0.0307879522,-0.00857114699,0.0822021067,0.0152488649,-0.0217385627,-0.0508224145,0.0142775839,0.0211325847,-0.0292767398,0.0240787659,0.0200836025,-0.0125629175,0.0288979076,-0.0145670418,-0.0127840023,-0.0351367295,0.018309461,-0.00859430805,-0.0103126969,0.0198497511,0.0140420198,-0.0379090123,-0.0389283188,-0.0512547232,0.0566114709,-0.00360130542,-0.0196699966,0.04841711,-0.0382043123,-0.010091451,-0.038754724,0.0120026665,0.0685407221,0.0436884053,0.0439302735,0.0123605672,0.0382117927,-0.0767933428,0.000398125354,0.0548462458,0.0751143098,0.00485817669,0.00343632186,-0.0268580336,-0.00718004676,-0.046722576,-0.0208974574,0.0266053118,-0.000219305832,-0.024431657,-0.00187510112,-0.0234849229,0.00351588684,0.00796729699,0.0284706056,0.0241020862}},{W={{0.0212337989,-0.063372016,0.00923023652,-0.0343595147,-0.0636963546,-0.177046031,-0.00042178767,0.0450535826,-0.0841133073,-0.00662811147,-0.0889086351,0.117588043,0.030392779,0.081877768,0.0603953078,-0.0523330979,-0.00215560663,0.107956566,-0.00992462225,-0.136959925,0.0648099408,-0.0111474972,0.0550707318,0.17414847,0.0680256635,0.111399435,-0.168707669,0.116714679,0.0025639243,0.00997541938,0.0223695729,0.221206486,-0.0791954845,-0.0199109241,-0.0752908811,0.0483142845,-0.0275051948,-0.138379768,0.0170224737,0.0982672647,-0.0311158206,-0.19046922,0.115408055,-0.182501704,0.179596484,-0.067443803,-0.0473312177,0.00342230266,0.0421838649,0.0193194151,-0.0819630995,-0.0207736865,0.0534867235,-0.1369991,-0.126942158,0.0158091616,-0.0336783566,-0.0687649995,0.0519520305,0.135080919,0.0373781286,-0.0841786787,0.0955373049,0.0515935943},{-0.121314131,-0.213816032,-0.0513829775,0.103121921,0.0739015862,-0.158229709,0.100508273,0.14790915,-0.0653274655,-0.1484126,0.0392274149,0.0736959875,-0.151202738,0.234610856,0.0318230875,0.1003628,0.136699185,0.0942184255,-0.0176261906,-0.189770877,-0.03199609,0.251096636,0.154881179,0.0698494613,0.0862808898,0.136507332,0.00838017557,0.00494963955,0.067855075,-0.0229924209,0.203914285,0.15362981,-0.116787724,-0.0570050888,-0.180871844,-0.0258809477,-0.056064602,-0.0656931102,-0.174148604,0.113137335,-0.104699053,-0.0388211533,0.0718760341,-0.11605306,0.0931969509,-0.0597742908,0.109344177,0.143963039,0.114039734,0.146597981,0.0325639546,0.134257302,-0.211262345,-0.0543100908,-0.179862648,0.0106083313,-0.17068316,0.115341187,-0.124933593,0.111560114,0.155775577,-0.148553267,-0.0128064016,0.0651224703},{0.0822495967,0.0909568667,0.0216469225,-0.125011489,-0.141246513,0.0254263449,-0.0652862713,0.196447477,0.0166683104,-0.0577662997,0.0520613529,-0.18911992,-0.0221218802,-0.127274871,-0.0277295969,-0.112388007,-0.107675768,-0.120653167,0.0972137079,0.160007209,-0.0016794398,-0.0194589701,-0.01795182,-0.144621819,-0.0874681845,-0.0703624785,-0.0356671773,-0.0899538174,-0.164452121,-0.123786099,-0.100428343,-0.10057608,0.0529406667,-0.00805525854,-0.0508532375,0.127125889,-0.156731755,0.028321933,-0.0390318036,-0.122281075,0.111041978,0.0834000185,-0.0835537985,0.0660938397,-0.108141392,-0.0201251078,-0.0835460201,-0.0990670025,0.0449958108,-0.0124569582,-0.170335576,-0.122591265,0.140929684,0.203132212,0.0728265867,-0.115263678,-0.00180088833,-0.111589469,0.255831599,-0.0920733213,-0.0815228522,0.0741085485,-0.0326344706,-0.177387387},{0.10573259,-0.0638891086,-0.163406536,0.100799166,0.0398432314,-0.023339076,0.010355819,0.0947916806,-0.126194805,0.101037636,-0.0477898307,0.0607241765,0.0468892716,0.0176428165,0.043566104,-0.0733929053,-0.0127337361,0.0288628135,0.0637993217,-0.0282947328,0.0156139741,-0.11775545,0.00923791155,-0.100812197,0.00740562566,0.0281026736,0.0441577323,0.00896662381,-0.00475952774,-0.0853819624,-0.0171047077,0.0732198879,-0.0387200676,0.0837519169,0.114227332,0.152913481,0.0659652054,-0.0338538066,-0.00291262986,0.0676028058,0.0876761153,-0.0306435954,0.03812005,0.101061724,0.0139818359,0.0287575647,-0.0940055475,-0.0338804387,-0.0073357448,0.102742523,-0.0168741979,-0.0399254374,-0.0117659662,-0.0111165009,0.00794473756,0.0185439307,-0.0249084532,0.0947362334,-0.0565325283,-0.114015251,0.107758947,-0.0385556147,-0.0691567138,-0.0249597095},{-0.0754250363,0.0352080055,0.163353652,0.109441228,-0.0544428863,0.0511683188,0.0800172016,0.0287820511,0.0685408935,-0.066879034,0.00474913791,0.0995631889,0.0275044572,-0.0441534705,0.0310556628,-0.0306366105,-0.0125073968,0.0112641938,-0.057831265,-0.0148560163,-0.137349024,-0.0422877446,0.0542115495,0.0181740951,0.045474913,0.0224655885,-0.0557376333,0.032983046,-0.0679647252,-0.0227294788,0.115348607,0.0910808817,-0.0215564091,0.0528404638,0.0915415734,-0.0497486554,-0.00730279647,0.0192128904,0.0951727182,0.0178786721,0.111878231,0.119394399,0.0526521243,-0.0406741612,-0.102132529,0.0684564114,0.108823344,-0.0481743328,0.0257461462,0.107530035,-0.00412266981,-0.0174167249,-0.0368322693,-0.0786641613,-0.0263248943,0.0779162422,0.108720593,-0.101139985,-0.109971426,-0.145467266,-0.0112204207,-0.0134152006,0.00104853231,0.0772679374},{0.0427250527,0.0682376102,-0.0121327313,0.103720509,-0.101426899,0.0907895789,0.108902678,-0.119537875,-0.000820117129,0.0694795549,0.104273178,-0.0362709202,-0.00983881112,-0.113298923,0.0854935646,-0.020962175,0.0370271951,-0.118420362,0.130247533,0.140445009,0.105102234,-0.0423902236,0.0627055466,-0.0496751592,-0.110186107,0.0628748611,0.0250209402,0.00598225091,0.117175288,-0.11618875,-0.0505613834,-0.0115972664,0.0614229627,0.00318492251,0.0640093982,-0.0055887755,-0.0496849194,0.0101352716,0.0825257376,-0.150329366,0.110093594,0.062351115,0.0816630423,0.12300583,0.0368001834,-0.178544387,0.00141946855,0.0545427948,0.0864202604,-0.10019286,-0.0163250882,-0.108668692,0.129551247,0.013143084,0.129447237,-0.00429359544,0.0354821868,0.0602498688,-0.0570495576,-0.0616893843,-0.0156485401,-0.013041365,-0.0848265439,0.0917755514},{0.0843465924,0.119429365,0.00867749471,-0.196369737,0.0615537986,-0.0506969243,0.0242426284,-0.046218913,-0.083424814,-0.195244282,0.139860809,0.0452662483,0.0133965649,-0.0456534997,0.106948145,0.0562681742,0.144755095,-0.0434362926,0.0915541872,-0.0884957761,0.0968773365,-0.0609568655,0.0476350673,-0.0882083476,-0.203886122,0.126779452,0.305099964,-0.179910943,0.0897962376,-0.138227642,-0.0733497962,-0.00620932877,-0.0534971207,-0.241473839,0.00488077849,0.00824795384,0.00372623838,-0.0770256892,-0.0590433665,0.185916573,0.0905359462,0.0574150756,0.0617726892,-0.0048757419,0.131437168,-0.125449538,0.123915814,0.127693787,0.0383239724,-0.041676946,0.0396242701,-0.0904554799,0.034850385,0.0254673921,0.102384798,0.0834395587,0.00336893927,0.0842773095,-0.106339335,-0.155532375,0.0283554718,-0.166847542,0.110470116,-0.205091044},{-0.0167506058,0.0246052109,-0.205611527,0.056050729,0.0134618394,0.194217712,-0.257993191,-0.00484867906,0.215726331,0.220986471,-0.209888592,-0.148253947,-0.210503832,-0.0231383108,-0.358588159,-0.0587701984,-0.0101056537,0.137310088,-0.217751354,0.126061335,0.100857109,-0.0295006223,-0.173648,0.378204942,0.262120366,-0.197968066,-0.119522743,-0.000835892861,-0.165253937,0.439559817,-0.0943007916,-0.236122862,0.0831055343,0.00894626416,-0.121052235,0.0543374754,0.205077559,0.150599971,0.023156831,-0.0911905169,-0.409710199,-0.341085374,-0.272191793,0.104907446,-0.0464752093,0.26904577,-0.229712605,-0.160358757,-0.247217759,-0.195669487,-0.0488960817,0.186300874,0.0460787788,0.0229579788,0.0504080988,-0.152367622,-0.152417168,-0.0294734668,0.196574464,0.364288658,-0.128141761,0.238834247,-0.0347532183,0.0714611262},{-0.0801513344,-0.0379020236,0.219444066,-0.151174024,0.079636395,0.00293427473,0.067044735,-0.226038173,-0.0201172605,-0.076501295,0.00975006353,0.0539931357,0.235319406,0.0472182147,0.02388037,0.165047139,-0.187455863,-0.0903025344,0.0318738446,-0.131894335,-0.176214769,-0.0202847719,-0.0145334909,-0.143978804,-0.124314904,-0.0875924528,0.0483033434,-0.105994165,0.0174846277,0.0607427061,-0.0298411325,0.013207661,-0.0476259887,0.151325554,0.0904708728,-0.158853441,-0.0353386663,0.0916156769,0.0512045771,-0.0153225623,0.0740417019,0.170178071,0.0295893513,-0.220402524,-0.0929460004,0.0852222294,0.117394477,-0.0730132014,-0.0050122547,0.112338565,0.0897105485,-0.0237493496,-0.0538686924,-0.0826405063,-0.071303241,-0.0306540728,0.0907133818,-0.123109512,-0.0497543849,-0.0460896343,-0.00154702645,-0.0742311925,0.0318157449,-0.00973752514},{-0.0160546266,0.0524525456,0.0206636284,0.0632923692,-0.0100690341,0.00171117787,0.0428073071,-0.0356322937,-0.0373716131,0.117038183,0.0565349385,0.0727938563,0.0787485316,0.0198214129,0.12081036,0.0923983008,-0.0400120467,-0.0189814903,-0.0559696741,0.0261015687,-0.0771579966,-0.0399165526,-0.100083277,-0.120770164,0.0397553518,-0.0555077158,-0.139097914,0.256525457,0.115632184,-0.0844083205,0.0628364831,-0.0320499912,0.128192142,0.152899757,0.173973024,-0.062089663,0.0349482745,0.0267290212,0.0444880761,-0.0512050577,0.0351202153,0.0598957054,0.0595093891,0.00133563986,-0.103424564,-0.0254089162,0.0887213722,0.0379066505,0.0180130899,0.00444884691,0.114264734,0.0189418979,-0.0862553641,-0.0424294099,-0.0315621719,0.111776382,0.176148415,0.0821649134,-0.118680224,-0.00350176706,-0.0472123213,0.0699822232,0.0157344732,0.167430416}},B={-0.0787875131,-0.0588842742,0.0651106909,-0.0212804079,-0.00727544352,0.0901370198,0.0245132651,0.0104076173,0.00349136931,0.0351761281}}}
+    local function tanh(x)
+        if x>20 then return 1 elseif x< -20 then return -1 end
+        local e=math.exp(2*x); return (e-1)/(e+1)
+    end
+    local model={Metadata=metadata}
+    function model.Infer(obs)
+        assert(type(obs)=="table" and #obs==115,"Expected 115 observations")
+        for i=1,115 do local v=obs[i]
+            assert(type(v)=="number" and v==v and math.abs(v)<=1,"Invalid observation at "..i)
+        end
+        local input=obs
+        for index,layer in ipairs(layers) do
+            local output={}
+            for row,weights in ipairs(layer.W) do
+                local value=layer.B[row]
+                for column,weight in ipairs(weights) do value+=weight*input[column] end
+                output[row]=index<3 and tanh(value) or value
+            end
+            input=output
+        end
+        local best=1
+        for i=2,10 do if input[i]>input[best] then best=i end end
+        return best-1,input
+    end
+    return model
+end
+
+-- Adapts observed live state to simulator v2 and translates PPO actions to advice.
+-- No camera, movement, remote, tool activation or ESP operations in this module.
+local createLearnedPolicy = function(C)
+    local base,model,State=C.BasePolicy,C.Model,C.State
+    local policy={RouteAllowed=base.RouteAllowed}
+    local status={Source="Rules",Reason="Waiting for Sheriff",Metadata=model.Metadata}
+    State.LearnedSheriff=status
+    local episode,slots,murdererId=nil,{},nil
+    local function finite(v) return type(v)=="number" and v==v and math.abs(v)<math.huge end
+    local function vector(v) return v and finite(v.X) and finite(v.Y) and finite(v.Z) end
+    local function role(r) return r=="Murderer" and 1 or (r=="Sheriff" and .5 or 0) end
+    function policy.Reset()
+        episode,slots,murdererId=nil,{},nil
+        status.Source,status.Reason,status.Action="Rules","Waiting for Sheriff",nil
+    end
+    local function observation(s,target)
+        if not vector(s.Position) or not vector(s.Velocity) or not vector(s.MapOrigin) then return nil,"Map or motion unavailable" end
+        if not finite(s.Elapsed) or not finite(s.Coins) then return nil,"Round estimate unavailable" end
+        if episode~=s.Episode or murdererId~=target.Id then
+            episode,slots,murdererId=s.Episode,{},target.Id
+        end
+        local byId={}
+        for _,p in ipairs(s.Players) do
+            if not vector(p.Position) or not vector(p.Velocity) then return nil,"Incomplete character motion" end
+            byId[p.Id]=p
+        end
+        slots[1]=target.Id -- Actor 2 is always the murderer in the Sheriff training schema.
+        local assigned={[target.Id]=true}
+        for i=2,7 do if slots[i] then assigned[slots[i]]=true end end
+        local candidates={}
+        for _,p in ipairs(s.Players) do if not assigned[p.Id] then table.insert(candidates,p.Id) end end
+        table.sort(candidates,function(a,b) return tostring(a)<tostring(b) end)
+        for _,id in ipairs(candidates) do
+            for i=2,7 do
+                if slots[i]==nil or not byId[slots[i]] then
+                    slots[i]=id; break
+                end
+            end
+        end
+        local obs={}
+        local function add(...)
+            for _,v in ipairs({...}) do
+                assert(finite(v),"Non-finite model input")
+                table.insert(obs,math.clamp(v,-1,1))
+            end
+        end
+        local pos=s.Position-s.MapOrigin; local v=s.Velocity
+        add(pos.X/80,pos.Y/30,pos.Z/80,v.X/24,v.Y/60,v.Z/24,1,s.GunOwned and 1 or 0,
+            s.KnifeOwned and 1 or 0,s.GunReady and 1 or 0,s.KnifeReady and 1 or 0,
+            .5,1-math.clamp(s.Elapsed,0,90)/90,s.Coins/10)
+        for i=1,7 do
+            local p=byId[slots[i]]
+            if p then
+                local d=p.Position-s.Position; local velocity=p.Velocity
+                add(d.X/160,d.Y/60,d.Z/160,velocity.X/24,velocity.Y/60,velocity.Z/24,
+                    1,role(p.Role),p.Visible and 1 or 0,p.Excluded and 1 or 0,d.Magnitude/200)
+            else add(0,0,0,0,0,0,0,0,0,0,0) end
+        end
+        for i=1,4 do
+            local p=(s.Projectiles or {})[i]
+            if p and vector(p.Position) and vector(p.Velocity) then
+                local d=p.Position-s.Position; local velocity=p.Velocity
+                add(d.X/160,d.Y/60,d.Z/160,velocity.X/120,velocity.Y/120,velocity.Z/120)
+            else add(0,0,0,0,0,0) end
+        end
+        return obs
+    end
+    -- Exposed for schema/parity tests and diagnostics, without executing an action.
+    policy.Observe=observation
+    function policy.Decide(s)
+        local fallback=base.Decide(s)
+        status.Source,status.Action,status.Reason="Rules",nil,nil
+        if not s.Active or s.Role~="Sheriff" then policy.Reset(); return fallback end
+        if not State.Config.LearnedSheriffGuide then status.Reason="Learned guide off"; return fallback end
+        if s.Paused then status.Reason="Automation active"; return fallback end
+        local target
+        for _,p in ipairs(s.Players) do
+            if p.Role=="Murderer" then
+                if target then status.Reason="Ambiguous murderer"; return fallback end
+                target=p
+            end
+        end
+        if not target or target.Excluded then status.Reason=target and "Excluded murderer" or "Murderer unknown"; return fallback end
+        local ok,obs,reason=pcall(observation,s,target)
+        if not ok or not obs then status.Reason=ok and reason or "Observation unavailable"; return fallback end
+        local success,action=pcall(model.Infer,obs)
+        if not success or not finite(action) or action%1~=0 or action<0 or action>9 then
+            status.Reason="Model unavailable"; return fallback
+        end
+        status.Action=action
+        status.ObservedPlayers=math.min(#s.Players,7)
+        status.Approximate=true
+        status.Limitations="Estimated map origin/time/coins; at most 7 other actors and 4 tracked knives"
+        local result={Target=target,Threat=target.Position,Kind="Observe",ModelAction=action}
+        local delta=target.Position-s.Position
+        local horizontal=Vector3.new(delta.X,0,delta.Z)
+        local distance=horizontal.Magnitude
+        local direction=distance>.01 and horizontal/distance or Vector3.new(0,0,1)
+        if action==0 then result.Instruction="Hold position and watch @"..target.Name
+        elseif action==1 then
+            if delta.Magnitude<24 then status.Reason="Approach too close"; return fallback end
+            result.Kind="Approach"; result.Goal=s.Position+direction*math.min(10,distance-24)
+            result.Instruction="Close distance carefully; keep space from @"..target.Name
+        elseif action==2 then
+            result.Kind="Retreat"; result.Goal=s.Position-direction*14
+            result.Instruction="Back away from @"..target.Name
+        elseif action==3 or action==4 then
+            local side=Vector3.new(-direction.Z,0,direction.X)*(action==3 and 1 or -1)
+            result.Kind="Strafe"; result.Goal=s.Position+side*10-direction*3
+            result.Instruction=action==3 and "Move left while watching the murderer" or "Move right while watching the murderer"
+        elseif action==5 then result.Instruction="Jump while keeping space from the murderer"
+        elseif action==6 then
+            if not vector(s.CollectibleGoal) then status.Reason="No observed collectible"; return fallback end
+            result.Kind="Collect"; result.Goal=s.CollectibleGoal; result.Instruction="Collect along a clear route"
+        elseif action==7 then
+            if not s.GunReady or s.Weapon~="Gun" or not target.Visible or delta.Magnitude>200 or delta.Magnitude<14 then
+                status.Reason="Shot not ready or clear"; return fallback
+            end
+            result.Instruction="Clear shot at @"..target.Name.."; fire when ready"
+        else status.Reason="Knife action invalid for Sheriff"; return fallback end
+        if result.Goal and not base.RouteAllowed({{Position=result.Goal}},target.Position,s.Position) then
+            status.Reason="Route crosses the murderer"; return fallback
+        end
+        status.Source,status.Reason="PPO","Live adapter (approximate)"
+        result.Instruction="Learned · "..result.Instruction
+        return result
+    end
+    return policy
+end
+
 -- Read-only tactical hints and one path waypoint. Never moves or attacks.
 local installTacticalGuide = function(C)
     local State,Players,player,world=C.State,C.Players,C.Player,C.Workspace
     local clock=C.Clock or os.clock
     local guide={Instruction="Waiting for an active round",PathStatus="Idle",ObservedPlayers=0}
     State.Guidance=guide
-    local token,busy,nextScan,nextPath=0,false,0,0
+    local token,nextScan,nextPath=0,0,0
+    local acceptedPath
+    local pathPool=C.PathPool({Clock=clock,Limit=2,Timeout=4,Spawn=task.spawn,Budget=C.PathBudget,
+        CreatePath=function(params) return C.PathfindingService:CreatePath(params) end,
+        ComputePath=function(path,start,goal)
+            path:ComputeAsync(start,goal)
+            if path.Status~=Enum.PathStatus.Success then return nil end
+            return path:GetWaypoints()
+        end})
+    guide.PathJobs=pathPool.Status
     local route,index,pathConnection,lastGoal,lastCharacter={},1,nil,nil,nil
-    local lastRole,lastTarget
+    local lastRole,lastTarget,lastMap
+    local mapCache,lastPathAt=nil,-math.huge
+    local episodeSerial,episodeCharacter,episodeRole,episodeMap,episodeStarted,coinBaseline=0,nil,nil,nil,0,0
     local actorHighlight,actorLabel,actorText,marker,markerLabel,markerText
     local worldFolder=Instance.new("Folder"); worldFolder.Name="MM2TacticalHints"; worldFolder.Parent=world
     local guiFolder=Instance.new("Folder"); guiFolder.Name="MM2TacticalLabels"; guiFolder.Parent=C.Parent
@@ -4728,8 +5228,10 @@ local installTacticalGuide = function(C)
         if markerLabel then markerLabel.Enabled=false end
     end
     local function clearRoute()
+        pathPool.Invalidate()
         token+=1; route,index,lastGoal={},1,nil
         if pathConnection then pathConnection:Disconnect(); pathConnection=nil end
+        if acceptedPath then acceptedPath:Destroy(); acceptedPath=nil end
         if markerLabel then markerLabel.Enabled=false end
         guide.NextWaypoint=nil
     end
@@ -4742,7 +5244,12 @@ local installTacticalGuide = function(C)
         State.StopTacticalGuide(); nextScan,nextPath=0,0
     end
     function State.DestroyTacticalGuide()
-        State.StopTacticalGuide(); worldFolder:Destroy(); guiFolder:Destroy()
+        State.StopTacticalGuide(); pathPool.Stop(); worldFolder:Destroy(); guiFolder:Destroy()
+    end
+    function State.SetLearnedSheriffGuide(enabled)
+        State.Config.LearnedSheriffGuide=enabled==true
+        if C.Policy.Reset then C.Policy.Reset() end
+        clearRoute(); nextScan,nextPath=0,0
     end
     local function billboard(parent,name)
         local b=Instance.new("BillboardGui"); b.Name=name; b.Size=UDim2.fromOffset(190,26)
@@ -4763,14 +5270,20 @@ local installTacticalGuide = function(C)
             actorHighlight.OutlineColor=Color3.fromRGB(245,218,126); actorHighlight.Parent=worldFolder
         end
         actorLabel.Adornee=target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
-        actorLabel.Enabled=target.Visible and actorLabel.Adornee~=nil; actorText.Text=decision.Label or "OBSERVE"
-        guide.TargetId,guide.TargetVisible=target.Id,actorLabel.Enabled
+        actorText.Text="@"..tostring(target.Name or target.Id)
+        guide.TargetId,guide.TargetVisible=target.Id,target.Visible and actorLabel.Adornee~=nil
         actorHighlight.Adornee=target.Character
         local regularESP=State.Config.ESP and (target.Role=="Murderer" or target.Role=="Sheriff" or target.Role=="Innocent")
+        actorLabel.Enabled=guide.TargetVisible and not regularESP
         actorHighlight.Enabled=guide.TargetVisible and not regularESP
     end
     local function destinations(position)
-        local best,bestDistance
+        local now=clock()
+        if mapCache and now<mapCache.Until and (position-mapCache.Position).Magnitude<48
+            and (not mapCache.Map or mapCache.Map.Parent==world) then
+            return mapCache.Points,mapCache.Map,mapCache.Origin
+        end
+        local best,bestDistance,bestMap,bestOrigin
         for _,map in ipairs(world:GetChildren()) do
             local spawns=map:IsA("Model") and map:FindFirstChild("Spawns")
             if spawns and not map.Name:lower():find("lobby",1,true) then
@@ -4781,32 +5294,82 @@ local installTacticalGuide = function(C)
                         table.insert(points,{Position=part.Position,Name=part.Name})
                     end
                 end
-                if closest<512 and (not bestDistance or closest<bestDistance) then best,bestDistance=points,closest end
+                if closest<512 and (not bestDistance or closest<bestDistance) then
+                    best,bestDistance,bestMap=points,closest,map
+                    local low,high=points[1].Position,points[1].Position
+                    for _,point in ipairs(points) do
+                        local p=point.Position
+                        low=Vector3.new(math.min(low.X,p.X),math.min(low.Y,p.Y),math.min(low.Z,p.Z))
+                        high=Vector3.new(math.max(high.X,p.X),math.max(high.Y,p.Y),math.max(high.Z,p.Z))
+                    end
+                    bestOrigin=Vector3.new((low.X+high.X)/2,low.Y-3,(low.Z+high.Z)/2)
+                end
             end
         end
-        return best or {}
+        mapCache={Until=now+2,Position=position,Points=best or {},Map=bestMap,Origin=bestOrigin}
+        return mapCache.Points,bestMap,bestOrigin
+    end
+    local function projectiles(position)
+        local list={}
+        for projectile in pairs(State.KnifeDodge and State.KnifeDodge.Tracked or {}) do
+            if projectile.Parent then
+                local part=projectile:FindFirstChild("KnifeVisual") or projectile:FindFirstChild("BladePosition")
+                if not part and projectile:IsA("BasePart") then part=projectile end
+                local direction=projectile:GetAttribute("Direction") or (part and part:GetAttribute("Direction"))
+                local speed=projectile:GetAttribute("ThrowSpeed") or (part and part:GetAttribute("ThrowSpeed")) or State.ObservedKnifeSpeed or 96
+                if part and part:IsA("BasePart") and typeof(direction)=="Vector3" and type(speed)=="number" then
+                    table.insert(list,{Position=part.Position,Velocity=direction*speed,Distance=(part.Position-position).Magnitude})
+                end
+            end
+        end
+        table.sort(list,function(a,b) return a.Distance<b.Distance end)
+        while #list>4 do table.remove(list) end
+        return list
     end
     local function snapshot()
         local char=player.Character; local root=char and char:FindFirstChild("HumanoidRootPart")
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         local active=root and hum and hum.Health>0 and C.IsAlive(player)
-        if not active then return {Active=false,Role="Unknown",Players={}},root end
+        if not active then
+            episodeCharacter,episodeRole,episodeMap,mapCache=nil,nil,nil,nil
+            return {Active=false,Role="Unknown",Players={}},root
+        end
+        if (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (State.Fling and State.Fling.Active) or (State.PlayerActions and State.PlayerActions.Enabled) then
+            return {Active=true,Role=C.RoleFor(player),Players={},Position=root.Position,Paused=true},root,hum
+        end
         local list={}
         for _,p in ipairs(Players:GetPlayers()) do
             local r=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
             if p~=player and r and C.IsAlive(p) then
-                table.insert(list,{Id=p.UserId,Name=p.Name,Character=p.Character,Position=r.Position,Role=C.RoleFor(p),
+                table.insert(list,{Id=p.UserId,Name=p.Name,Character=p.Character,Position=r.Position,Velocity=r.AssemblyLinearVelocity,Role=C.RoleFor(p),
                     Excluded=State.IsPlayerExcluded(p),Visible=false,Distance=(r.Position-root.Position).Magnitude})
             end
         end
         table.sort(list,function(a,b) return a.Distance<b.Distance end)
-        for i=1,math.min(8,#list) do
+        for i=1,#list do
             local p=list[i]; if p.Distance<140 then p.Visible=C.ClearPath(root.Position,p.Position,p.Character) end
         end
         local item=C.EquippedWeapon()
-        return {Active=true,Role=C.RoleFor(player),Position=root.Position,Players=list,Destinations=destinations(root.Position),
+        local points,map,origin=destinations(root.Position)
+        local ownRole=C.RoleFor(player)
+        if char~=episodeCharacter or ownRole~=episodeRole or map~=episodeMap then
+            episodeSerial+=1; episodeCharacter,episodeRole,episodeMap=char,ownRole,map
+            episodeStarted=clock(); coinBaseline=State.Stats and State.Stats.ServerCoinEvents or 0
+        end
+        local record=item and State.WeaponHandlers and State.WeaponHandlers[item]
+        local function owned(name)
+            if C.ToolFor then return C.ToolFor(player,name)~=nil end
+            return item and item.Name==name or false
+        end
+        return {Active=true,Role=ownRole,Map=map,Position=root.Position,Velocity=root.AssemblyLinearVelocity,Players=list,Destinations=points,
+            MapOrigin=origin,Episode=episodeSerial,Elapsed=clock()-episodeStarted,
+            Coins=math.max(0,(State.Stats and State.Stats.ServerCoinEvents or 0)-coinBaseline),
+            GunOwned=owned("Gun"),KnifeOwned=owned("Knife"),
+            GunReady=item and item.Name=="Gun" and item.Enabled~=false and clock()-(record and record.LastGun or -math.huge)>=1.5,
+            KnifeReady=not record or clock()-(record.LastThrow or -math.huge)>=1.25,
+            Projectiles=ownRole=="Sheriff" and State.Config.LearnedSheriffGuide and projectiles(root.Position) or {},
             Weapon=item and item.Name,Enabled=item and item.Enabled~=false,
-            Paused=(State.Fling and State.Fling.Active) or (State.PlayerActions and State.PlayerActions.Enabled)},root,hum
+            Paused=(State.Invis and (State.Invis.Active or State.Invis.Busy)) or (State.Fling and State.Fling.Active) or (State.PlayerActions and State.PlayerActions.Enabled)},root,hum
     end
     local function drawWaypoint(root)
         while route[index] do
@@ -4826,39 +5389,58 @@ local installTacticalGuide = function(C)
     end
     local function plan(decision,root,hum)
         if not decision.Goal then if lastGoal or #route>0 then clearRoute() end; guide.PathStatus="No route needed"; return end
-        if lastGoal and (decision.Goal-lastGoal).Magnitude>8 then clearRoute() end
+        if (decision.Goal-root.Position).Magnitude<4 then
+            if lastGoal or #route>0 then clearRoute() end; guide.PathStatus="Destination reached"; return
+        end
+        if lastGoal and (decision.Goal-lastGoal).Magnitude>4 then clearRoute(); nextPath=0 end
         if decision.Threat and route[index] then
             local remaining={}
             for i=index,#route do table.insert(remaining,route[i]) end
             if not C.Policy.RouteAllowed(remaining,decision.Threat,root.Position) then clearRoute(); nextPath=0 end
         end
-        if busy or clock()<nextPath then return end
-        nextPath=clock()+2; busy=true; lastGoal=decision.Goal
+        if route[index] and lastGoal and clock()-lastPathAt<8 then return end
+        if pathPool.IsBusy() or clock()<nextPath then return end
+        nextPath=clock()+2; lastGoal=decision.Goal
         local mine,char,goal,start=token,player.Character,decision.Goal,root.Position
         guide.PathStatus="Planning"
-        task.spawn(function()
-            local path
-            local ok,points=pcall(function()
-                path=C.PathfindingService:CreatePath({AgentRadius=math.clamp(root.Size.X/2,.75,3),
-                    AgentHeight=math.clamp((hum.HipHeight+root.Size.Y/2)*2,3,10),AgentCanJump=true,WaypointSpacing=5})
-                path:ComputeAsync(start,goal)
-                if path.Status~=Enum.PathStatus.Success then return nil end
-                return path:GetWaypoints()
-            end)
-            busy=false
-            if not State.Running or not State.Config.TacticalGuide or mine~=token or player.Character~=char then return end
-            if not ok or not points or not C.Policy.RouteAllowed(points,decision.Threat,start) then
-                clearRoute(); guide.PathStatus=ok and "No suitable route" or "Path unavailable"; return
+        local submitted,why=pathPool.Request({AgentRadius=math.clamp(root.Size.X/2,.75,3),
+            AgentHeight=math.clamp((hum.HipHeight+root.Size.Y/2)*2,3,10),AgentCanJump=true,WaypointSpacing=5},
+            start,goal,function(ok,points,path,reason)
+            if not State.Running or not State.Config.TacticalGuide or mine~=token or player.Character~=char then return false end
+            if State.Invis and (State.Invis.Active or State.Invis.Busy) then
+                guide.PathStatus="Path discarded during invisibility"; nextPath=0; return false
             end
-            route,index=points,1; guide.PathStatus="Route available"
+            if (root.Position-start).Magnitude>8 then
+                guide.PathStatus="Path expired; player moved"; nextPath=0; return false
+            end
+            local threat=guide.ThreatPosition
+            if not ok or not points or not C.Policy.RouteAllowed(points,threat,root.Position) then
+                local remaining={}; for i=index,#route do table.insert(remaining,route[i]) end
+                if route[index] and C.Policy.RouteAllowed(remaining,threat,root.Position) then
+                    guide.PathStatus="Keeping last valid route; "..tostring(reason or "no suitable replacement")
+                else
+                    clearRoute(); guide.PathStatus=reason=="timeout" and "Path timed out; manual guidance only"
+                        or (ok and "No suitable route" or "Path unavailable")
+                end
+                return false
+            end
+            route,index=points,1; lastPathAt=clock(); guide.PathStatus="Route available"
             if pathConnection then pathConnection:Disconnect() end
+            if acceptedPath then acceptedPath:Destroy() end
+            acceptedPath=path
             pathConnection=path.Blocked:Connect(function(blockedIndex)
                 if mine==token and blockedIndex>=index then clearRoute(); nextPath=0; guide.PathStatus="Route blocked; replanning" end
             end)
+            return true
         end)
+        if not submitted then
+            guide.PathStatus=why=="saturated" and "Path unavailable; native job limit reached"
+                or (why=="backoff" and "Path retry cooling down" or "Path unavailable")
+        end
     end
     C.Connect(C.RunService.Heartbeat,function()
         if not State.Running then return end
+        pathPool.Poll()
         local now=clock()
         if now<nextScan then return end; nextScan=now+.6
         local ok,message=pcall(function()
@@ -4867,8 +5449,16 @@ local installTacticalGuide = function(C)
             if player.Character~=lastCharacter then clearRoute(); lastCharacter=player.Character end
             local data,root,hum=snapshot(); guide.ObservedPlayers=#data.Players
             local decision=C.Policy.Decide(data); guide.Instruction=decision.Instruction
+            if data.Paused then
+                clearRoute(); hide(); guide.TargetId,guide.TargetVisible=nil,false
+                if State.Invis and (State.Invis.Active or State.Invis.Busy) then guide.Instruction=State.Invis.Status end
+                return
+            end
+            guide.ThreatPosition=decision.Threat
             local targetId=decision.Target and decision.Target.Id
-            if data.Role~=lastRole or targetId~=lastTarget then clearRoute(); nextPath=0; lastRole,lastTarget=data.Role,targetId end
+            if data.Role~=lastRole or targetId~=lastTarget or data.Map~=lastMap then
+                clearRoute(); nextPath=0; lastRole,lastTarget,lastMap=data.Role,targetId,data.Map
+            end
             guide.Error=nil
             if not data.Active or decision.Kind=="Idle" and not decision.Goal then
                 clearRoute(); hide(); guide.TargetId,guide.TargetVisible=nil,false; return
@@ -4879,9 +5469,12 @@ local installTacticalGuide = function(C)
     end)
 end
 
+local tacticalPolicy=createLearnedPolicy({State=State,Model=createLearnedModel(),BasePolicy=createTacticalPolicy()})
+env.MM2PathBudget=env.MM2PathBudget or {Outstanding=0}
 installTacticalGuide({State=State,Player=player,Players=Players,Workspace=workspace,Parent=gui.Parent,
-    Policy=createTacticalPolicy(),PathfindingService=game:GetService("PathfindingService"),RunService=RunService,
-    Connect=connect,RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath})
+    Policy=tacticalPolicy,PathPool=createAsyncPathPool,PathBudget=env.MM2PathBudget,
+    PathfindingService=game:GetService("PathfindingService"),RunService=RunService,
+    Connect=connect,RoleFor=roleFor,IsAlive=alive,ToolFor=toolFor,EquippedWeapon=equippedWeapon,ClearPath=clearPath})
 end
 
 
@@ -4926,11 +5519,13 @@ local installCombatHUD = function(C)
         elseif feedback and feedback.RoundWon then result,tone="Last: server reported round victory","confirmed"
         elseif feedback and feedback.Message then result=feedback.Message end
         local status=State.AimStatus or "Ready"
-        if State.Fling and State.Fling.Active then status=State.Fling.Status
+        local invisible=State.Invis and (State.Invis.Active or State.Invis.Busy)
+        if invisible then status=State.Invis.Status
+        elseif State.Fling and State.Fling.Active then status=State.Fling.Status
         elseif State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0) then status=State.KnifeFeedback.Message end
         local text=table.concat({tostring(role).." | "..weapon,targetText,result,status},"\n")
         local instruction=living and State.Config.TacticalGuide and State.Guidance and State.Guidance.Instruction
-        if (State.Fling and State.Fling.Active) or (State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0)) then instruction=status end
+        if invisible or (State.Fling and State.Fling.Active) or (State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0)) then instruction=status end
         local compact=table.concat({tostring(role).." | "..weapon,instruction or (target and "Target @"..target.Name or status)},"\n")
         return {Text=text,Role=role,Weapon=weapon,Target=target and target.Name or nil,Distance=distance,Height=height,
             Result=result,Tone=tone,Status=status,CompactText=compact,Instruction=instruction}
@@ -5048,11 +5643,14 @@ local createMobileUI = function(C)
                 suppressInput()
                 State.Config[key] = enabled == true
                 if key == "MagicBullet" then State.SetMagicBullet(enabled)
+                elseif key == "KillAura" then State.SetKillAura(enabled)
+                elseif key == "AuraExtendedReach" then State.SetAuraExtendedReach(enabled)
                 elseif key == "AutoKnifeDodge" then State.SetAutoKnifeDodge(enabled)
                 elseif key == "ExperimentalInvisibility" then State.SetExperimentalInvisibility(enabled)
                 elseif key == "Invisibility" then State.SetInvisibility(enabled)
                 elseif key == "MageAnimations" then State.SetMageAnimations(enabled) end
                 if key == "TargetContinuity" then State.SetTargetContinuity(enabled) end
+                if key == "LearnedSheriffGuide" then State.SetLearnedSheriffGuide(enabled) end
                 C.SyncWeapons()
                 C.UpdateVisuals()
                 refresh()
@@ -5066,6 +5664,25 @@ local createMobileUI = function(C)
     option(combat, "Magic Bullet / gun aim", "MagicBullet", "Targets the known murderer when you fire. Walls and server rules still apply.")
     option(combat, "Knife throw prediction", "KnifeAim")
     option(combat, "Stab sweep", "StabSweep")
+    if State.SetKillAura then
+        option(combat,"Murderer kill aura","KillAura","Automatically requests stabs at the nearest clear, non-excluded player. Enables Aim assist. No throws or teleporting; server acceptance is unverified.")
+        combat:Input({Title="Aura range (studs)",Value=tostring(State.Config.KillAuraRange),Placeholder="1 to 6.5",Callback=function(text)
+            if syncing or not State.Running then return end
+            suppressInput()
+            local ok,message=State.SetKillAuraRange(text)
+            if not ok then State.KillAura.Status=tostring(message) end
+        end})
+        if State.SetAuraExtendedReach then
+            option(combat,"Extended stab reach","AuraExtendedReach","Sends a knife contact attempt within the configured reach. Does not move either player. Longer distances may be rejected by the server.")
+            combat:Input({Title="Extended reach (studs)",Value=tostring(State.Config.AuraReachRange),Placeholder="1 to 100",Callback=function(text)
+                if syncing or not State.Running then return end
+                suppressInput()
+                local ok,message=State.SetAuraReachRange(text)
+                if not ok then State.KillAura.Status=tostring(message) end
+            end})
+        end
+        mobile.KillAuraStatus=combat:Paragraph({Title="Kill aura status",Desc=State.KillAura.Status})
+    end
     if State.SetTargetContinuity then
         option(combat,"Stable target choice","TargetContinuity","Prefers the current target when choices nearly tie. Releases on cover, death or exclusion. Moving closer to another target switches normally.")
     end
@@ -5073,14 +5690,18 @@ local createMobileUI = function(C)
         combat:Button({Title="Emergency stop / return",Desc="PC: End. Mobile: STOP button. Cancels attacks and fling; disables auto pickup and dodge. Manual aim stays available.",Callback=mobile.TriggerEmergencyStop})
     end
     option(visuals, "Role ESP", "ESP", "Full-body fill: sheriff blue, innocent green, murderer red. Works independently of your role.")
+    option(visuals,"Stable body colors","StableBodyESP","A light screen overlay fills body parts as the camera turns. This fallback uses body rectangles; it does not change hitboxes.")
     option(visuals, "Dropped gun ESP", "GunESP")
     option(visuals, "Gun aim marker", "AimMarker")
     if State.GetCombatHUDData then option(visuals,"Combat HUD","CombatHUD","Role, weapon state, target distance/height and actual gun feedback. Drag the panel header to move it.") end
     if State.GetCombatHUDData then option(visuals,"Compact HUD","CompactHUD","Two lines by default. Turn OFF for detailed shot feedback.") end
-    option(visuals,"Clean role visuals","CleanVisuals","Shorten role labels. All role colors and full-body fills remain visible.")
+    option(visuals,"Clean role visuals","CleanVisuals","Show only @username overhead. Turn OFF to add distance/status; body colors still show roles.")
     if State.SetTacticalGuide then
         toggles.TacticalGuide=combat:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="One suggested player and next waypoint. Fewer nearby players does not guarantee safety. Move and attack manually.",
             Callback=function(enabled) if syncing then return end; suppressInput(); State.SetTacticalGuide(enabled) end})
+    end
+    if State.SetLearnedSheriffGuide then
+        option(combat,"Learned Sheriff guidance","LearnedSheriffGuide","Uses the completed practice-trained policy for movement and shot suggestions. Live inputs differ from training; falls back to standard hints. Move and fire manually.")
     end
     option(visuals, "Nearby murderer warning", "ThreatWarning")
     option(movement, "Dodge incoming knives", "AutoKnifeDodge", "Normal jump or short sidestep when a path is available.")
@@ -5088,7 +5709,14 @@ local createMobileUI = function(C)
     if not canTouch then State.Config.AutoPickup = false end
     local pickup = option(movement, "Auto gun pickup", "AutoPickup", canTouch and "Simulated touch; server distance checks can reject it." or "Unavailable: this executor has no firetouchinterest.")
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
-    option(movement, "Underground pose (experimental)", "ExperimentalInvisibility", "OFF by default. Visibility to others and pickups are unverified. Attacking restores the body first.")
+    option(movement, "Invisibility", "Invisibility", "No perk required. Coin pickup may stop. Visibility to others is unverified. Gun attacks restore the body first.")
+    option(movement,"Knife while invisible","InvisibleKnife","Lets knife actions and aura run after invisibility preparation, without restoring the body. Whether server hits register is unverified.")
+    mobile.InvisibilityStatus=movement:Paragraph({Title="Invisibility status",Desc=State.Invis and State.Invis.Status or "Invisibility OFF"})
+    movement:Button({Title="Restore character",Desc="Turn invisibility off and restore the original local body without requesting a reset.",Callback=function()
+        suppressInput()
+        State.SetInvisibility(false)
+        refresh()
+    end})
     option(animations, "Mage movement animations", "MageAnimations", "Reapplies after respawn.")
     animations:Button({Title = "Floating pose", Callback = function() State.SetPose(616006778); refresh() end})
     animations:Button({Title = "Bend pose", Callback = function() State.SetPose(696096087); refresh() end})
@@ -5308,6 +5936,7 @@ local createMobileUI = function(C)
             math.clamp(frame.Position.X.Offset, 6, math.max(6, max.X)),
             math.clamp(frame.Position.Y.Offset, 6, math.max(6, max.Y)))
     end
+    local userPositioned={}
     -- Follow only the touch that began this gesture; a second finger keeps movement usable.
     local function draggable(handleObject, frame, onTap)
         local gesture
@@ -5325,6 +5954,7 @@ local createMobileUI = function(C)
             local delta = input.Position - g.Start
             if delta.Magnitude > 9 then g.Moved = true end
             if g.Moved then
+                userPositioned[frame]=true
                 frame.Position = g.Position + UDim2.fromOffset(delta.X, delta.Y)
                 clamp(frame)
             end
@@ -5435,17 +6065,29 @@ local createMobileUI = function(C)
         mobile.CombatHUDHandle.Text=compact and "MM2 · drag" or "COMBAT  |  drag to move"
         combatHUDText.Position=UDim2.fromOffset(8,compact and 20 or 24)
         combatHUDText.Size=UDim2.new(1,-16,1,compact and -24 or -28)
-        mobile.LastHUDCompact=compact; clamp(combatHUD)
+        mobile.LastHUDCompact=compact
+        if not userPositioned[combatHUD] then
+            local size=canvas.AbsoluteSize
+            combatHUD.Position=UDim2.fromOffset(size.X/2-width/2,mobile.Mode=="Mobile" and 92 or size.Y-combatHUD.Size.Y.Offset-12)
+        end
+        clamp(combatHUD)
     end
     mobile.LayoutHUD=layoutHUD
     function mobile.ResetPositions()
+        table.clear(userPositioned)
         local size = canvas.AbsoluteSize
         icon.Position = UDim2.fromOffset(12, math.max(62, size.Y * 0.22))
         -- Keep the normal jump button and movement thumbstick clear by default.
         pad.Position = UDim2.fromOffset(size.X - 252, size.Y - 207)
         layoutHUD()
-        if emergencyButton then emergencyButton.Position=UDim2.fromOffset(size.X/2-73,combatHUD and State.Config.CombatHUD and combatHUD.Size.Y.Offset+20 or 52); clamp(emergencyButton) end
-        if combatHUD then combatHUD.Position=UDim2.fromOffset(size.X/2-combatHUD.Size.X.Offset/2,8); clamp(combatHUD) end
+        if combatHUD then
+            local y=mobile.Mode=="Mobile" and 92 or size.Y-combatHUD.Size.Y.Offset-12
+            combatHUD.Position=UDim2.fromOffset(size.X/2-combatHUD.Size.X.Offset/2,y); clamp(combatHUD)
+        end
+        if emergencyButton then
+            local y=combatHUD and State.Config.CombatHUD and combatHUD.Position.Y.Offset+combatHUD.Size.Y.Offset+12 or 52
+            emergencyButton.Position=UDim2.fromOffset(size.X/2-73,y); clamp(emergencyButton)
+        end
         clamp(icon); clamp(pad)
     end
     local function resized()
@@ -5522,7 +6164,7 @@ local createMobileUI = function(C)
                 if record.Charging or (record.StabbingUntil or 0)>os.clock() then pendingWeapon=true; break end
             end
             emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
-                and ((fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge) or false
+                and ((State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge) or false
         end
         if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end
         if fling and mobile.DownwardContactToggle and mobile.DownwardContactToggle.Value ~= (fling.Mode == "Downward") then mobile.DownwardContactToggle:Set(fling.Mode == "Downward",false) end
@@ -5538,7 +6180,17 @@ local createMobileUI = function(C)
             mobile.FlingStatus.ParagraphFrame:SetDesc(fling.Status)
             mobile.LastFlingStatus = fling.Status
         end
-        notice.Text = fling and (fling.Active or os.clock() < (fling.DisplayUntil or 0)) and fling.Status
+        if State.Invis and mobile.InvisibilityStatus and mobile.InvisibilityStatus.ParagraphFrame and mobile.LastInvisibilityStatus~=State.Invis.Status then
+            mobile.InvisibilityStatus.ParagraphFrame:SetDesc(State.Invis.Status)
+            mobile.LastInvisibilityStatus=State.Invis.Status
+            refresh()
+        end
+        if State.KillAura and mobile.KillAuraStatus and mobile.KillAuraStatus.ParagraphFrame and mobile.LastKillAuraStatus~=State.KillAura.Status then
+            mobile.KillAuraStatus.ParagraphFrame:SetDesc(State.KillAura.Status)
+            mobile.LastKillAuraStatus=State.KillAura.Status
+        end
+        notice.Text = State.Invis and (State.Invis.Active or State.Invis.Busy) and State.Invis.Status
+            or fling and (fling.Active or os.clock() < (fling.DisplayUntil or 0)) and fling.Status
             or (State.KnifeFeedback and os.clock() < State.KnifeFeedback.Until and State.KnifeFeedback.Message or State.AimStatus)
         refresh()
     end)
