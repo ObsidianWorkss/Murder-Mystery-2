@@ -115,7 +115,7 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-16-OrganizedTabs"
+State.Build = "Universal-WindUI-2026-10-16-FeatureTabs"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -208,8 +208,8 @@ local function touchInput() return detectInputMode(UIS) == "Mobile" end
 local function mobileBlocked()
     if State.Fling and State.Fling.Active then return true end
     local ui = State.MobileUI
-    return not State.MobileActionInProgress and ui
-        and (ui.MenuOpen or os.clock() < (ui.InputUntil or 0))
+    return (State.FlingQueue and State.FlingQueue.Active) or (not State.MobileActionInProgress and ui
+        and (ui.MenuOpen or os.clock() < (ui.InputUntil or 0)))
 end
 local refreshButtons = {}
 local function connect(signal, callback)
@@ -3407,6 +3407,7 @@ end
 local function autoPickup() State.TickGunPickup() end
 
 function State.Destroy()
+    if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
     if State.StopKillAura then State.StopKillAura("Unloaded") end
@@ -4385,6 +4386,129 @@ end
 
 
 do
+-- Explicit one-pass batch. Uses the existing single-player controller and return path.
+local installFlingQueue=function(C)
+    local State,player=C.State,C.Player
+    local clock=C.Clock or os.clock
+    local queue={Active=false,Status="Fling all OFF",Index=0,Total=0,Attempts=0,Skipped=0}
+    State.FlingQueue=queue
+    local targets,character,current,ownedRequest,nextAt,startedAt,watchReturn
+    local limit=C.PerTargetSeconds or 6
+    local function owned()
+        return current and State.Fling.Active and State.Fling.Target==current.Id
+            and State.Fling.Requests==ownedRequest
+    end
+    local function stopOwned()
+        if owned() then State.StopFling("All-player attempt ended; returning") end
+    end
+    function State.StopFlingAll(message)
+        queue.Active=false
+        local ok,why=pcall(stopOwned)
+        targets,character,current=nil,nil,nil
+        queue.TargetId=nil
+        queue.Status=ok and (message or "Fling all stopped") or "Fling all cleanup failed: "..tostring(why)
+        return ok,queue.Status
+    end
+    local function eligible(p,expected)
+        if p==player or State.IsPlayerExcluded and State.IsPlayerExcluded(p) then return false end
+        local present=false
+        for _,other in ipairs(C.Players:GetPlayers()) do if other==p then present=true; break end end
+        local char=present and p.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        return char and (not expected or char==expected) and hum and hum.Health>0
+    end
+    local function modeBlocked()
+        return State.Invis and (State.Invis.Active or State.Invis.Busy)
+            or State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy)
+    end
+    function State.FlingAll()
+        if queue.Active then return true,queue.Status end
+        if not State.Running then return false,"Script is unloaded" end
+        if modeBlocked() then return false,"Restore your character before Fling all" end
+        local hum=player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health<=0 then return false,"Wait for your living character" end
+        local list={}
+        for _,p in ipairs(C.Players:GetPlayers()) do
+            if eligible(p) then table.insert(list,{Player=p,Id=p.UserId,Character=p.Character,Name=p.Name}) end
+        end
+        table.sort(list,function(a,b) return a.Id<b.Id end)
+        if #list==0 then return false,"No eligible players; protected players are skipped" end
+        local ok,why=pcall(function()
+            if State.StopAutoAttack then State.StopAutoAttack("Stopped for Fling all") end
+            if State.StopKillAura then
+                local accepted,message=State.StopKillAura("Stopped for Fling all")
+                if accepted==false then error(message or "Aura cleanup failed") end
+            end
+            watchReturn=State.Fling.Active
+            if State.Fling.Active then State.StopFling("Returning before Fling all") end
+        end)
+        if not ok then return false,"Cannot start Fling all: "..tostring(why) end
+        targets,character,current=list,player.Character,nil
+        queue.Active,queue.Index,queue.Total,queue.Attempts,queue.Skipped=true,0,#list,0,0
+        queue.TargetId=nil
+        nextAt=clock()+.35
+        queue.Status="Fling all ready: "..#list.." eligible players"
+        return true,queue.Status
+    end
+    local elapsed=0
+    C.Connect(C.RunService.Heartbeat,function(dt)
+        if not queue.Active then return end
+        elapsed+=dt; if elapsed<.1 then return end; elapsed=0
+        local ok,why=pcall(function()
+            local hum=player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+            if not State.Running or player.Character~=character or not hum or hum.Health<=0 then
+                State.StopFlingAll("Fling all stopped: your character changed"); return
+            end
+            if modeBlocked() then State.StopFlingAll("Fling all stopped: character mode changed"); return end
+            if (watchReturn or queue.Attempts>0) and State.Fling.ReturnStatus and State.Fling.ReturnStatus:find("Return failed:",1,true) then
+                State.StopFlingAll("Fling all stopped: "..State.Fling.ReturnStatus); return
+            end
+            local now=clock()
+            if current then
+                if State.Fling.Requests~=ownedRequest or State.Fling.Active and State.Fling.Target~=current.Id then
+                    -- A newer manual request owns the controller now.
+                    current=nil; State.StopFlingAll("Fling all stopped: manual action took over"); return
+                end
+                if owned() and eligible(current.Player,current.Character) and now-startedAt<limit then return end
+                stopOwned(); current=nil; queue.TargetId=nil; nextAt=now+.35
+                queue.Status="Returning before next player ("..queue.Index.."/"..queue.Total..")"
+                return
+            end
+            if now<nextAt then return end
+            if State.Fling.Active then State.StopFlingAll("Fling all stopped: another fling is active"); return end
+            while queue.Index<#targets do
+                queue.Index+=1
+                local target=targets[queue.Index]
+                if eligible(target.Player,target.Character) then
+                    local previousReturn=State.Fling.ReturnStatus
+                    local accepted,message=State.FlingPlayer(target.Id)
+                    if State.Fling.ReturnStatus~=previousReturn then watchReturn=true end
+                    if accepted and State.Fling.Active and State.Fling.Target==target.Id then
+                        current,ownedRequest,startedAt=target,State.Fling.Requests,now
+                        queue.Attempts+=1; queue.TargetId=target.Id
+                        queue.Status=("Attempt %d/%d: @%s"):format(queue.Index,queue.Total,target.Name)
+                    else
+                        queue.Skipped+=1; nextAt=now+.35
+                        queue.Status="Skipped @"..target.Name..": "..tostring(message or "controller unavailable")
+                    end
+                    return
+                end
+                queue.Skipped+=1
+            end
+            local message=("Fling all finished: %d attempts, %d skipped; launches unconfirmed"):format(queue.Attempts,queue.Skipped)
+            State.StopFlingAll(message)
+        end)
+        if not ok then State.StopFlingAll("Fling all stopped: "..tostring(why)) end
+    end)
+    C.Connect(player.CharacterRemoving,function() State.StopFlingAll("Respawning; Fling all stopped") end)
+    return queue
+end
+
+installFlingQueue({State=State,Player=player,Players=Players,RunService=RunService,Connect=connect})
+end
+
+
+do
 -- Explicit teleport and selected-target weapon automation. No server-kill claims.
 local installPlayerActions = function(C)
     local State, player, Players = C.State, C.Player, C.Players
@@ -4421,6 +4545,7 @@ local installPlayerActions = function(C)
         if not char then return false, status("Wait for your character to be alive") end
         local targetChar = parts(target)
         if not targetChar or (C.IsEliminated and C.IsEliminated(target)) then return false, status("Target is not alive or loaded") end
+        if State.StopFlingAll then State.StopFlingAll("Selected-player auto attack started") end
         if State.StopKillAura then State.StopKillAura("Stopped for selected-player auto attack") end
         if C.CancelAttack then C.CancelAttack() end
         actions.Enabled, actions.TargetId, actions.SelectedId, actions.Character = true, target.UserId, target.UserId, char
@@ -4463,6 +4588,7 @@ local installPlayerActions = function(C)
         if not target or target == player then return false, status("Select another player first") end
         local targetChar, _, targetRoot = parts(target)
         if not targetChar then return false, status("Target character is not alive or loaded") end
+        if State.StopFlingAll then State.StopFlingAll("Stopped for player teleport") end
         if State.Fling and State.Fling.Active then State.StopFling("Fling stopped for teleport") end
         if State.CancelFlingReturn then State.CancelFlingReturn() end
         if C.CancelAttack then C.CancelAttack() end
@@ -5030,6 +5156,7 @@ local installEmergencyStop = function(C)
         State.Config.AutoKnifeDodge = false
         run("dodge",function() if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end end)
         run("target memory",State.ClearTargetContinuity)
+        run("fling queue",function() if State.StopFlingAll then local ok,message=State.StopFlingAll("Emergency stop"); if ok==false then error(message) end end end)
         run("fling",function() if State.StopFling then State.StopFling() end end)
         if hadFling and State.Fling.ReturnStatus and State.Fling.ReturnStatus:find("Return failed:",1,true) then
             table.insert(errors,State.Fling.ReturnStatus)
@@ -5536,7 +5663,7 @@ local installTacticalGuide = function(C)
             episodeCharacter,episodeRole,episodeMap,mapCache=nil,nil,nil,nil
             return {Active=false,Role="Unknown",Players={}},root
         end
-        if (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (State.Fling and State.Fling.Active) or (State.PlayerActions and State.PlayerActions.Enabled) then
+        if (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) or (State.PlayerActions and State.PlayerActions.Enabled) then
             return {Active=true,Role=C.RoleFor(player),Players={},Position=root.Position,Paused=true},root,hum
         end
         local list={}
@@ -5571,7 +5698,7 @@ local installTacticalGuide = function(C)
             KnifeReady=not record or clock()-(record.LastThrow or -math.huge)>=1.25,
             Projectiles=ownRole=="Sheriff" and State.Config.LearnedSheriffGuide and projectiles(root.Position) or {},
             Weapon=item and item.Name,Enabled=item and item.Enabled~=false,
-            Paused=(State.Invis and (State.Invis.Active or State.Invis.Busy)) or (State.Fling and State.Fling.Active) or (State.PlayerActions and State.PlayerActions.Enabled)},root,hum
+            Paused=(State.Invis and (State.Invis.Active or State.Invis.Busy)) or (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) or (State.PlayerActions and State.PlayerActions.Enabled)},root,hum
     end
     local function drawWaypoint(root)
         while route[index] do
@@ -5724,11 +5851,12 @@ local installCombatHUD = function(C)
         local status=State.AimStatus or "Ready"
         local invisible=State.Invis and (State.Invis.Active or State.Invis.Busy)
         if invisible then status=State.Invis.Status
+        elseif State.FlingQueue and State.FlingQueue.Active then status=State.FlingQueue.Status
         elseif State.Fling and State.Fling.Active then status=State.Fling.Status
         elseif State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0) then status=State.KnifeFeedback.Message end
         local text=table.concat({tostring(role).." | "..weapon,targetText,result,status},"\n")
         local instruction=living and State.Config.TacticalGuide and State.Guidance and State.Guidance.Instruction
-        if invisible or (State.Fling and State.Fling.Active) or (State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0)) then instruction=status end
+        if invisible or (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) or (State.KnifeFeedback and now<(State.KnifeFeedback.Until or 0)) then instruction=status end
         local compact=table.concat({tostring(role).." | "..weapon,instruction or (target and "Target @"..target.Name or status)},"\n")
         return {Text=text,Role=role,Weapon=weapon,Target=target and target.Name or nil,Distance=distance,Height=height,
             Result=result,Tone=tone,Status=status,CompactText=compact,Instruction=instruction}
@@ -5812,6 +5940,7 @@ local installWorldTeleports=function(C)
             if State.StopAutoAttack then State.StopAutoAttack("Stopped for area teleport") end
             if State.StopKillAura then local yes,err=State.StopKillAura("Stopped for area teleport"); if yes==false then error(err) end end
             if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end
+            if State.StopFlingAll then local ok,message=State.StopFlingAll("Stopped for area teleport"); if ok==false then error(message) end end
             if State.StopFling then State.StopFling("Stopped for area teleport") end
             if State.CancelFlingReturn then State.CancelFlingReturn() end
             if State.StopGunPickup then local yes,err=State.StopGunPickup(); if yes==false then error(err) end end
@@ -5984,11 +6113,15 @@ local createMobileUI = function(C)
         Title = "MM2 " .. mobile.Mode, Icon = "crosshair", NewElements = false, Theme="MM2 Midnight",
         Size = UDim2.fromOffset(math.min(mobile.Mode == "PC" and 680 or 570, view.X - 32), math.min(mobile.Mode == "PC" and 520 or 470, view.Y - 48)),
         MinSize = Vector2.new(280, 240), MaxSize = Vector2.new(750, 750),
-        SideBarWidth = 148, Resizable = false, AutoScale = false, Radius=14, ElementsRadius=10,
+        SideBarWidth = 156, Resizable = false, AutoScale = false, Radius=14, ElementsRadius=10,
         Acrylic = false, HideSearchBar = false, ScrollBarEnabled = true,
         OpenButton = {Enabled = false}, Topbar = {Height = 44, ButtonsType = "Default"},
     })
     mobile.Window = window
+    if window.UIElements and window.UIElements.SideBar then
+        window.UIElements.SideBar.ScrollBarThickness=3
+        window.UIElements.SideBar.ScrollBarImageTransparency=.35
+    end
     window:OnOpen(function() mobile.MenuOpen = true; suppressInput() end)
     window:OnClose(function() mobile.MenuOpen = false; suppressInput() end)
     window:OnDestroy(function()
@@ -6002,13 +6135,26 @@ local createMobileUI = function(C)
         tab:Paragraph({Title=title,Desc=description})
         return tab
     end
-    local home=page("Home","Home","house","Session status, quick actions and display presets.")
-    local combat=page("Aim","Aim","crosshair","Gun and knife aiming without moving your camera.")
-    local automation=page("Automation","Automation","zap","Automatic stabs, gun pickup and knife dodging.")
-    local visuals=page("ESP","ESP","eye","Player body colors, dropped weapons and your HUD.")
-    local movement=page("Movement","Movement","footprints","Invisibility, map travel and character animations.")
-    local playersTab=page("Players","Players","users","Choose a player, manage actions and protect friends.")
-    local settings=page("Settings","Settings","settings","Appearance, controls, repairs and unloading.")
+    local home=page("Home","Home","house","Session and quick actions. Scroll the sidebar or search to find a feature.")
+    local combat=page("GunAim","Gun Aim","crosshair","Gun aim and target selection without moving your camera.")
+    local knife=page("KnifeAim","Knife Aim","sword","Knife throws and manual stab assistance.")
+    local automation=page("KillAura","Kill Aura","zap","Automatic stab attempts while you are the murderer.")
+    local pickupTab=page("Pickup","Gun Pickup","hand","Collect dropped guns without teleporting.")
+    local dodgeTab=page("Dodge","Knife Dodge","shield","Automatic jumps or sidesteps for incoming knives.")
+    local visuals=page("ESP","Player ESP","eye","Player body colors and username labels.")
+    local hud=page("HUD","HUD & Alerts","layout-dashboard","Your status panel, aim marker and nearby warnings.")
+    local movement=page("Invisibility","Invisibility","ghost","Toggle invisibility and restore your character.")
+    local travel=page("Teleports","Teleports","map-pin","Go to a loaded map or the lobby.")
+    local animations=page("Animations","Animations","sparkles","Mage movement, poses and custom animation IDs.")
+    local flingTab=page("Fling","Fling","wind","Choose one target, a role or everyone eligible.")
+    local roleFling=page("RoleFling","Role Fling","target","Quick actions for the murderer, sheriff or opposing role.")
+    local flingOptions=page("FlingOptions","Fling Setup","sliders-horizontal","Contact mode, target tracking and diagnostics.")
+    local flingReports=page("FlingReports","Fling Reports","clipboard-list","Current contact status and all-player progress.")
+    local playersTab=page("Players","Player Actions","users","Teleport to or auto-attack a selected player.")
+    local protected=page("Protected","Protected","shield-check","Players your automatic actions must skip.")
+    local guidance=page("Guidance","Guidance","route","Optional target and route suggestions.")
+    local appearance=page("Appearance","Appearance","palette","Menu theme and quick display presets.")
+    local settings=page("Settings","Settings","settings","Button layout, repairs and unloading.")
     function mobile.OpenPage(key)
         local target=mobile.Pages[key]
         if not target or mobile.Destroyed then return false end
@@ -6016,11 +6162,11 @@ local createMobileUI = function(C)
     end
     local exclusionsTab
     if State.SetPlayerExcluded and State.GetPlayerExclusions then
-        exclusionsTab=playersTab:Section({Title="Protected players",Opened=false,TextSize=15})
+        exclusionsTab=protected
         mobile.ExclusionsTab = exclusionsTab
         function mobile.OpenExclusions()
             suppressInput()
-            playersTab:Select(); exclusionsTab:Open()
+            protected:Select()
         end
     end
     local function refresh()
@@ -6058,21 +6204,21 @@ local createMobileUI = function(C)
     mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Reading your current role and weapon…"})
     option(combat,"Aim assist","Aim","Master switch for gun aim, knife aim and automatic stabs.")
     option(combat, "Gun aim", "MagicBullet", "Aim at the known murderer when you fire.")
-    option(combat, "Knife throw prediction", "KnifeAim")
+    option(knife, "Knife throw prediction", "KnifeAim")
     if State.SetKillAura then
         option(automation,"Murderer kill aura","KillAura","Automatic stab attempts while you are the murderer.")
     end
     if State.EmergencyStop then
         home:Button({Title="Emergency stop / return",Desc="End on PC · STOP on mobile",Callback=mobile.TriggerEmergencyStop})
     end
-    local advancedCombat=combat:Section({Title="Targeting options",Opened=false,TextSize=15})
-    option(advancedCombat, "Stab sweep", "StabSweep")
+    local advancedCombat=combat
+    option(knife, "Stab sweep", "StabSweep")
     if State.SetTargetContinuity then
         option(advancedCombat,"Stable target choice","TargetContinuity","Keep the current target when choices nearly tie.")
     end
     local function buildAutomationSettings()
     if State.SetKillAura then
-        local auraOptions=automation:Section({Title="Aura settings",Opened=false,TextSize=15})
+        local auraOptions=automation
         option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equip your knife automatically while aura is active.")
         auraOptions:Input({Title="Aura range (studs)",Value=tostring(State.Config.KillAuraRange),Placeholder="1 to 6.5",Callback=function(text)
             if syncing or not State.Running then return end
@@ -6090,7 +6236,6 @@ local createMobileUI = function(C)
             end})
         end
     end
-    local guidance=automation:Section({Title="Guidance",Opened=false,TextSize=15})
     if State.SetTacticalGuide then
         toggles.TacticalGuide=guidance:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="Suggested target and next waypoint. You move and attack.",
             Callback=function(enabled) if syncing then return end; suppressInput(); State.SetTacticalGuide(enabled) end})
@@ -6098,6 +6243,7 @@ local createMobileUI = function(C)
     if State.SetLearnedSheriffGuide then
         option(guidance,"Learned Sheriff guidance","LearnedSheriffGuide","Practice-trained suggestions; live results may differ.")
     end
+    mobile.GuidanceStatus=guidance:Paragraph({Title="Current suggestion",Desc="Waiting for a round"})
     end
     if mobile.OpenExclusions then home:Button({Title="Open exclusions",Desc="Choose friends your automatic actions should skip.",Callback=mobile.OpenExclusions}) end
     function mobile.ApplyDisplayPreset(name)
@@ -6111,29 +6257,27 @@ local createMobileUI = function(C)
         mobile.DisplayPreset=name
         return true
     end
-    local presets=home:Section({Title="Display presets",Opened=false,TextSize=15})
+    local presets=appearance
     presets:Button({Title="Clean display",Desc="Username labels, compact HUD and fewer indicators.",Callback=function() mobile.ApplyDisplayPreset("Clean") end})
     presets:Button({Title="Detailed display",Desc="Show distances, full HUD and aim indicators.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
     mobile.AdvancedCombat=advancedCombat
     option(visuals, "Role ESP", "ESP", "Murderer red · Sheriff blue · others green")
     option(visuals, "Dropped gun ESP", "GunESP")
-    if State.GetCombatHUDData then option(visuals,"Combat HUD","CombatHUD","Small status panel; drag its header to move it.") end
-    option(visuals, "Nearby murderer warning", "ThreatWarning")
-    local displayOptions=visuals:Section({Title="Display options",Opened=false,TextSize=15})
-    if State.GetCombatHUDData then option(displayOptions,"Compact HUD","CompactHUD","Two lines instead of detailed feedback.") end
+    if State.GetCombatHUDData then option(hud,"Combat HUD","CombatHUD","Small status panel; drag its header to move it.") end
+    option(hud, "Nearby murderer warning", "ThreatWarning")
+    local displayOptions=visuals
+    if State.GetCombatHUDData then option(hud,"Compact HUD","CompactHUD","Two lines instead of detailed feedback.") end
     option(displayOptions,"Clean role visuals","CleanVisuals","Username only; turn off to add distance and status.")
-    option(displayOptions,"Gun aim marker","AimMarker")
+    option(hud,"Gun aim marker","AimMarker")
     option(displayOptions,"Stable body colors","StableBodyESP","Optional box fallback. Leave off for clean body silhouettes.")
-    option(automation, "Dodge incoming knives", "AutoKnifeDodge", "Jump or sidestep when a clear path is available.")
+    option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Jump or sidestep when a clear path is available.")
     local canTouch = type(firetouchinterest) == "function"
     if not canTouch then State.Config.AutoPickup = false end
-    local pickup = option(automation, "Auto gun pickup", "AutoPickup", canTouch and "Try to collect a dropped gun without teleporting." or "Unavailable: this executor has no firetouchinterest.")
+    local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Try to collect a dropped gun without teleporting." or "Unavailable: this executor has no firetouchinterest.")
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
-    mobile.AutomationStatus=automation:Paragraph({Title="Automation status",Desc="Aura OFF · pickup OFF"})
     buildAutomationSettings()
-    local automationDetails=automation:Section({Title="Live details",Opened=false,TextSize=15})
-    if State.KillAura then mobile.KillAuraStatus=automationDetails:Paragraph({Title="Kill aura status",Desc=State.KillAura.Status}) end
-    if State.GunPickup then mobile.PickupStatus=automationDetails:Paragraph({Title="Gun pickup status",Desc=State.GunPickup.Status}) end
+    if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Kill aura status",Desc=State.KillAura.Status}) end
+    if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Gun pickup status",Desc=State.GunPickup.Status}) end
     option(movement, "Invisibility", "Invisibility", "Ghost appearance locally. Gun attacks restore your body first.")
     mobile.InvisibilityStatus=movement:Paragraph({Title="Invisibility status",Desc=State.Invis and State.Invis.Status or "Invisibility OFF"})
     movement:Button({Title="Restore character",Desc="Turn invisibility off without a reset",Callback=function()
@@ -6142,33 +6286,30 @@ local createMobileUI = function(C)
         refresh()
     end})
     if State.TeleportToArea then
-        local travel=movement:Section({Title="Travel",Opened=false,TextSize=15})
         travel:Button({Title="TP to map",Callback=function() suppressInput(); State.TeleportToArea("Map") end})
         travel:Button({Title="TP to lobby",Callback=function() suppressInput(); State.TeleportToArea("Lobby") end})
         mobile.TeleportStatus=travel:Paragraph({Title="Teleport status",Desc=State.WorldTeleport.Status})
     end
-    local invisOptions=movement:Section({Title="Invisibility options",Opened=false,TextSize=15})
+    local invisOptions=movement
     option(invisOptions,"Knife while invisible","InvisibleKnife","Allow knife attempts while invisible. Server hits are unconfirmed.")
     invisOptions:Paragraph({Title="Visibility",Desc="Spectators may still track you. Coin collection may stop while invisible."})
-    local animations=movement:Section({Title="Animations",Opened=false,TextSize=15})
     option(animations, "Mage movement animations", "MageAnimations", "Reapplies after respawn.")
-    local poses=animations:Section({Title="Poses & custom animation",Opened=false,TextSize=14})
+    local poses=animations
     poses:Button({Title = "Floating pose", Callback = function() State.SetPose(616006778); refresh() end})
     poses:Button({Title = "Bend pose", Callback = function() State.SetPose(696096087); refresh() end})
     local poseId = tostring(State.Config.PoseAssetId)
     poses:Input({Title = "Custom R15 animation ID", Value = poseId, Placeholder = "Animation asset ID", Callback = function(text) poseId = text end})
     poses:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
     animations:Button({Title = "Restore animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
-    local help=settings:Section({Title="Controls & help",Opened=false,TextSize=15})
-    help:Paragraph({Title="PC",Desc="Click: fire / stab · E or right-click: throw\nRight Shift: menu · End: stop / return"})
-    help:Paragraph({Title="Mobile",Desc="Tap the draggable MM2 icon for the menu. Separate FIRE / STAB and THROW buttons appear with your weapon."})
-    settings:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
+    local help=home
+    help:Paragraph({Title="Controls",Desc="PC: Right Shift menu · click fire/stab · E or right-click throw · End stop\nMobile: draggable MM2 icon · FIRE/STAB · THROW · STOP"})
+    appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
         local theme=({Midnight="MM2 Midnight",Graphite="Dark",Light="Light"})[name]
         if theme then suppressInput(); library:SetTheme(theme) end
     end})
     settings:Button({Title = "Equip gun / knife", Callback = function() C.EquipWeapon() end})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
-    local repairs=settings:Section({Title="Troubleshooting",Opened=false,TextSize=15})
+    local repairs=settings
     repairs:Button({Title = "Repair camera input", Callback = function() State.FixCamera() end})
     repairs:Button({Title = "Repair character (respawns)", Callback = function() State.RepairCharacter() end})
     settings:Button({Title = "Close menu", Callback = function() window:Close() end})
@@ -6177,24 +6318,24 @@ local createMobileUI = function(C)
         -- Register configuration containers after the primary target/actions below.
         local contactOptions,diagnostics
         local function buildFlingSettings()
-        contactOptions=playersTab:Section({Title="Contact settings",Opened=false,TextSize=15})
+        contactOptions=flingOptions
         if State.SetFlingSpinContact then
             mobile.SpinContactToggle = contactOptions:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
                 Desc = "Follow the selected body. Changing mode stops the current session.",
-                Callback = function(enabled) State.SetFlingSpinContact(enabled) end})
+                Callback = function(enabled) if State.StopFlingAll then State.StopFlingAll("Fling mode changed") end; State.SetFlingSpinContact(enabled) end})
         end
         if State.SetFlingDownward then
             mobile.DownwardContactToggle = contactOptions:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
                 Desc = "Try contact from above. Changing mode stops the session.",
-                Callback = function(enabled) State.SetFlingDownward(enabled) end})
+                Callback = function(enabled) if State.StopFlingAll then State.StopFlingAll("Fling mode changed") end; State.SetFlingDownward(enabled) end})
         end
         if State.SetFlingAdaptivePursuit then
             mobile.AdaptivePursuitToggle = contactOptions:Toggle({Title = "Track fast / flying targets", Value = State.Fling.AdaptivePursuit,
                 Desc = "Follow 3D movement. Noncolliding targets may prevent contact.",
-                Callback = function(enabled) State.SetFlingAdaptivePursuit(enabled) end})
+                Callback = function(enabled) if State.StopFlingAll then State.StopFlingAll("Fling tracking changed") end; State.SetFlingAdaptivePursuit(enabled) end})
         end
         if State.GetFlingReport then
-            diagnostics=playersTab:Section({Title="Diagnostics",Opened=false,TextSize=15})
+            diagnostics=flingReports
             diagnostics:Paragraph({Title = "Fling build", Desc = tostring(State.Build) .. "\nContact attempts do not confirm a server launch."})
             diagnostics:Button({Title = "Copy fling report", Desc = "Copy status and contact measurements", Callback = function()
                 local copy = setclipboard or toclipboard
@@ -6207,6 +6348,7 @@ local createMobileUI = function(C)
         end
         end
         local function runFlingAction(name, callback)
+            if name~="All players" and State.StopFlingAll then State.StopFlingAll("Manual fling selected") end
             local request = {Name = name, At = os.clock()}
             mobile.LastFlingAction = request
             local ok, accepted, message = pcall(callback)
@@ -6222,7 +6364,8 @@ local createMobileUI = function(C)
                 mobile.FlingStatus.ParagraphFrame:SetDesc(State.Fling.Status)
             end
         end
-        local selectedId, labelToId, picker
+        local selectedId, labelToId, picker, flingPicker
+        local selecting=false
         local function roster()
             local labels, selectedLabel = {}, nil
             labelToId = {}
@@ -6233,18 +6376,31 @@ local createMobileUI = function(C)
                 if selectedId == entry.UserId then selectedLabel = label end
             end
             if not selectedLabel then selectedId = nil end
+            selecting=true
             if picker then picker:Refresh(labels); picker:Select(selectedLabel) end
+            if flingPicker then flingPicker:Refresh(labels); flingPicker:Select(selectedLabel) end
+            selecting=false
+            if State.SetSelectedPlayer then State.SetSelectedPlayer(selectedId) end
             return labels
         end
+        local function selectPlayer(label)
+            if selecting then return end
+            selectedId=labelToId[label]
+            if State.SetSelectedPlayer then State.SetSelectedPlayer(selectedId) end
+            selecting=true
+            if picker then picker:Select(label) end
+            if flingPicker then flingPicker:Select(label) end
+            selecting=false
+        end
         picker = playersTab:Dropdown({Title = "Specific player", Values = roster(), Multi = false, AllowNone = true,
-            SearchBarEnabled = true, Callback = function(label)
-                selectedId = labelToId[label]
-                if State.SetSelectedPlayer then State.SetSelectedPlayer(selectedId) end
-            end})
+            SearchBarEnabled = true, Callback = selectPlayer})
+        flingPicker=flingTab:Dropdown({Title="Fling target",Values=roster(),Multi=false,AllowNone=true,
+            SearchBarEnabled=true,Callback=selectPlayer})
         if State.PlayerActions then
-            local selectedActions=playersTab:Section({Title="Teleport & auto attack",Opened=false,TextSize=15})
+            local selectedActions=playersTab
             mobile.PlayerActionStatus = selectedActions:Paragraph({Title = "Teleport / auto attack", Desc = State.PlayerActions.Status})
             local function playerAction(callback)
+                if State.StopFlingAll then State.StopFlingAll("Player action selected") end
                 local ok, accepted, message = pcall(callback)
                 if not ok then State.PlayerActions.Status = "Player action error: " .. tostring(accepted)
                 elseif accepted == false and message then State.PlayerActions.Status = tostring(message) end
@@ -6269,15 +6425,24 @@ local createMobileUI = function(C)
                 else State.StopAutoAttack("All player actions stopped"); State.StopFling() end
             end})
         end
-        playersTab:Button({Title = "Fling selected player", Callback = function() runFlingAction("Selected player", function() return State.FlingPlayer(selectedId) end) end})
-        playersTab:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() runFlingAction("Role opponent", function() return State.FlingRole("Opponent") end) end})
-        playersTab:Button({Title = "Stop fling / return", Callback = function() State.StopFling() end})
-        mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
-        local roleActions=playersTab:Section({Title="Choose role directly",Opened=false,TextSize=15})
+        flingTab:Button({Title = "Fling selected player", Callback = function() runFlingAction("Selected player", function() return State.FlingPlayer(selectedId) end) end})
+        roleFling:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() runFlingAction("Role opponent", function() return State.FlingRole("Opponent") end) end})
+        if State.FlingAll then
+            flingTab:Button({Title="Fling all",Desc="One player at a time. Protected players are skipped.",Callback=function()
+                runFlingAction("All players",State.FlingAll)
+            end})
+            mobile.FlingAllStatus=flingReports:Paragraph({Title="All-player progress",Desc=State.FlingQueue.Status})
+        end
+        flingTab:Button({Title = "Stop fling / return", Callback = function() if State.StopFlingAll then State.StopFlingAll() end; State.StopFling() end})
+        mobile.FlingSummary=flingTab:Paragraph({Title="Status",Desc=State.Fling.Status})
+        mobile.RoleFlingSummary=roleFling:Paragraph({Title="Status",Desc=State.Fling.Status})
+        mobile.FlingStatus = flingReports:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
+        local roleActions=roleFling
         roleActions:Button({Title = "Fling murderer", Callback = function() runFlingAction("Murderer", function() return State.FlingRole("Murderer") end) end})
         roleActions:Button({Title = "Fling sheriff", Callback = function() runFlingAction("Sheriff", function() return State.FlingRole("Sheriff") end) end})
         buildFlingSettings()
         playersTab:Button({Title = "Refresh player list", Callback = roster})
+        flingTab:Button({Title="Refresh fling targets",Callback=roster})
         local function refreshRoster()
             task.defer(function() if State.Running and not mobile.Destroyed then roster() end end)
         end
@@ -6287,7 +6452,6 @@ local createMobileUI = function(C)
         end
     end
     if exclusionsTab then
-        exclusionsTab:Paragraph({Title = "Protected players", Desc = "Your automatic actions skip these players. NotroFable stays protected. Other players and scripts can still attack."})
         local addId, removeId, addMap, removeMap = nil, nil, {}, {}
         local addPicker, removePicker
         mobile.ExclusionsStatus = exclusionsTab:Paragraph({Title = "Exclusion status", Desc = "Choose a player, then press Exclude selected player."})
@@ -6352,9 +6516,7 @@ local createMobileUI = function(C)
         local function flag(value) return value and "ON" or "OFF" end
         session..="\nGun aim "..flag(State.Config.MagicBullet).." · ESP "..flag(State.Config.ESP).." · Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
-        local aura=State.KillAura and State.KillAura.Status or "Aura unavailable"
-        local pickup=State.GunPickup and State.GunPickup.Status or "Pickup unavailable"
-        updateDescription(mobile.AutomationStatus,"Automation",aura.."\n"..pickup)
+        if mobile.GuidanceStatus then updateDescription(mobile.GuidanceStatus,"Guidance",State.Guidance and State.Guidance.Instruction or "Guidance waiting for a round") end
     end
     mobile.UpdateDashboard=updateDashboard
     updateDashboard()
@@ -6635,7 +6797,7 @@ local createMobileUI = function(C)
                 if record.Charging or (record.StabbingUntil or 0)>os.clock() then pendingWeapon=true; break end
             end
             emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
-                and ((State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge) or false
+                and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge) or false
         end
         if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end
         if fling and mobile.DownwardContactToggle and mobile.DownwardContactToggle.Value ~= (fling.Mode == "Downward") then mobile.DownwardContactToggle:Set(fling.Mode == "Downward",false) end
@@ -6650,6 +6812,14 @@ local createMobileUI = function(C)
         if fling and mobile.FlingStatus and mobile.FlingStatus.ParagraphFrame and mobile.LastFlingStatus ~= fling.Status then
             mobile.FlingStatus.ParagraphFrame:SetDesc(fling.Status)
             mobile.LastFlingStatus = fling.Status
+        end
+        if State.FlingQueue and mobile.FlingAllStatus then
+            updateDescription(mobile.FlingAllStatus,"FlingQueue",State.FlingQueue.Status)
+        end
+        if fling then
+            local summary=State.FlingQueue and State.FlingQueue.Active and (State.FlingQueue.Status.."\n"..fling.Status) or fling.Status
+            updateDescription(mobile.FlingSummary,"FlingSummary",summary)
+            updateDescription(mobile.RoleFlingSummary,"RoleFlingSummary",fling.Status)
         end
         if State.Invis and mobile.InvisibilityStatus and mobile.InvisibilityStatus.ParagraphFrame and mobile.LastInvisibilityStatus~=State.Invis.Status then
             mobile.InvisibilityStatus.ParagraphFrame:SetDesc(State.Invis.Status)
