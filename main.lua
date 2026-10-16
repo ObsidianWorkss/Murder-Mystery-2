@@ -67,7 +67,7 @@ local previousMode = env.MM2Assist and env.MM2Assist.AimMode
 local previousStats = env.MM2Assist and env.MM2Assist.Stats
 local previousShotLog = env.MM2Assist and env.MM2Assist.ShotLog
 local previousBlockers = env.MM2Assist and env.MM2Assist.ServerBlockers
-local previousGunDelay = env.MM2Assist and env.MM2Assist.MeasuredGunDelay
+local previousGunDelay = nil -- old reply-derived half-delay is not a calibration
 local previousRecord = env.MM2Assist and env.MM2Assist.Invis and env.MM2Assist.Invis.Record
 local repairRequired = (previousRecord and previousRecord.Swapped) or (env.MM2Assist and env.MM2Assist.RepairRequired) or false
 if env.MM2Assist and env.MM2Assist.Invis and env.MM2Assist.Invis.Mode ~= "NativeGhost" and env.MM2Assist.Invis.Mode ~= "LocalSeat" then repairRequired = true end
@@ -82,7 +82,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Invisibility OFF"},
     RepairRequired = repairRequired,
-    Config = {InvisibleKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = true, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
@@ -115,7 +115,8 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-16-FlingReturnFix"
+State.Build = "Universal-WindUI-2026-10-16-OrganizedTabs"
+if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
 local installPlayerExclusions = function(C)
@@ -740,8 +741,12 @@ local installAimMotionPolicy = function(State)
         if airborne and valid(older) and dt and priorDt and dt>=.01 and dt<=.15 and priorDt>=.01 and priorDt<=.15
             and not (record.VerticalResetUntil and now<record.VerticalResetUntil) then
             local tolerance=math.max(8,gravity*.2)
-            local stable=math.abs((current.Y-previous.Y)/dt)<tolerance
-                and math.abs((previous.Y-older.Y)/priorDt)<tolerance
+            -- Finite differences describe interval midpoints, including irregular samples.
+            local spacing=(dt+priorDt)*.5
+            local olderDt=record.OlderInterval or priorDt
+            local priorSpacing=(priorDt+olderDt)*.5
+            local stable=math.abs((current.Y-previous.Y)/spacing)<tolerance
+                and math.abs((previous.Y-older.Y)/priorSpacing)<tolerance
             local reported=record.Reported
             local hovering=math.abs(current.Y)<2 and valid(reported) and math.abs(reported.Y)<8
             if stable and (math.abs(current.Y)>6 or hovering) and math.abs(current.Y)<=300 then
@@ -755,6 +760,59 @@ end
 
 installAimMotionPolicy(State)
 end
+do
+-- Local evidence only: the private weapon protocol does not echo request IDs.
+local installAimFeedbackSafety = function(State)
+    local function vector(v)
+        return typeof(v)=="Vector3" and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e8 and math.abs(v.Y)<1e8 and math.abs(v.Z)<1e8
+    end
+    function State.RootPointVelocity(root)
+        local ok,value=pcall(function() return root:GetVelocityAtPosition(root.Position) end)
+        if ok and vector(value) then return value end
+        return root.AssemblyLinearVelocity
+    end
+    function State.IsBallisticAimState(state)
+        return state==Enum.HumanoidStateType.Jumping or state==Enum.HumanoidStateType.Freefall
+    end
+    State.GunReplyReceipts={}
+    function State.MatchGunFeedback(item,origin,endpoint,hitPart,character,now)
+        if not vector(endpoint) then return nil,"Invalid reply" end
+        local receipts=State.GunReplyReceipts
+        for i=#receipts,1,-1 do
+            local receipt=receipts[i]
+            if now-receipt.Time>3 then table.remove(receipts,i)
+            elseif receipt.Item==item and receipt.Origin==origin and receipt.Endpoint==endpoint
+                and receipt.HitPart==hitPart then return nil,"Duplicate or indistinguishable reply" end
+        end
+        local match
+        for index,pending in ipairs(State.PendingGun) do
+            local age=now-pending.SentAt
+            local current=pending.OwnCharacter==character and character~=nil
+                and pending.Record and pending.Record.Active~=false
+                and State.WeaponHandlers[pending.Item]==pending.Record
+                and (not pending.Target or pending.Target.Character==pending.TargetCharacter)
+            if current and pending.Item==item and age>=0 and age<=3
+                and vector(pending.Origin) and vector(pending.AimPoint) then
+                local sameOrigin=vector(origin) and (origin-pending.Origin).Magnitude<.15
+                    or (typeof(origin)=="Instance" and origin:IsDescendantOf(character))
+                local wanted,actual=pending.AimPoint-pending.Origin,endpoint-pending.Origin
+                if sameOrigin and wanted.Magnitude>.001 and actual.Magnitude>.001
+                    and wanted.Unit:Dot(actual.Unit)>.9999 then
+                    if match then return nil,"Ambiguous reply" end
+                    match=index
+                end
+            end
+        end
+        if not match then return nil,"Unmatched or stale reply" end
+        table.insert(receipts,{Item=item,Origin=origin,Endpoint=endpoint,HitPart=hitPart,Time=now})
+        while #receipts>16 do table.remove(receipts,1) end
+        return match,"Heuristic"
+    end
+end
+
+installAimFeedbackSafety(State)
+end
 local function sampleMotion(now)
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
@@ -765,8 +823,8 @@ local function sampleMotion(now)
             local record = State.Motion[other]
             if not record or record.Root ~= root then
                 State.Motion[other] = {Root = root, Position = root.Position, Time = now,
-                    Reported = root.AssemblyLinearVelocity, HumanoidState = humanoidState,
-                    History = {{Time = now, Velocity = root.AssemblyLinearVelocity, Position = root.Position}}}
+                    Reported = State.RootPointVelocity(root), HumanoidState = humanoidState,
+                    History = {{Time = now, Velocity = State.RootPointVelocity(root), Position = root.Position}}}
             else
                 if humanoidState ~= record.HumanoidState then
                     record.HumanoidState = humanoidState
@@ -780,10 +838,11 @@ local function sampleMotion(now)
                     local speedCap = math.max(hum and hum.WalkSpeed or 16, 16) * 1.5
                     local networkJump = record.Current and not State.IsAimSamplePlausible(record.Current,root.Position-record.Position,dt)
                     if networkJump then record.Current, record.Previous, record.Older = nil, nil, nil end
+                    record.OlderInterval = record.PreviousInterval
                     record.PreviousInterval = record.Interval
                     record.Interval = dt <= 0.15 and dt or nil
                     record.PreviousReported = record.Reported
-                    record.Reported = root.AssemblyLinearVelocity
+                    record.Reported = State.RootPointVelocity(root)
                     record.Position, record.Time = root.Position, now
                     if networkJump or dt > 0.15 then record.History = {} end
                     record.History = record.History or {}
@@ -822,11 +881,9 @@ local function motionPredictor(part, root, samplePosition, wallAware, historyOve
     local other = Players:GetPlayerFromCharacter(root.Parent)
     local record = historyOverride or (other and State.Motion[other])
     if record and (record.Root ~= root or os.clock() - record.Time > 0.15) then record = nil end
-    local reported = root.AssemblyLinearVelocity
+    local reported = State.RootPointVelocity(root)
     local state = hum and hum:GetState()
-    local airborne = hum and (state == Enum.HumanoidStateType.Jumping
-        or state == Enum.HumanoidStateType.Freefall
-        or hum.FloorMaterial == Enum.Material.Air) or false
+    local airborne = hum and State.IsBallisticAimState(state) or false
     local velocity, source = selectMotionVelocity(reported,
         record and record.Current, record and record.Previous, cap, airborne,
         record and (record.PreviousReported or record.Reported), record and {
@@ -962,7 +1019,7 @@ end
 local function predict(part, root, origin, kind, item, samplePosition, gunProfile)
     local positionAt, airborne, source = motionPredictor(part, root, samplePosition, kind == "Gun")
     if kind == "Gun" then
-        local lead = math.clamp(State.MeasuredGunDelay or State.Config.Ping, 0, 0.15)
+        local lead = math.clamp(State.Config.Ping, 0, 0.15) -- configured assumption, not measured one-way delay
         if gunProfile and gunProfile.Stationary then lead = 0; source ..= "+Stationary" end
         State.CurrentGunLead = lead
         local point, blocked = positionAt(lead)
@@ -1650,30 +1707,11 @@ end
 
 local weaponServiceScript = RS.ClientServices:FindFirstChild("WeaponService")
 local gunFired = weaponServiceScript and weaponServiceScript:FindFirstChild("GunFired")
-local function gunReplyMatchScore(origin, endpoint, sentOrigin, sentAim, age, expectedAge)
-    if typeof(endpoint) ~= "Vector3" or not sentAim then return math.huge end
-    local wanted, actual = sentAim - sentOrigin, endpoint - sentOrigin
-    if wanted.Magnitude < 0.001 or actual.Magnitude < 0.001 then return math.huge end
-    local alignment = math.max(0, 1 - math.clamp(wanted.Unit:Dot(actual.Unit), -1, 1) - 0.000001)
-    local originError = typeof(origin) == "Vector3" and (origin - sentOrigin).Magnitude or 0
-    return alignment * 1000000 + originError * 100 + math.abs(age - expectedAge) * 0.1
-end
 if gunFired and gunFired:IsA("RemoteEvent") then
     connect(gunFired.OnClientEvent, function(item, origin, endpoint, hitPart)
-        local match, matchScore
         local now = os.clock()
-        local expectedAge = math.clamp((State.MeasuredGunDelay or State.Config.Ping) * 2, 0.01, 0.6)
-        local ownOrigin = typeof(origin) == "Instance" and player.Character and origin:IsDescendantOf(player.Character)
-        for index, pending in ipairs(State.PendingGun) do
-            local samePosition = typeof(origin) == "Vector3" and pending.Origin
-                and (origin - pending.Origin).Magnitude < 0.15
-            if pending.Item == item or ownOrigin or samePosition then
-                local score = gunReplyMatchScore(origin, endpoint, pending.Origin, pending.AimPoint, now - pending.SentAt, expectedAge)
-                if score < math.huge and (not matchScore or score < matchScore) then
-                    match, matchScore = index, score
-                end
-            end
-        end
+        local match, correlation = State.MatchGunFeedback(item,origin,endpoint,hitPart,player.Character,now)
+        State.LastGunReplyCorrelation = correlation
         if not match then return end
         local pending = table.remove(State.PendingGun, match)
         State.Stats.GunReplies += 1
@@ -1681,10 +1719,9 @@ if gunFired and gunFired:IsA("RemoteEvent") then
         local shootTrack = pending.Record and pending.Record.Tracks.Shoot
         if shootTrack then pcall(function() shootTrack:Play(0.1) end) end
         local responseTime = os.clock() - pending.SentAt
-        if responseTime > 0 and responseTime < 0.6 then
-            local measured = math.clamp(responseTime / 2, 0, 0.15)
-            State.MeasuredGunDelay = State.MeasuredGunDelay and State.MeasuredGunDelay * 0.7 + measured * 0.3 or measured
-        end
+        -- Includes processing, transport and scheduling; cannot identify one-way latency.
+        State.LastGunResponseSeconds = responseTime
+        State.MeasuredGunDelay = nil
         local targetChar = pending.TargetCharacter or (pending.Target and pending.Target.Character)
         local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
         local hitPath = typeof(hitPart) == "Instance" and hitPart:GetFullName() or nil
@@ -1695,12 +1732,14 @@ if gunFired and gunFired:IsA("RemoteEvent") then
         if pending.Target then
             if hitTarget then State.Stats.GunTargetHits += 1 else State.Stats.GunMisses += 1 end
         end
+        if pending.ShotId == State.GunShotSequence then
         State.LastGunFeedback = {Target = pending.Target and pending.Target.Name,
-            TargetHit = hitTarget, Endpoint = endpoint, HitPart = typeof(hitPart) == "Instance" and hitPart.Name or nil,
+            TargetHit = hitTarget, Correlation = correlation, ShotId = pending.ShotId, Endpoint = endpoint, HitPart = typeof(hitPart) == "Instance" and hitPart.Name or nil,
             SentAt = pending.SentAt,
-            Message = hitTarget and "Server ray hit target"
-                or pending.Target and (hitPath and ("Server ray hit " .. hitPart.Name .. " instead of target")
-                or "Server ray missed target") or "Server shot received"}
+            Message = hitTarget and "Reported ray hit target (heuristic match)"
+                or pending.Target and (hitPath and ("Reported ray hit " .. hitPart.Name .. " instead of target (heuristic match)")
+                or "Reported ray missed target (heuristic match)") or "Server shot received"}
+        end
         local angle
         if typeof(endpoint) == "Vector3" and pending.AimPoint then
             local wanted, actual = pending.AimPoint - pending.Origin, endpoint - pending.Origin
@@ -1708,7 +1747,7 @@ if gunFired and gunFired:IsA("RemoteEvent") then
                 angle = math.deg(math.acos(math.clamp(wanted.Unit:Dot(actual.Unit), -1, 1)))
             end
         end
-        table.insert(State.ShotLog, {Target = pending.Target and pending.Target.Name, TargetHit = hitTarget, Confirmed = true,
+        table.insert(State.ShotLog, {Target = pending.Target and pending.Target.Name, TargetHit = hitTarget, Confirmed = false, Correlation = correlation, ShotId = pending.ShotId,
             RequestedPoint = pending.AimPoint, BodyPoint = pending.BodyPoint, Endpoint = endpoint,
             TargetVelocity = pending.Velocity, LeadTime = pending.LeadTime, Airborne = pending.Airborne,
             AimPart = pending.AimPart, SampleOffset = pending.SampleOffset, VelocitySource = pending.VelocitySource,
@@ -1862,7 +1901,9 @@ local function sendGun(record, preferred, strict)
     State.LastGunSentAt = os.clock()
     State.LastGunFeedback = {SentAt = State.LastGunSentAt, Message = "Waiting for server shot feedback"}
     local targetPlayer = targetName and Players:FindFirstChild(targetName)
+    State.GunShotSequence = (State.GunShotSequence or 0) + 1
     table.insert(State.PendingGun, {Item = record.Item, Record = record, Target = targetPlayer,
+        ShotId = State.GunShotSequence, OwnCharacter = player.Character,
         TargetCharacter = targetPlayer and targetPlayer.Character,
         Origin = attachment.WorldPosition, SentAt = State.LastGunSentAt, AimPoint = targetFrame.Position,
         BodyPoint = solution and solution.BodyPoint, Velocity = solution and solution.Velocity,
@@ -1907,7 +1948,7 @@ local function reportStabContact(record, hit, source)
     end
 end
 local function scanStabContacts(record)
-    if not State.Config.StabSweep or record.Kind ~= "Knife" or not ready(record)
+    if (not State.Config.StabSweep and not record.AuraStab) or record.Kind ~= "Knife" or not ready(record)
         or os.clock() > record.StabbingUntil then record.BladeFrame = nil; return end
     local handle = record.Item:FindFirstChild("Handle")
     if not handle or not handle:IsA("BasePart") then return end
@@ -1975,70 +2016,80 @@ local function knifeFeedback(message)
     State.AimStatus = message
 end
 local function startThrow(record, preferred, strict)
-    if record.Kind ~= "Knife" then return end
-    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return end
-    if not ready(record) then knifeFeedback("Throw unavailable: equip a ready knife"); return end
-    if record.Charging then return end
+    if record.Kind ~= "Knife" then return false end
+    if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return false end
+    if not ready(record) then knifeFeedback("Throw unavailable: equip a ready knife"); return false end
+    if record.Charging then return false end
     local throwSpeed = record.Item:GetAttribute("ThrowSpeed")
-    throwSpeed = type(throwSpeed) == "number" and throwSpeed > 0 and throwSpeed or 1
-    local cooldown = math.max(0.4 - (os.clock() - record.LastStab), 2 * throwSpeed - (os.clock() - record.LastThrow))
-    if cooldown > 0 then knifeFeedback(("Throw cooldown: %.1fs"):format(cooldown)); return end
-    local events = record.Item:FindFirstChild("Events")
-    local remote = events and events:FindFirstChild("KnifeThrown")
-    local handle = record.Item:FindFirstChild("Handle")
-    if not remote or not handle then knifeFeedback("Knife throw objects unavailable"); return end
-    local chosen = State.Config.KnifeAim and chooseTarget("Knife", handle.Position, record.Item, preferred, strict)
-    if State.Config.KnifeAim and not chosen then
-        State.Stats.SkippedKnifeThrows += 1
-        knifeFeedback("Throw skipped: no clear target")
-        return
+    throwSpeed = type(throwSpeed)=="number" and throwSpeed==throwSpeed and throwSpeed>0 and throwSpeed<math.huge and throwSpeed or 1
+    local cooldown = math.max(.4-(os.clock()-record.LastStab),2*throwSpeed-(os.clock()-record.LastThrow))
+    if cooldown>0 then knifeFeedback(("Throw cooldown: %.1fs"):format(cooldown)); return false end
+    local events=record.Item:FindFirstChild("Events")
+    local remote=events and events:FindFirstChild("KnifeThrown")
+    local handle=record.Item:FindFirstChild("Handle")
+    if not remote or not handle then knifeFeedback("Knife throw objects unavailable"); return false end
+    local chosen=State.Config.KnifeAim and chooseTarget("Knife",handle.Position,record.Item,preferred,strict)
+    if strict and not chosen then
+        knifeFeedback("Throw skipped: selected target is not clear"); return false
     end
-    record.Charging = true
-    State.KnifeFeedback = nil
-    State.LastKnifeInput = {Action = "Throw", Target = chosen and chosen.Player.Name}
-    record.ThrowToken += 1
-    local token = record.ThrowToken
-    local chargedTarget = chosen and chosen.Player
-    record.ThrowTargetUserId = chargedTarget and chargedTarget.UserId
-    record.LastThrow = os.clock()
-    record.StabbingUntil = 0
-    stopTracks(record)
-    playTrack(record, "ThrowCharge", 1 / throwSpeed)
+    record.Charging=true
+    record.ThrowToken+=1
+    local token=record.ThrowToken
+    local chargedTarget=chosen and chosen.Player
+    record.ThrowTargetUserId=chargedTarget and chargedTarget.UserId
+    record.LastThrow=os.clock()
+    record.StabbingUntil=0
+    record.AuraStab=false
+    local sent=false
+    State.KnifeFeedback=nil
+    State.LastKnifeInput={Action="Throw",Target=chargedTarget and chargedTarget.Name}
+    local function cancel(message)
+        if record.ThrowToken~=token then return end
+        record.Charging=false
+        if not sent then record.LastThrow=-math.huge end
+        pcall(stopTracks,record)
+        if message then knifeFeedback(message) end
+    end
+    local ok,message=pcall(function() stopTracks(record); playTrack(record,"ThrowCharge",1/throwSpeed) end)
+    if not ok then cancel("Throw animation failed: "..tostring(message)); return false end
     task.spawn(function()
-        task.wait(throwSpeed)
-        if not ready(record) or token ~= record.ThrowToken or (chargedTarget and State.IsPlayerExcluded(chargedTarget)) then
-            if token == record.ThrowToken then record.Charging = false; stopTracks(record) end
-            return
-        end
-        -- Resolve the prediction when the charge finishes, not at button press.
-        local targetFrame, targetName, solution = aimPoint(record, chargedTarget, strict)
-        record.Charging = false
-        if not targetFrame then
-            record.LastThrow = -math.huge
-            State.Stats.SkippedKnifeThrows += 1
-            knifeFeedback("Throw cancelled: target no longer clear")
-            stopTracks(record)
-            return
-        end
-        if State.ExcludedPlayerInShotPath(handle.Position, targetFrame.Position) then
-            record.LastThrow = -math.huge
-            State.Stats.SkippedKnifeThrows += 1
-            knifeFeedback("Throw cancelled: excluded player in firing path")
-            stopTracks(record)
-            return
-        end
-        remote:FireServer(handle.CFrame, targetFrame)
-        State.Stats.KnifeRequests += 1
-        knifeFeedback(targetName and ("Knife thrown toward " .. targetName) or "Knife throw sent")
-        State.LastRequest = {Weapon = "Knife", Target = targetName, Position = targetFrame.Position,
-            LeadTime = solution and solution.LeadTime, AimPart = solution and solution.AimPart,
-            VelocitySource = solution and solution.VelocitySource}
-        stopTracks(record)
-        playTrack(record, "ThrowKnife")
-        local sound = handle:FindFirstChild("Throw")
-        if sound and sound:IsA("Sound") then sound:Play() end
+        local success,why=pcall(function()
+            task.wait(throwSpeed)
+            if record.ThrowToken~=token then return end
+            if not ready(record) then cancel("Throw cancelled: weapon is no longer ready"); return end
+            if chargedTarget and State.IsPlayerExcluded(chargedTarget) then cancel("Throw cancelled: target excluded"); return end
+            local targetFrame,targetName,solution=aimPoint(record,chargedTarget,strict)
+            -- A manual throw remains usable when assistance has no valid target.
+            -- Selected-player automation must never fall back to an unrelated cursor shot.
+            local manual=false
+            if not targetFrame and not strict then
+                targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
+            end
+            if not targetFrame then
+                State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target no longer clear"); return
+            end
+            if State.ExcludedPlayerInShotPath(handle.Position,targetFrame.Position) then
+                State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: excluded player in firing path"); return
+            end
+            if not ready(record) or record.ThrowToken~=token then cancel(); return end
+            remote:FireServer(handle.CFrame,targetFrame)
+            sent=true
+            record.Charging=false
+            State.Stats.KnifeRequests+=1
+            State.LastRequest={Weapon="Knife",Target=targetName,Position=targetFrame.Position,
+                LeadTime=solution and solution.LeadTime,AimPart=solution and solution.AimPart,
+                VelocitySource=solution and solution.VelocitySource,ManualFallback=manual}
+            knifeFeedback(manual and "Knife thrown toward your cursor (no clear assist target)"
+                or targetName and ("Knife thrown toward "..targetName) or "Knife throw sent")
+            stopTracks(record); playTrack(record,"ThrowKnife")
+            local sound=handle:FindFirstChild("Throw")
+            if sound and sound:IsA("Sound") then sound:Play() end
+        end)
+        if not success then cancel((sent and "Knife request sent; local effects failed: " or "Throw failed: ")..tostring(why)) end
     end)
+    return true
 end
+
 local function clickKnife(record)
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return end
     if not ready(record) then return end
@@ -2398,6 +2449,9 @@ end
 installSeatVisibility({State=State,Player=player,Workspace=workspace,RunService=RunService,Connect=connect,
     Refresh=function() if refreshButtons.Invisibility then refreshButtons.Invisibility() end end,
     BeforeStart=function()
+        if State.StopGunPickup then
+            local ok,message=State.StopGunPickup(); if ok==false then error(message) end
+        end
         if State.CancelKillAuraContacts then
             local ok,message=State.CancelKillAuraContacts("Paused while invisibility prepares")
             if not ok then error(message) end
@@ -2418,6 +2472,56 @@ local colors = {Sheriff = Color3.fromRGB(55, 145, 255),
 local visualFolder = Instance.new("Folder")
 visualFolder.Name = "MM2AssistVisuals"
 visualFolder.Parent = workspace
+-- Recover only the container owned by this script; never delete game highlights.
+local function ensureVisualFolder()
+    if visualFolder and visualFolder.Parent==workspace then return end
+    if visualFolder then
+        local ok=pcall(function() visualFolder.Parent=workspace end)
+        if ok and visualFolder.Parent==workspace then return end
+    end
+    local replacement=Instance.new("Folder")
+    replacement.Name="MM2AssistVisuals"
+    replacement.Parent=workspace
+    visualFolder=replacement
+end
+
+-- A label can keep working after the model's original body geometry is replaced.
+-- Refresh only when geometry changes, never because the camera turns or a rig moves.
+local function refreshNativeBody(visual,char)
+    local previous=visual.BodyGeometry
+    local current,count=previous or {},0
+    local epoch=(visual.BodyGeometryEpoch or 0)+1
+    local changed=false
+    for _,part in ipairs(char:GetChildren()) do
+        if part:IsA("BasePart") and part.Name~="HumanoidRootPart" then
+            local mesh=part:IsA("MeshPart") and part.MeshId or nil
+            local before=previous and previous[part]
+            count+=1
+            if previous and (not before or before.Size~=part.Size or before.Transparency~=part.Transparency or before.Mesh~=mesh) then changed=true end
+            local record=before or {}
+            record.Size,record.Transparency,record.Mesh,record.Seen=part.Size,part.Transparency,mesh,epoch
+            current[part]=record
+        end
+    end
+    if previous and count~=visual.BodyGeometryCount then changed=true end
+    for part,record in pairs(current) do if record.Seen~=epoch then current[part]=nil end end
+    visual.BodyGeometry,visual.BodyGeometryCount=current,count
+    visual.BodyGeometryEpoch=epoch
+    if changed then
+        -- Destroy first so a refresh cannot temporarily consume another native slot.
+        visual.Highlight:Destroy()
+        local replacement=Instance.new("Highlight")
+        replacement.Name="MM2RoleBody"
+        replacement.Adornee=char
+        replacement.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+        replacement.FillTransparency=.3
+        replacement.OutlineTransparency=0
+        replacement.Parent=visualFolder
+        visual.Highlight=replacement
+        visual.BodyRefreshes=(visual.BodyRefreshes or 0)+1
+    end
+end
+
 local function removeVisual(p)
     local visual = State.Visuals[p]
     if visual then
@@ -2459,14 +2563,31 @@ local function updateHiddenBoxes(visual, char, color)
     visual.Hidden=total>0 and hidden>=math.max(1,total*.5)
 end
 
+-- Visual eligibility is independent of round combat eligibility.
+local function visualCharacterReady(p)
+    local char=p.Character
+    local hum=char and char:FindFirstChildOfClass("Humanoid")
+    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0
+        and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+            or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))~=nil
+end
+local function visualRoleFor(p)
+    local role=roleFor(p)
+    if role=="Murderer" then return "Murderer" end
+    if role=="Sheriff" or role=="Hero" then return "Sheriff" end
+    -- Preserve the requested three-color display. Green is also the fallback until role data arrives.
+    return "Innocent"
+end
+
 local function updateESP()
+    ensureVisualFolder()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
-        local role = roleFor(p)
-        if p ~= player and State.Config.ESP and alive(p) and colors[role] then
+        local role = visualRoleFor(p)
+        if p ~= player and State.Config.ESP and visualCharacterReady(p) and colors[role] then
             local char = p.Character
             local visual = State.Visuals[p]
-            if visual and (visual.Character ~= char or not visual.Highlight.Parent or not visual.Label.Parent or not visual.Text.Parent) then removeVisual(p); visual = nil end
+            if visual and (visual.Character ~= char or visual.Highlight.Parent ~= visualFolder or visual.Label.Parent ~= visualFolder or visual.Text.Parent ~= visual.Label) then removeVisual(p); visual = nil end
             if not visual then
                 local highlight = Instance.new("Highlight")
                 highlight.Adornee = char
@@ -2491,6 +2612,7 @@ local function updateESP()
                 visual = {Character = char, Highlight = highlight, Label = label, Text = text, HiddenBoxes = {}}
                 State.Visuals[p] = visual
             end
+            refreshNativeBody(visual,char)
             visual.Highlight.Adornee = char
             visual.Highlight.Enabled = true
             visual.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -3110,7 +3232,12 @@ end
 
 local drops = {}
 local function dropPart(object)
-    return object:IsA("BasePart") and object or object:FindFirstChildWhichIsA("BasePart", true)
+    if object:IsA("BasePart") then return object end
+    for _,child in ipairs(object:GetDescendants()) do
+        if child:IsA("TouchTransmitter") and child.Parent:IsA("BasePart") then return child.Parent end
+    end
+    local handle=object:FindFirstChild("Handle",true)
+    return handle and handle:IsA("BasePart") and handle or object:FindFirstChildWhichIsA("BasePart",true)
 end
 local function removeGunVisual(object)
     local visual = State.GunVisuals[object]
@@ -3121,6 +3248,7 @@ local function removeGunVisual(object)
     end
 end
 updateGunESP = function()
+    ensureVisualFolder()
     for object in pairs(State.GunVisuals) do
         if not State.Config.GunESP or not drops[object] or not object:IsDescendantOf(workspace) then
             removeGunVisual(object)
@@ -3132,7 +3260,7 @@ updateGunESP = function()
         local part = object:IsDescendantOf(workspace) and dropPart(object)
         if part then
             local visual = State.GunVisuals[object]
-            if visual and (not visual.Highlight.Parent or not visual.Label.Parent or not visual.Text.Parent) then
+            if visual and (visual.Highlight.Parent ~= visualFolder or visual.Label.Parent ~= visualFolder or visual.Text.Parent ~= visual.Label) then
                 removeGunVisual(object); visual=nil
             end
             if not visual then
@@ -3180,53 +3308,107 @@ connect(workspace.DescendantRemoving, function(object)
     drops[object] = nil
     removeGunVisual(object)
 end)
-local pickingUp, lastPickup = false, -math.huge
-local warnedTouchUnavailable = false
-local function autoPickup()
-    if State.Invis and (State.Invis.Active or State.Invis.Busy) then return end
-    if mobileBlocked() or pickingUp or State.Invis.Busy or not State.Config.AutoPickup or not alive(player)
-        or roleFor(player) ~= "Innocent" or toolFor(player, "Gun")
-        or os.clock() - lastPickup < 2 then return end
-    if type(firetouchinterest) ~= "function" then
-        if not warnedTouchUnavailable then
-            warnedTouchUnavailable = true
-            warn("MM2 Assist: no-TP pickup needs firetouchinterest, which is unavailable.")
+do
+-- Touch-only pickup, with bounded attempts and explicit tool confirmation. Never moves a character.
+local installGunPickup=function(C)
+    local State,player=C.State,C.Player
+    local clock=C.Clock or os.clock
+    local pickup={Status="Auto pickup OFF",Attempts=0,Phase="Idle",NextAttempt=0}
+    State.GunPickup=pickup
+    local active
+    local function finish()
+        local r=active
+        if not r then return true end
+        if pickup.Phase=="Waiting" or not r.Root.Parent or not r.Drop.Parent then
+            active=nil; pickup.Phase="Idle"; return true
         end
-        return
+        local ok,err=pcall(C.Touch,r.Root,r.Drop,1)
+        if not ok then pickup.Status="Pickup touch cleanup failed: "..tostring(err); return false end
+        active=nil; pickup.Phase="Idle"; return true
     end
-    local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local drop, closest
-    for object in pairs(drops) do
-        if object.Parent then
-            local part = dropPart(object)
-            if part then
-                local distance = (part.Position - root.Position).Magnitude
-                if not closest or distance < closest then drop, closest = part, distance end
+    function State.StopGunPickup()
+        local ok=finish()
+        if ok then pickup.Status="Auto pickup OFF" end
+        return ok,pickup.Status
+    end
+    function State.TickGunPickup()
+        local now=clock()
+        if active then
+            if not State.Running or not State.Config.AutoPickup or player.Character~=active.Character
+                or not active.Root.Parent or not active.Drop.Parent or C.HasGun()
+                or C.Blocked() or State.Invis and State.Invis.Busy then
+                local acquired=C.HasGun()
+                if finish() then pickup.Status=acquired and "Gun acquired" or "Pickup cancelled" end
+                return
             end
+            if now-active.Started>=.05 and pickup.Phase=="Touching" then
+                local ok,err=pcall(C.Touch,active.Root,active.Drop,1)
+                if not ok then pickup.Status="Pickup touch cleanup failed: "..tostring(err); return end
+                pickup.Phase="Waiting"
+            end
+            if now-active.Started>=.8 then
+                active=nil; pickup.Phase="Idle"
+                pickup.Status="Gun not acquired; distance or server validation may reject this attempt"
+            end
+            return
         end
+        if not State.Running or not State.Config.AutoPickup then pickup.Status="Auto pickup OFF"; return end
+        if not C.IsAlive() or C.HasKnife() then pickup.Status="Pickup waiting for an eligible living player"; return end
+        if C.HasGun() then pickup.Status="You already have the gun"; return end
+        if C.Blocked() then pickup.Status="Pickup paused: close menu / finish typing"; return end
+        if State.Invis and State.Invis.Busy then
+            pickup.Status="Pickup paused while invisibility switches"; return
+        end
+        if not C.Touch then pickup.Status="Pickup unavailable: executor has no touch API"; return end
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if not root then pickup.Status="Pickup waiting for your character"; return end
+        local drop,distance=C.FindDrop(root)
+        if not drop then pickup.Status="Waiting for a loaded dropped gun"; pickup.LastDistance=nil; return end
+        local approached=pickup.LastDrop==drop and pickup.LastDistance and pickup.LastDistance>8 and distance<=8
+        if pickup.LastDrop~=drop or approached then pickup.NextAttempt=0 end
+        pickup.LastDrop,pickup.LastDistance=drop,distance
+        if now<pickup.NextAttempt then return end
+        pickup.NextAttempt=now+2
+        local ok,err=pcall(C.Touch,root,drop,0)
+        if not ok then
+            -- A touch API may throw after starting contact; retain it for paired cleanup.
+            active={Root=root,Drop=drop,Character=char,Started=now}
+            pickup.Phase="Touching"; pickup.Status="Pickup touch failed: "..tostring(err)
+            finish(); return
+        end
+        active={Root=root,Drop=drop,Character=char,Started=now}
+        pickup.Phase="Touching"; pickup.Attempts+=1
+        State.Stats.PickupAttempts+=1
+        pickup.InvisibleAttempt=State.Invis and State.Invis.Active==true or false
+        pickup.Status=("Pickup requested at %.0f local studs%s; waiting for gun"):format(distance,
+            pickup.InvisibleAttempt and " while invisible" or "")
     end
-    if not drop then return end
-    pickingUp, lastPickup = true, os.clock()
-    State.Stats.PickupAttempts += 1
-    task.spawn(function()
-        local success, message = pcall(function()
-            if not State.Running or not State.Config.AutoPickup or player.Character ~= char
-                or not root.Parent or not drop.Parent then return end
-            firetouchinterest(root, drop, 0)
-            task.wait(0.05)
-            if root.Parent and drop.Parent then firetouchinterest(root, drop, 1) end
-            local started = os.clock()
-            repeat task.wait(0.05) until not State.Running or not State.Config.AutoPickup
-                or not drop.Parent or toolFor(player, "Gun") or os.clock() - started > 0.6
-        end)
-        pickingUp = false
-        if not success then warn("MM2 Assist pickup: " .. tostring(message)) end
-    end)
 end
 
+installGunPickup({State=State,Player=player,Touch=type(firetouchinterest)=="function" and firetouchinterest or nil,
+    IsAlive=function() return alive(player) end,HasGun=function() return toolFor(player,"Gun")~=nil end,
+    HasKnife=function() return toolFor(player,"Knife")~=nil end,
+    Blocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end,
+    FindDrop=function(root)
+        local closest,best
+        for object in pairs(drops) do
+            if object:IsDescendantOf(workspace) then
+                local part=dropPart(object)
+                if part then
+                    local distance=(part.Position-root.Position).Magnitude
+                    if distance==distance and (not best or distance<best) then closest,best=part,distance end
+                end
+            end
+        end
+        return closest,best
+    end})
+end
+local function autoPickup() State.TickGunPickup() end
+
 function State.Destroy()
+    if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
+    if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
     if State.StopKillAura then State.StopKillAura("Unloaded") end
     if State.SetInvisibility and not State.SetInvisibility(false) then
         warn("Unload stopped: character restoration is incomplete; retry Restore character")
@@ -3303,6 +3485,7 @@ function State.DebugSnapshot()
         ObservedKnifeSpeed = State.ObservedKnifeSpeed, KnifeSpeedDefault = State.Config.KnifeSpeed,
         LastGunFeedback = State.LastGunFeedback,
         MeasuredGunDelay = State.MeasuredGunDelay, CurrentGunLead = State.CurrentGunLead,
+        GunResponseSeconds = State.LastGunResponseSeconds, GunReplyCorrelation = State.LastGunReplyCorrelation, GunLeadBasis = "Configured/network estimate",
         LastShotRecord = State.ShotLog[#State.ShotLog],
         InvisibilityStatus = State.Invis.Status,
         AutoPickup = State.Config.AutoPickup, VisualCount = count, Roles = roles,
@@ -3353,12 +3536,13 @@ connect(RunService.Heartbeat, function(dt)
         local expired = table.remove(State.PendingGun, 1)
         State.Stats.GunUnconfirmed += 1
         table.insert(State.ShotLog, {Target = expired.Target and expired.Target.Name,
-            Confirmed = false, Status = "NoServerResponse", RequestedPoint = expired.AimPoint,
+            Confirmed = false, Status = "NoCorrelatedResponse", RequestedPoint = expired.AimPoint,
             AimPart = expired.AimPart, VelocitySource = expired.VelocitySource})
         if #State.ShotLog > 10 then table.remove(State.ShotLog, 1) end
-        if not State.LastGunFeedback or not State.LastGunFeedback.RoundWon then
+        if expired.ShotId == State.GunShotSequence and expired.OwnCharacter == player.Character
+            and (not State.LastGunFeedback or not State.LastGunFeedback.RoundWon) then
             State.LastGunFeedback = {Target = expired.Target and expired.Target.Name,
-                Message = "Server did not confirm this shot; cause unknown"}
+                Message = "No unique reply matched this shot; outcome unknown"}
         end
     end
     syncWeapons()
@@ -4401,6 +4585,7 @@ local installKillAura=function(C)
     local aura={Enabled=false,Status="Kill aura OFF",Attempts=0,TargetId=nil,LastAttempt=-math.huge}
     State.KillAura=aura
     State.Config.KillAura=false
+    if State.Config.AuraEquipKnife==nil then State.Config.AuraEquipKnife=true end
     local function range(value)
         local n=tonumber(value)
         return n and n==n and n>=1 and n<=6.5 and n or nil
@@ -4506,6 +4691,10 @@ local installKillAura=function(C)
             if State.Fling and State.Fling.Active then pause("Kill aura paused during fling"); return end
             if not focused or C.InputBlocked() then pause("Kill aura paused: focus Roblox / close menu / finish typing"); return end
             local item=C.EquippedWeapon()
+            if (not item or item.Name~="Knife" or item.Parent~=char) and State.Config.AuraEquipKnife and C.EquipKnife
+                and (not aura.LastEquip or clock()-aura.LastEquip>.5) then
+                aura.LastEquip=clock(); C.EquipKnife(); item=C.EquippedWeapon()
+            end
             if not item or item.Name~="Knife" or item.Parent~=char or item.Enabled==false then pause("Kill aura waiting for an equipped, enabled knife"); return end
             local ready,reason=C.CanStab(item)
             if not ready then aura.Status=reason or "Kill aura waiting for knife cooldown"; return end
@@ -4560,6 +4749,12 @@ installKillAura({State=State,Player=player,Players=Players,RunService=RunService
     RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,
     InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end,
     CanStab=auraKnifeReady,
+    EquipKnife=function()
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local knife=toolFor(player,"Knife")
+        if hum and knife then hum:EquipTool(knife); syncWeapons() end
+    end,
     CancelStab=function()
         for _,record in pairs(State.WeaponHandlers) do
             if record.AuraStab then record.StabbingUntil,record.StabTarget,record.AuraStab=0,nil,false end
@@ -4824,6 +5019,7 @@ local installEmergencyStop = function(C)
             if callback then local ok,message=pcall(callback); if not ok then table.insert(errors,name..": "..tostring(message)) end end
         end
         State.Config.AutoPickup = false
+        run("pickup",function() if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then error(message) end end end)
         run("queued attacks",C.CancelWeaponActions)
         run("kill aura",function() if State.StopKillAura then
             local ok,message=State.StopKillAura("Emergency stop")
@@ -5223,7 +5419,7 @@ local installTacticalGuide = function(C)
     local worldFolder=Instance.new("Folder"); worldFolder.Name="MM2TacticalHints"; worldFolder.Parent=world
     local guiFolder=Instance.new("Folder"); guiFolder.Name="MM2TacticalLabels"; guiFolder.Parent=C.Parent
     local function hide()
-        if actorHighlight then actorHighlight.Enabled=false end
+        if actorHighlight then actorHighlight.Adornee=nil; actorHighlight:Destroy(); actorHighlight=nil end
         if actorLabel then actorLabel.Enabled=false end
         if markerLabel then markerLabel.Enabled=false end
     end
@@ -5265,17 +5461,23 @@ local installTacticalGuide = function(C)
         if not actorLabel then
             actorLabel,actorText=billboard(guiFolder,"TacticalTarget")
             actorLabel.StudsOffset=Vector3.new(0,4.2,0)
-            actorHighlight=Instance.new("Highlight"); actorHighlight.DepthMode=Enum.HighlightDepthMode.Occluded
-            actorHighlight.FillTransparency=.3; actorHighlight.FillColor=Color3.fromRGB(245,218,126)
-            actorHighlight.OutlineColor=Color3.fromRGB(245,218,126); actorHighlight.Parent=worldFolder
         end
         actorLabel.Adornee=target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
         actorText.Text="@"..tostring(target.Name or target.Id)
         guide.TargetId,guide.TargetVisible=target.Id,target.Visible and actorLabel.Adornee~=nil
-        actorHighlight.Adornee=target.Character
-        local regularESP=State.Config.ESP and (target.Role=="Murderer" or target.Role=="Sheriff" or target.Role=="Innocent")
+        local regularESP=State.Config.ESP==true
         actorLabel.Enabled=guide.TargetVisible and not regularESP
-        actorHighlight.Enabled=guide.TargetVisible and not regularESP
+        if actorLabel.Enabled then
+            if not actorHighlight then
+                actorHighlight=Instance.new("Highlight"); actorHighlight.Name="TacticalBody"
+                actorHighlight.DepthMode=Enum.HighlightDepthMode.Occluded
+                actorHighlight.FillTransparency=.3; actorHighlight.FillColor=Color3.fromRGB(245,218,126)
+                actorHighlight.OutlineColor=Color3.fromRGB(245,218,126); actorHighlight.Parent=worldFolder
+            end
+            actorHighlight.Adornee=target.Character; actorHighlight.Enabled=true
+        elseif actorHighlight then
+            actorHighlight.Adornee=nil; actorHighlight:Destroy(); actorHighlight=nil
+        end
     end
     local function destinations(position)
         local now=clock()
@@ -5514,8 +5716,9 @@ local installCombatHUD = function(C)
         local feedback=State.LastGunFeedback
         local result,tone="No gun feedback yet","neutral"
         if State.PendingGun and #State.PendingGun>0 then result,tone="Awaiting server shot reply","waiting"
-        elseif feedback and feedback.TargetHit==true then result,tone="Last: server ray hit target","confirmed"
-        elseif feedback and feedback.TargetHit==false then result,tone="Last: server ray missed target","warning"
+        elseif feedback and feedback.TargetHit==true then
+            result,tone=feedback.Correlation=="Heuristic" and "Last: reported ray hit (heuristic match)" or "Last: server ray hit target",feedback.Correlation=="Heuristic" and "neutral" or "confirmed"
+        elseif feedback and feedback.TargetHit==false then result,tone=feedback.Correlation=="Heuristic" and "Last: reported miss (heuristic match)" or "Last: server ray missed target","warning"
         elseif feedback and feedback.RoundWon then result,tone="Last: server reported round victory","confirmed"
         elseif feedback and feedback.Message then result=feedback.Message end
         local status=State.AimStatus or "Ready"
@@ -5533,6 +5736,180 @@ local installCombatHUD = function(C)
 end
 
 installCombatHUD({State=State,Player=player,Players=Players,RoleFor=roleFor,EquippedWeapon=equippedWeapon,IsAlive=alive})
+end
+
+
+do
+-- Explicit buttons only; destinations are discovered from loaded map/lobby spawns.
+local installWorldTeleports=function(C)
+    local State,world,player=C.State,C.Workspace,C.Player
+    local status={Status="Choose map or lobby"}; State.WorldTeleport=status
+    local function finite(v)
+        return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e6 and math.abs(v.Y)<1e6 and math.abs(v.Z)<1e6
+    end
+    local function container(kind)
+        local candidates={}
+        for _,child in ipairs(world:GetChildren()) do
+            if kind=="Lobby" and child.Name:lower()=="lobby" then table.insert(candidates,child)
+            elseif kind=="Map" and child:FindFirstChild("Spawns") and child:FindFirstChild("Base") then table.insert(candidates,child) end
+        end
+        -- Refuse ambiguity rather than choosing an arbitrary model or old map.
+        return #candidates==1 and candidates[1] or nil
+    end
+    local function destination(kind,char,hum,root)
+        local area=container(kind)
+        if not area then return nil,"No unique loaded "..kind:lower().." found" end
+        local spawns=area:FindFirstChild("Spawns") or area:FindFirstChild("SpawnPoints")
+        local choices={}
+        for _,part in ipairs((spawns or area):GetDescendants()) do
+            if part:IsA("BasePart") and (spawns or part:IsA("SpawnLocation") or part.Name:lower():match("^spawn")) then
+                table.insert(choices,part)
+            end
+        end
+        table.sort(choices,function(a,b) return a:GetFullName()<b:GetFullName() end)
+        local excluded={char}
+        for _,p in ipairs(C.Players:GetPlayers()) do if p.Character then table.insert(excluded,p.Character) end end
+        local ray=RaycastParams.new()
+        ray.FilterType=Enum.RaycastFilterType.Exclude; ray.FilterDescendantsInstances=excluded
+        ray.RespectCanCollide=true; ray.IgnoreWater=true; ray.CollisionGroup=root.CollisionGroup
+        local overlap=OverlapParams.new()
+        overlap.FilterType=Enum.RaycastFilterType.Exclude; overlap.FilterDescendantsInstances=excluded
+        overlap.RespectCanCollide=true; overlap.CollisionGroup=root.CollisionGroup; overlap.MaxParts=32
+        local height=hum.HipHeight+root.Size.Y*.5
+        if hum.RigType==Enum.HumanoidRigType.R6 then
+            local leg=char:FindFirstChild("Left Leg"); height+=leg and leg.Size.Y or 2
+        end
+        local offsets={Vector3.zero,Vector3.new(4,0,0),Vector3.new(-4,0,0),Vector3.new(0,0,4),Vector3.new(0,0,-4)}
+        for i=1,math.min(#choices,32) do
+            for _,offset in ipairs(offsets) do
+                local spawn=choices[i]
+                local hit=world:Raycast(spawn.Position+offset+Vector3.new(0,5,0),Vector3.new(0,-40,0),ray)
+                if hit and hit.Normal.Y>.65 and hit.Position.Y>world.FallenPartsDestroyHeight+32 then
+                    local point=hit.Position+Vector3.new(0,height+.15,0)
+                    local frame=CFrame.new(point)*root.CFrame.Rotation
+                    local size=Vector3.new(math.max(root.Size.X,2),math.max(height*2,4),math.max(root.Size.Z,2))
+                    if #world:GetPartBoundsInBox(frame,size,overlap)==0 then return frame end
+                end
+            end
+        end
+        return nil,"No clear supported landing at loaded "..kind:lower().." spawns"
+    end
+    function State.TeleportToArea(kind)
+        local function fail(message) status.Status=message; return false,message end
+        if kind~="Map" and kind~="Lobby" then return fail("Choose Map or Lobby") end
+        if not State.Running then return fail("Script is unloaded") end
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if not root or not hum or hum.Health<=0 then return fail("Wait for your living character") end
+        if root.Anchored or hum.Sit or hum.PlatformStand then return fail("Your character must be free to move") end
+        if C.Typing and C.Typing() then return fail("Finish typing before teleporting") end
+        local ok,frame,why=pcall(C.ResolveDestination or destination,kind,char,hum,root)
+        if not ok then return fail("Destination lookup failed: "..tostring(frame)) end
+        if not frame or not finite(frame.Position) then return fail(why or "Destination unavailable") end
+        local worked,message=pcall(function()
+            if State.StopAutoAttack then State.StopAutoAttack("Stopped for area teleport") end
+            if State.StopKillAura then local yes,err=State.StopKillAura("Stopped for area teleport"); if yes==false then error(err) end end
+            if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end
+            if State.StopFling then State.StopFling("Stopped for area teleport") end
+            if State.CancelFlingReturn then State.CancelFlingReturn() end
+            if State.StopGunPickup then local yes,err=State.StopGunPickup(); if yes==false then error(err) end end
+            if State.Invis and (State.Invis.Active or State.Invis.Busy) then
+                local yes,err=State.SetInvisibility(false); if yes==false then error(err) end
+            end
+            if player.Character~=char or root.Parent~=char or hum.Health<=0 then error("Character changed") end
+            -- Preserve root-to-model pivot offsets on scaled and custom avatars.
+            local offset=root.CFrame:ToObjectSpace(char:GetPivot())
+            root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            char:PivotTo(frame*offset)
+        end)
+        if not worked then return fail("Teleport failed: "..tostring(message)) end
+        status.Status="Moved to "..kind:lower().."; server position acceptance unverified"
+        return true,status.Status
+    end
+end
+
+installWorldTeleports({State=State,Player=player,Players=Players,Workspace=workspace,Typing=function() return UIS:GetFocusedTextBox()~=nil end})
+end
+
+
+do
+-- Local-only ghost tint. Never changes Transparency, physics, camera or another character.
+local installGhostAppearance=function(C)
+    local State,player=C.State,C.Player
+    local run=C.RunService
+    local clock=C.Clock or os.clock
+    local ghost={Active=false,Parts=0,Alpha=.45}
+    local parts,character,nextScan={},nil,0
+    local binding="MM2LocalGhost_"..tostring(State)
+    State.GhostAppearance=ghost
+    local function restore()
+        local failures={}
+        for part,r in pairs(parts) do
+            local ok,err=pcall(function()
+                if part.Parent and r.Applied~=nil and part.LocalTransparencyModifier==r.Applied then
+                    part.LocalTransparencyModifier=r.Before
+                end
+            end)
+            if ok then parts[part]=nil else table.insert(failures,tostring(err)) end
+        end
+        ghost.Parts=0; for _ in pairs(parts) do ghost.Parts+=1 end
+        ghost.Active=false
+        ghost.LastError=#failures>0 and table.concat(failures,"; ") or nil
+        return #failures==0,ghost.LastError
+    end
+    function State.StopGhostAppearance()
+        local ok,err=restore()
+        if ok then run:UnbindFromRenderStep(binding); ghost.Stopped=true end
+        return ok,err
+    end
+    local function step()
+        if ghost.Stopped then return end
+        if not State.Running then State.StopGhostAppearance(); return end
+        local active=State.Invis and State.Invis.Active and not State.Invis.Busy
+        local char=player.Character
+        if not active or not char then restore(); character=nil; return end
+        if char~=character then
+            local ok=restore(); if not ok then return end
+            character=char; nextScan=0
+        end
+        if clock()>=nextScan then
+            nextScan=clock()+.25
+            for _,part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name~="HumanoidRootPart" and part.Transparency<1
+                    and not part:FindFirstAncestorOfClass("Tool") and not parts[part] then
+                    parts[part]={}
+                end
+            end
+        end
+        ghost.Parts=0
+        for part,r in pairs(parts) do
+            if not part.Parent or not part:IsDescendantOf(char) or part:FindFirstAncestorOfClass("Tool") then
+                -- A removed part no longer participates in the ghost. Restore only our own write.
+                if part.Parent and r.Applied and part.LocalTransparencyModifier==r.Applied then part.LocalTransparencyModifier=r.Before end
+                parts[part]=nil
+            else
+                local current=part.LocalTransparencyModifier
+                local wanted=math.max(current,ghost.Alpha)
+                if current~=wanted then
+                    if r.Applied==nil or current~=r.Applied then r.Before=current end
+                    r.Applied=wanted
+                    part.LocalTransparencyModifier=wanted
+                end
+                ghost.Parts+=1
+            end
+        end
+        ghost.Active=true; ghost.LastError=nil
+    end
+    run:BindToRenderStep(binding,C.Priority or Enum.RenderPriority.Last.Value+2,function()
+        local ok,err=pcall(step)
+        if not ok then ghost.LastError=tostring(err) end
+    end)
+    return ghost
+end
+
+installGhostAppearance({State=State,Player=player,RunService=RunService})
 end
 
 
@@ -5592,17 +5969,23 @@ local createMobileUI = function(C)
     canvas.Parent = overlay
 
     library:SetParent(C.Parent)
+    library:AddTheme({Name="MM2 Midnight",Accent=Color3.fromRGB(19,23,32),Background=Color3.fromRGB(13,17,24),
+        Dialog=Color3.fromRGB(23,28,39),Text=Color3.fromRGB(233,239,249),Placeholder=Color3.fromRGB(148,161,184),
+        Icon=Color3.fromRGB(164,181,207),Toggle=Color3.fromRGB(116,153,255),Primary=Color3.fromRGB(116,153,255),
+        Slider=Color3.fromRGB(116,153,255),Button=Color3.fromRGB(36,45,62),Outline=Color3.fromRGB(85,105,136),
+        ElementBackground=Color3.fromRGB(24,30,42),ElementBackgroundTransparency=0})
+    library:SetTheme("MM2 Midnight")
     for _, name in ipairs({"ScreenGui", "NotificationGui", "DropdownGui", "TooltipGui"}) do
         library[name].ResetOnSpawn = false
         library[name].DisplayOrder = 500 + (name == "ScreenGui" and 0 or 2)
     end
     local view = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 450)
     window = library:CreateWindow({
-        Title = "MM2 " .. mobile.Mode, Icon = "crosshair", NewElements = false,
+        Title = "MM2 " .. mobile.Mode, Icon = "crosshair", NewElements = false, Theme="MM2 Midnight",
         Size = UDim2.fromOffset(math.min(mobile.Mode == "PC" and 680 or 570, view.X - 32), math.min(mobile.Mode == "PC" and 520 or 470, view.Y - 48)),
         MinSize = Vector2.new(280, 240), MaxSize = Vector2.new(750, 750),
-        SideBarWidth = 118, Resizable = false, AutoScale = false,
-        Acrylic = false, HideSearchBar = true, ScrollBarEnabled = true,
+        SideBarWidth = 148, Resizable = false, AutoScale = false, Radius=14, ElementsRadius=10,
+        Acrylic = false, HideSearchBar = false, ScrollBarEnabled = true,
         OpenButton = {Enabled = false}, Topbar = {Height = 44, ButtonsType = "Default"},
     })
     mobile.Window = window
@@ -5612,21 +5995,34 @@ local createMobileUI = function(C)
         if State.Running then State.Destroy() end
     end)
 
-    local combat = window:Tab({Title = "Combat", Icon = "crosshair"})
+    mobile.Pages={}
+    local function page(key,title,icon,description)
+        local tab=window:Tab({Title=title,Icon=icon})
+        mobile.Pages[key]=tab
+        tab:Paragraph({Title=title,Desc=description})
+        return tab
+    end
+    local home=page("Home","Home","house","Session status, quick actions and display presets.")
+    local combat=page("Aim","Aim","crosshair","Gun and knife aiming without moving your camera.")
+    local automation=page("Automation","Automation","zap","Automatic stabs, gun pickup and knife dodging.")
+    local visuals=page("ESP","ESP","eye","Player body colors, dropped weapons and your HUD.")
+    local movement=page("Movement","Movement","footprints","Invisibility, map travel and character animations.")
+    local playersTab=page("Players","Players","users","Choose a player, manage actions and protect friends.")
+    local settings=page("Settings","Settings","settings","Appearance, controls, repairs and unloading.")
+    function mobile.OpenPage(key)
+        local target=mobile.Pages[key]
+        if not target or mobile.Destroyed then return false end
+        suppressInput(); target:Select(); return true
+    end
     local exclusionsTab
     if State.SetPlayerExcluded and State.GetPlayerExclusions then
-        exclusionsTab = window:Tab({Title = "Exclusions", Icon = "shield"})
+        exclusionsTab=playersTab:Section({Title="Protected players",Opened=false,TextSize=15})
         mobile.ExclusionsTab = exclusionsTab
         function mobile.OpenExclusions()
             suppressInput()
-            exclusionsTab:Select()
+            playersTab:Select(); exclusionsTab:Open()
         end
-        combat:Button({Title = "Open exclusions", Desc = "Choose players the script should never target.", Callback = mobile.OpenExclusions})
     end
-    local visuals = window:Tab({Title = "Visuals", Icon = "eye"})
-    local movement = window:Tab({Title = "Movement", Icon = "footprints"})
-    local animations = window:Tab({Title = "Animations", Icon = "sparkles"})
-    local settings = window:Tab({Title = "Settings", Icon = "settings"})
     local function refresh()
         syncing = true
         for key, toggle in pairs(toggles) do
@@ -5659,100 +6055,148 @@ local createMobileUI = function(C)
         toggles[key] = toggle
         return toggle
     end
-    combat:Paragraph({Title = "PC + mobile controls", Desc = "Close the menu to play. PC: left-click fires or stabs; E / right-click throws; Right Shift toggles this menu. Mobile: FIRE / STAB and separate THROW buttons. Drag the MM2 icon to move it."})
-    option(combat, "Aim assist", "Aim")
-    option(combat, "Magic Bullet / gun aim", "MagicBullet", "Targets the known murderer when you fire. Walls and server rules still apply.")
+    mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Reading your current role and weapon…"})
+    option(combat,"Aim assist","Aim","Master switch for gun aim, knife aim and automatic stabs.")
+    option(combat, "Gun aim", "MagicBullet", "Aim at the known murderer when you fire.")
     option(combat, "Knife throw prediction", "KnifeAim")
-    option(combat, "Stab sweep", "StabSweep")
     if State.SetKillAura then
-        option(combat,"Murderer kill aura","KillAura","Automatically requests stabs at the nearest clear, non-excluded player. Enables Aim assist. No throws or teleporting; server acceptance is unverified.")
-        combat:Input({Title="Aura range (studs)",Value=tostring(State.Config.KillAuraRange),Placeholder="1 to 6.5",Callback=function(text)
+        option(automation,"Murderer kill aura","KillAura","Automatic stab attempts while you are the murderer.")
+    end
+    if State.EmergencyStop then
+        home:Button({Title="Emergency stop / return",Desc="End on PC · STOP on mobile",Callback=mobile.TriggerEmergencyStop})
+    end
+    local advancedCombat=combat:Section({Title="Targeting options",Opened=false,TextSize=15})
+    option(advancedCombat, "Stab sweep", "StabSweep")
+    if State.SetTargetContinuity then
+        option(advancedCombat,"Stable target choice","TargetContinuity","Keep the current target when choices nearly tie.")
+    end
+    local function buildAutomationSettings()
+    if State.SetKillAura then
+        local auraOptions=automation:Section({Title="Aura settings",Opened=false,TextSize=15})
+        option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equip your knife automatically while aura is active.")
+        auraOptions:Input({Title="Aura range (studs)",Value=tostring(State.Config.KillAuraRange),Placeholder="1 to 6.5",Callback=function(text)
             if syncing or not State.Running then return end
             suppressInput()
             local ok,message=State.SetKillAuraRange(text)
             if not ok then State.KillAura.Status=tostring(message) end
         end})
         if State.SetAuraExtendedReach then
-            option(combat,"Extended stab reach","AuraExtendedReach","Sends a knife contact attempt within the configured reach. Does not move either player. Longer distances may be rejected by the server.")
-            combat:Input({Title="Extended reach (studs)",Value=tostring(State.Config.AuraReachRange),Placeholder="1 to 100",Callback=function(text)
+            option(auraOptions,"Extended stab reach","AuraExtendedReach","Longer contact attempts; the server may reject them.")
+            auraOptions:Input({Title="Extended reach (studs)",Value=tostring(State.Config.AuraReachRange),Placeholder="1 to 100",Callback=function(text)
                 if syncing or not State.Running then return end
                 suppressInput()
                 local ok,message=State.SetAuraReachRange(text)
                 if not ok then State.KillAura.Status=tostring(message) end
             end})
         end
-        mobile.KillAuraStatus=combat:Paragraph({Title="Kill aura status",Desc=State.KillAura.Status})
     end
-    if State.SetTargetContinuity then
-        option(combat,"Stable target choice","TargetContinuity","Prefers the current target when choices nearly tie. Releases on cover, death or exclusion. Moving closer to another target switches normally.")
-    end
-    if State.EmergencyStop then
-        combat:Button({Title="Emergency stop / return",Desc="PC: End. Mobile: STOP button. Cancels attacks and fling; disables auto pickup and dodge. Manual aim stays available.",Callback=mobile.TriggerEmergencyStop})
-    end
-    option(visuals, "Role ESP", "ESP", "Full-body fill: sheriff blue, innocent green, murderer red. Works independently of your role.")
-    option(visuals,"Stable body colors","StableBodyESP","A light screen overlay fills body parts as the camera turns. This fallback uses body rectangles; it does not change hitboxes.")
-    option(visuals, "Dropped gun ESP", "GunESP")
-    option(visuals, "Gun aim marker", "AimMarker")
-    if State.GetCombatHUDData then option(visuals,"Combat HUD","CombatHUD","Role, weapon state, target distance/height and actual gun feedback. Drag the panel header to move it.") end
-    if State.GetCombatHUDData then option(visuals,"Compact HUD","CompactHUD","Two lines by default. Turn OFF for detailed shot feedback.") end
-    option(visuals,"Clean role visuals","CleanVisuals","Show only @username overhead. Turn OFF to add distance/status; body colors still show roles.")
+    local guidance=automation:Section({Title="Guidance",Opened=false,TextSize=15})
     if State.SetTacticalGuide then
-        toggles.TacticalGuide=combat:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="One suggested player and next waypoint. Fewer nearby players does not guarantee safety. Move and attack manually.",
+        toggles.TacticalGuide=guidance:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="Suggested target and next waypoint. You move and attack.",
             Callback=function(enabled) if syncing then return end; suppressInput(); State.SetTacticalGuide(enabled) end})
     end
     if State.SetLearnedSheriffGuide then
-        option(combat,"Learned Sheriff guidance","LearnedSheriffGuide","Uses the completed practice-trained policy for movement and shot suggestions. Live inputs differ from training; falls back to standard hints. Move and fire manually.")
+        option(guidance,"Learned Sheriff guidance","LearnedSheriffGuide","Practice-trained suggestions; live results may differ.")
     end
+    end
+    if mobile.OpenExclusions then home:Button({Title="Open exclusions",Desc="Choose friends your automatic actions should skip.",Callback=mobile.OpenExclusions}) end
+    function mobile.ApplyDisplayPreset(name)
+        if mobile.Destroyed or not State.Running then return false,"Menu unavailable" end
+        local values=name=="Clean" and {CleanVisuals=true,CompactHUD=true,CombatHUD=true,StableBodyESP=false,AimMarker=false,ThreatWarning=false}
+            or name=="Detailed" and {CleanVisuals=false,CompactHUD=false,CombatHUD=true,StableBodyESP=false,AimMarker=true,ThreatWarning=true}
+        if not values then return false,"Unknown display preset" end
+        suppressInput()
+        for key,value in pairs(values) do State.Config[key]=value end
+        refresh(); C.UpdateVisuals()
+        mobile.DisplayPreset=name
+        return true
+    end
+    local presets=home:Section({Title="Display presets",Opened=false,TextSize=15})
+    presets:Button({Title="Clean display",Desc="Username labels, compact HUD and fewer indicators.",Callback=function() mobile.ApplyDisplayPreset("Clean") end})
+    presets:Button({Title="Detailed display",Desc="Show distances, full HUD and aim indicators.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
+    mobile.AdvancedCombat=advancedCombat
+    option(visuals, "Role ESP", "ESP", "Murderer red · Sheriff blue · others green")
+    option(visuals, "Dropped gun ESP", "GunESP")
+    if State.GetCombatHUDData then option(visuals,"Combat HUD","CombatHUD","Small status panel; drag its header to move it.") end
     option(visuals, "Nearby murderer warning", "ThreatWarning")
-    option(movement, "Dodge incoming knives", "AutoKnifeDodge", "Normal jump or short sidestep when a path is available.")
+    local displayOptions=visuals:Section({Title="Display options",Opened=false,TextSize=15})
+    if State.GetCombatHUDData then option(displayOptions,"Compact HUD","CompactHUD","Two lines instead of detailed feedback.") end
+    option(displayOptions,"Clean role visuals","CleanVisuals","Username only; turn off to add distance and status.")
+    option(displayOptions,"Gun aim marker","AimMarker")
+    option(displayOptions,"Stable body colors","StableBodyESP","Optional box fallback. Leave off for clean body silhouettes.")
+    option(automation, "Dodge incoming knives", "AutoKnifeDodge", "Jump or sidestep when a clear path is available.")
     local canTouch = type(firetouchinterest) == "function"
     if not canTouch then State.Config.AutoPickup = false end
-    local pickup = option(movement, "Auto gun pickup", "AutoPickup", canTouch and "Simulated touch; server distance checks can reject it." or "Unavailable: this executor has no firetouchinterest.")
+    local pickup = option(automation, "Auto gun pickup", "AutoPickup", canTouch and "Try to collect a dropped gun without teleporting." or "Unavailable: this executor has no firetouchinterest.")
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
-    option(movement, "Invisibility", "Invisibility", "No perk required. Coin pickup may stop. Visibility to others is unverified. Gun attacks restore the body first.")
-    option(movement,"Knife while invisible","InvisibleKnife","Lets knife actions and aura run after invisibility preparation, without restoring the body. Whether server hits register is unverified.")
+    mobile.AutomationStatus=automation:Paragraph({Title="Automation status",Desc="Aura OFF · pickup OFF"})
+    buildAutomationSettings()
+    local automationDetails=automation:Section({Title="Live details",Opened=false,TextSize=15})
+    if State.KillAura then mobile.KillAuraStatus=automationDetails:Paragraph({Title="Kill aura status",Desc=State.KillAura.Status}) end
+    if State.GunPickup then mobile.PickupStatus=automationDetails:Paragraph({Title="Gun pickup status",Desc=State.GunPickup.Status}) end
+    option(movement, "Invisibility", "Invisibility", "Ghost appearance locally. Gun attacks restore your body first.")
     mobile.InvisibilityStatus=movement:Paragraph({Title="Invisibility status",Desc=State.Invis and State.Invis.Status or "Invisibility OFF"})
-    movement:Button({Title="Restore character",Desc="Turn invisibility off and restore the original local body without requesting a reset.",Callback=function()
+    movement:Button({Title="Restore character",Desc="Turn invisibility off without a reset",Callback=function()
         suppressInput()
         State.SetInvisibility(false)
         refresh()
     end})
+    if State.TeleportToArea then
+        local travel=movement:Section({Title="Travel",Opened=false,TextSize=15})
+        travel:Button({Title="TP to map",Callback=function() suppressInput(); State.TeleportToArea("Map") end})
+        travel:Button({Title="TP to lobby",Callback=function() suppressInput(); State.TeleportToArea("Lobby") end})
+        mobile.TeleportStatus=travel:Paragraph({Title="Teleport status",Desc=State.WorldTeleport.Status})
+    end
+    local invisOptions=movement:Section({Title="Invisibility options",Opened=false,TextSize=15})
+    option(invisOptions,"Knife while invisible","InvisibleKnife","Allow knife attempts while invisible. Server hits are unconfirmed.")
+    invisOptions:Paragraph({Title="Visibility",Desc="Spectators may still track you. Coin collection may stop while invisible."})
+    local animations=movement:Section({Title="Animations",Opened=false,TextSize=15})
     option(animations, "Mage movement animations", "MageAnimations", "Reapplies after respawn.")
-    animations:Button({Title = "Floating pose", Callback = function() State.SetPose(616006778); refresh() end})
-    animations:Button({Title = "Bend pose", Callback = function() State.SetPose(696096087); refresh() end})
+    local poses=animations:Section({Title="Poses & custom animation",Opened=false,TextSize=14})
+    poses:Button({Title = "Floating pose", Callback = function() State.SetPose(616006778); refresh() end})
+    poses:Button({Title = "Bend pose", Callback = function() State.SetPose(696096087); refresh() end})
     local poseId = tostring(State.Config.PoseAssetId)
-    animations:Input({Title = "Custom R15 animation ID", Value = poseId, Placeholder = "Animation asset ID", Callback = function(text) poseId = text end})
-    animations:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
+    poses:Input({Title = "Custom R15 animation ID", Value = poseId, Placeholder = "Animation asset ID", Callback = function(text) poseId = text end})
+    poses:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
     animations:Button({Title = "Restore animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
-    settings:Paragraph({Title = C.GetInputMode and "PC + mobile build" or "Delta mobile build", Desc = "UI library: bundled WindUI 1.6.66. Automatic input selection uses mouse/keyboard controls on PC and touch buttons on mobile. The executor must support the game's module access."})
+    local help=settings:Section({Title="Controls & help",Opened=false,TextSize=15})
+    help:Paragraph({Title="PC",Desc="Click: fire / stab · E or right-click: throw\nRight Shift: menu · End: stop / return"})
+    help:Paragraph({Title="Mobile",Desc="Tap the draggable MM2 icon for the menu. Separate FIRE / STAB and THROW buttons appear with your weapon."})
+    settings:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
+        local theme=({Midnight="MM2 Midnight",Graphite="Dark",Light="Light"})[name]
+        if theme then suppressInput(); library:SetTheme(theme) end
+    end})
     settings:Button({Title = "Equip gun / knife", Callback = function() C.EquipWeapon() end})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
-    settings:Button({Title = "Repair camera input", Callback = function() State.FixCamera() end})
-    settings:Button({Title = "Repair character (respawns)", Callback = function() State.RepairCharacter() end})
+    local repairs=settings:Section({Title="Troubleshooting",Opened=false,TextSize=15})
+    repairs:Button({Title = "Repair camera input", Callback = function() State.FixCamera() end})
+    repairs:Button({Title = "Repair character (respawns)", Callback = function() State.RepairCharacter() end})
     settings:Button({Title = "Close menu", Callback = function() window:Close() end})
     settings:Button({Title = "Unload and restore", Callback = function() State.Destroy() end})
     if State.FlingPlayer then
-        local playersTab = window:Tab({Title = "Players", Icon = "users"})
-        playersTab:Paragraph({Title = "Player launch", Desc = "Choose a method and target. Spin follows body size and pose in 3D, with R6/R15 and humanoid-root fallbacks. Missing collision bodies show a waiting status. Exclusions remain active. Contact does not guarantee a server kill."})
+        -- Register configuration containers after the primary target/actions below.
+        local contactOptions,diagnostics
+        local function buildFlingSettings()
+        contactOptions=playersTab:Section({Title="Contact settings",Opened=false,TextSize=15})
         if State.SetFlingSpinContact then
-            mobile.SpinContactToggle = playersTab:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
-                Desc = "Recorded IY spin and noclip settings. Tracks the selected player while moving or jumping. Stop any separate IY fling first. Changing mode stops the current session.",
+            mobile.SpinContactToggle = contactOptions:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
+                Desc = "Follow the selected body. Changing mode stops the current session.",
                 Callback = function(enabled) State.SetFlingSpinContact(enabled) end})
         end
         if State.SetFlingDownward then
-            mobile.DownwardContactToggle = playersTab:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
-                Desc = "Attempts contact from above with downward velocity. OFF uses wall-aware outward contact. Changing mode stops the current session.",
+            mobile.DownwardContactToggle = contactOptions:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
+                Desc = "Try contact from above. Changing mode stops the session.",
                 Callback = function(enabled) State.SetFlingDownward(enabled) end})
         end
         if State.SetFlingAdaptivePursuit then
-            mobile.AdaptivePursuitToggle = playersTab:Toggle({Title = "Track fast / flying targets", Value = State.Fling.AdaptivePursuit,
-                Desc = "Spin mode: measures 3D movement and matches motion between frames. Abrupt jumps pause tracking. Cannot force contact with fully noncolliding targets. Changing this stops the session.",
+            mobile.AdaptivePursuitToggle = contactOptions:Toggle({Title = "Track fast / flying targets", Value = State.Fling.AdaptivePursuit,
+                Desc = "Follow 3D movement. Noncolliding targets may prevent contact.",
                 Callback = function(enabled) State.SetFlingAdaptivePursuit(enabled) end})
         end
-        mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
         if State.GetFlingReport then
-            playersTab:Paragraph({Title = "Fling build", Desc = tostring(State.Build) .. " | Contact attempts are not confirmed server launches."})
-            playersTab:Button({Title = "Copy fling report", Desc = "After a failed attempt, copy the status and contact measurements for troubleshooting.", Callback = function()
+            diagnostics=playersTab:Section({Title="Diagnostics",Opened=false,TextSize=15})
+            diagnostics:Paragraph({Title = "Fling build", Desc = tostring(State.Build) .. "\nContact attempts do not confirm a server launch."})
+            diagnostics:Button({Title = "Copy fling report", Desc = "Copy status and contact measurements", Callback = function()
                 local copy = setclipboard or toclipboard
                 local report = State.GetFlingReport()
                 local ok = type(copy) == "function" and pcall(copy, report)
@@ -5760,6 +6204,7 @@ local createMobileUI = function(C)
                     mobile.FlingStatus.ParagraphFrame:SetDesc(report)
                 end
             end})
+        end
         end
         local function runFlingAction(name, callback)
             local request = {Name = name, At = os.clock()}
@@ -5797,7 +6242,8 @@ local createMobileUI = function(C)
                 if State.SetSelectedPlayer then State.SetSelectedPlayer(selectedId) end
             end})
         if State.PlayerActions then
-            mobile.PlayerActionStatus = playersTab:Paragraph({Title = "Teleport / auto attack", Desc = State.PlayerActions.Status})
+            local selectedActions=playersTab:Section({Title="Teleport & auto attack",Opened=false,TextSize=15})
+            mobile.PlayerActionStatus = selectedActions:Paragraph({Title = "Teleport / auto attack", Desc = State.PlayerActions.Status})
             local function playerAction(callback)
                 local ok, accepted, message = pcall(callback)
                 if not ok then State.PlayerActions.Status = "Player action error: " .. tostring(accepted)
@@ -5807,27 +6253,30 @@ local createMobileUI = function(C)
                 end
                 return ok and accepted ~= false
             end
-            playersTab:Button({Title = "Teleport to selected player", Callback = function()
+            selectedActions:Button({Title = "Teleport to selected player", Callback = function()
                 playerAction(function() return State.TeleportToPlayer(selectedId) end)
             end})
             local autoToggle
-            autoToggle = playersTab:Toggle({Title = "Auto attack selected player", Value = false,
-                Desc = "Uses an owned gun or knife. Gun targets the murderer; knife stabs close targets or throws at range. Close menu to attack.",
+            autoToggle = selectedActions:Toggle({Title = "Auto attack selected player", Value = false,
+                Desc = "Use your owned weapon. Close the menu to attack.",
                 Callback = function(enabled)
                     local accepted = playerAction(function() return State.SetAutoAttack(enabled,selectedId) end)
                     if not accepted and autoToggle then autoToggle:Set(false,false) end
                 end})
             mobile.AutoAttackToggle = autoToggle
-            playersTab:Button({Title = "Stop all player actions", Callback = function()
+            selectedActions:Button({Title = "Stop all player actions", Callback = function()
                 if State.EmergencyStop then mobile.TriggerEmergencyStop()
                 else State.StopAutoAttack("All player actions stopped"); State.StopFling() end
             end})
         end
         playersTab:Button({Title = "Fling selected player", Callback = function() runFlingAction("Selected player", function() return State.FlingPlayer(selectedId) end) end})
         playersTab:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() runFlingAction("Role opponent", function() return State.FlingRole("Opponent") end) end})
-        playersTab:Button({Title = "Fling murderer", Callback = function() runFlingAction("Murderer", function() return State.FlingRole("Murderer") end) end})
-        playersTab:Button({Title = "Fling sheriff", Callback = function() runFlingAction("Sheriff", function() return State.FlingRole("Sheriff") end) end})
         playersTab:Button({Title = "Stop fling / return", Callback = function() State.StopFling() end})
+        mobile.FlingStatus = playersTab:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
+        local roleActions=playersTab:Section({Title="Choose role directly",Opened=false,TextSize=15})
+        roleActions:Button({Title = "Fling murderer", Callback = function() runFlingAction("Murderer", function() return State.FlingRole("Murderer") end) end})
+        roleActions:Button({Title = "Fling sheriff", Callback = function() runFlingAction("Sheriff", function() return State.FlingRole("Sheriff") end) end})
+        buildFlingSettings()
         playersTab:Button({Title = "Refresh player list", Callback = roster})
         local function refreshRoster()
             task.defer(function() if State.Running and not mobile.Destroyed then roster() end end)
@@ -5838,7 +6287,7 @@ local createMobileUI = function(C)
         end
     end
     if exclusionsTab then
-        exclusionsTab:Paragraph({Title = "Protected players", Desc = "NotroFable is always protected by user ID in this script, regardless of role. Clear and Remove cannot remove that entry. Aim, knife contacts, auto attack and fling skip excluded players. This does not prevent manual or other-script attacks."})
+        exclusionsTab:Paragraph({Title = "Protected players", Desc = "Your automatic actions skip these players. NotroFable stays protected. Other players and scripts can still attack."})
         local addId, removeId, addMap, removeMap = nil, nil, {}, {}
         local addPicker, removePicker
         mobile.ExclusionsStatus = exclusionsTab:Paragraph({Title = "Exclusion status", Desc = "Choose a player, then press Exclude selected player."})
@@ -5887,7 +6336,28 @@ local createMobileUI = function(C)
             connect(C.Players.PlayerRemoving, rosterChanged)
         end
     end
-    combat:Select()
+    home:Select()
+    local descriptions={}
+    local function updateDescription(card,key,text)
+        if card and card.ParagraphFrame and descriptions[key]~=text then
+            card.ParagraphFrame:SetDesc(text); descriptions[key]=text
+        end
+    end
+    local function updateDashboard()
+        if not mobile.MenuOpen then return end
+        local data
+        if State.GetCombatHUDData then local ok,result=pcall(State.GetCombatHUDData); if ok and type(result)=="table" then data=result end end
+        local role=data and data.Role
+        local session=(role and role~="Unknown" and role or "Waiting for round").." · "..(data and data.Weapon or "No weapon equipped")
+        local function flag(value) return value and "ON" or "OFF" end
+        session..="\nGun aim "..flag(State.Config.MagicBullet).." · ESP "..flag(State.Config.ESP).." · Aura "..flag(State.KillAura and State.KillAura.Enabled)
+        updateDescription(mobile.OverviewStatus,"Overview",session)
+        local aura=State.KillAura and State.KillAura.Status or "Aura unavailable"
+        local pickup=State.GunPickup and State.GunPickup.Status or "Pickup unavailable"
+        updateDescription(mobile.AutomationStatus,"Automation",aura.."\n"..pickup)
+    end
+    mobile.UpdateDashboard=updateDashboard
+    updateDashboard()
 
     local function button(text, size, parent)
         local b = Instance.new("TextButton")
@@ -6130,6 +6600,7 @@ local createMobileUI = function(C)
         elapsed += dt
         if elapsed < 0.3 then return end
         elapsed = 0
+        updateDashboard()
         local item = C.EquippedWeapon()
         mobile.ApplyInputMode()
         pad.Visible = mobile.Mode == "Mobile" and not mobile.MenuOpen and item ~= nil
@@ -6188,6 +6659,12 @@ local createMobileUI = function(C)
         if State.KillAura and mobile.KillAuraStatus and mobile.KillAuraStatus.ParagraphFrame and mobile.LastKillAuraStatus~=State.KillAura.Status then
             mobile.KillAuraStatus.ParagraphFrame:SetDesc(State.KillAura.Status)
             mobile.LastKillAuraStatus=State.KillAura.Status
+        end
+        if State.GunPickup and mobile.PickupStatus and mobile.PickupStatus.ParagraphFrame and mobile.LastPickupStatus~=State.GunPickup.Status then
+            mobile.PickupStatus.ParagraphFrame:SetDesc(State.GunPickup.Status); mobile.LastPickupStatus=State.GunPickup.Status
+        end
+        if State.WorldTeleport and mobile.TeleportStatus and mobile.TeleportStatus.ParagraphFrame and mobile.LastTeleportStatus~=State.WorldTeleport.Status then
+            mobile.TeleportStatus.ParagraphFrame:SetDesc(State.WorldTeleport.Status); mobile.LastTeleportStatus=State.WorldTeleport.Status
         end
         notice.Text = State.Invis and (State.Invis.Active or State.Invis.Busy) and State.Invis.Status
             or fling and (fling.Active or os.clock() < (fling.DisplayUntil or 0)) and fling.Status
@@ -19517,18 +19994,18 @@ end
 function av.Destroy(ax)
 aw:Destroy()
 
-table.remove(ak.AllElements,at.GlobalIndex)
-table.remove(aa.Elements,at.Index)
-table.remove(ap.Elements,at.Index)
+for index=#ak.AllElements,1,-1 do
+    if ak.AllElements[index]==av then table.remove(ak.AllElements,index); break end
+end
+for index=#aa.Elements,1,-1 do
+    if aa.Elements[index]==av then table.remove(aa.Elements,index); break end
+end
 aa:UpdateAllElementShapes(aa)
 end
 end
 
-ak.AllElements[at.Index]=av
+ak.AllElements[at.GlobalIndex]=av
 aa.Elements[at.Index]=av
-if ap then
-ap.Elements[at.Index]=av
-end
 
 if ak.NewElements then
 aa:UpdateAllElementShapes(aa)
@@ -20782,44 +21259,40 @@ local ay=string.lower(aw)
 return string.find(ax,ay,1,true)~=nil
 end
 
-local function Search(av)
-if not av or av==""then
-return{}
+-- Index nested menu sections without changing controls or invoking callbacks.
+local collectSearchResults=function(tabs,query)
+    if type(query)~="string" then return {} end
+    query=string.lower(query:match("^%s*(.-)%s*$"))
+    if query=="" then return {} end
+    local function matches(value)
+        return type(value)=="string" and string.find(string.lower(value),query,1,true)~=nil
+    end
+    local found={}
+    for tabIndex,tab in pairs(tabs) do
+        local results,seen={},{}
+        local function scan(elements,rootIndex,sections)
+            for index,element in pairs(elements or {}) do
+                if type(element)=="table" and not seen[element] then
+                    seen[element]=true
+                    if element.__type=="Section" then
+                        local path=table.clone(sections); table.insert(path,element)
+                        scan(element.Elements,rootIndex or index,path)
+                    elseif matches(element.Title) or matches(element.Desc) then
+                        table.insert(results,{Title=element.Title,Desc=element.Desc,Original=element,
+                            __type=element.__type,Index=rootIndex or index,Sections=table.clone(sections)})
+                    end
+                end
+            end
+        end
+        scan(tab.Elements,nil,{})
+        if matches(tab.Title) or #results>0 then
+            found[tabIndex]={Tab=tab,Title=tab.Title,Icon=tab.Icon,Elements=results}
+        end
+    end
+    return found
 end
 
-local aw={}
-for ax,ay in next,am.Tabs do
-local az=ContainsText(ay.Title or"",av)
-local aA={}
-
-for aB,b in next,ay.Elements do
-if b.__type~="Section"then
-local d=ContainsText(b.Title or"",av)
-local f=ContainsText(b.Desc or"",av)
-
-if d or f then
-aA[aB]={
-Title=b.Title,
-Desc=b.Desc,
-Original=b,
-__type=b.__type,
-Index=aB,
-}
-end
-end
-end
-
-if az or next(aA)~=nil then
-aw[ax]={
-Tab=ay,
-Title=ay.Title,
-Icon=ay.Icon,
-Elements=aA,
-}
-end
-end
-return aw
-end
+local function Search(av) return collectSearchResults(am.Tabs,av) end
 
 ai.AddSignal(as.UIListLayout:GetPropertyChangedSignal"AbsoluteContentSize",function()
 
@@ -20904,10 +21377,11 @@ false,
 function()
 ap:Close()
 am:SelectTab(ay)
-if az.Tab.ScrollToTheElement then
-
-az.Tab:ScrollToTheElement(d.Index)
-end
+for _,section in ipairs(d.Sections or {}) do section:Open(true) end
+task.defer(function()
+    if az.Tab.ScrollToTheElement then az.Tab:ScrollToTheElement(d.Index) end
+    if d.Original.Highlight then d.Original:Highlight() end
+end)
 
 end
 )
