@@ -17697,7 +17697,7 @@ local State = {
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
-        MaxRange = 300, MaxLead = 3.5, Ping = 0.04},
+        MaxRange = 1000, MaxLead = 8, Ping = 0.04},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
         GunReplies = 0, GunTargetHits = 0, GunMisses = 0, GunUnconfirmed = 0,
@@ -17724,10 +17724,12 @@ State.Config.ExperimentalInvisibility = false
 if State.Config.MageAnimations then State.Config.PoseEnabled = false end
 -- Replace the earlier guessed default rather than persisting it across reloads.
 if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
-if State.Config.MaxLead == 1.5 then State.Config.MaxLead = 3.5 end
+-- Old caps stopped aiming past 300 studs / 3.5 s of knife flight; maps reach ~700 studs corner to corner.
+if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.MaxLead = 8 end
+if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-16-KeySystem"
+State.Build = "Universal-WindUI-2026-10-16-MovingOcclusion"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -18060,7 +18062,18 @@ local function segmentHitsBox(origin, position, frame, size)
     end
     return true
 end
-local function clearPath(origin, position, char, ignoreTarget)
+local clearPath
+do
+-- Hot path: called hundreds of times per target scan. Mirror the passthrough tag set via signals
+-- and reuse one RaycastParams instead of fetching every tagged part and allocating per call.
+local passthrough = {}
+for _, instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do passthrough[instance] = true end
+connect(CollectionService:GetInstanceAddedSignal("WeaponPassthrough"), function(instance) passthrough[instance] = true end)
+connect(CollectionService:GetInstanceRemovedSignal("WeaponPassthrough"), function(instance) passthrough[instance] = nil end)
+local params = RaycastParams.new()
+params.FilterType = Enum.RaycastFilterType.Exclude
+params.IgnoreWater = true
+clearPath = function(origin, position, char, ignoreTarget)
     for blocker in pairs(State.ServerBlockers) do
         if not blocker:IsDescendantOf(workspace) then
             State.ServerBlockers[blocker] = nil
@@ -18073,12 +18086,9 @@ local function clearPath(origin, position, char, ignoreTarget)
     end
     local ignored = {player.Character}
     if ignoreTarget then table.insert(ignored, char) end
-    for _, instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+    for instance in pairs(passthrough) do
         if not State.ServerBlockers[instance] then table.insert(ignored, instance) end
     end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.IgnoreWater = true
     for _ = 1, 12 do
         params.FilterDescendantsInstances = ignored
         local result = workspace:Raycast(origin, position - origin, params)
@@ -18092,6 +18102,7 @@ local function clearPath(origin, position, char, ignoreTarget)
         end
     end
     return false
+end
 end
 function State.TestCoverChecks()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -18390,6 +18401,12 @@ local installAimFeedbackSafety = function(State)
     State.GunReplyReceipts={}
     function State.MatchGunFeedback(item,origin,endpoint,hitPart,character,now)
         if not vector(endpoint) then return nil,"Invalid reply" end
+        -- MM2's beam event identifies the exact gun Handle, rather than its Tool.
+        -- Normalize only the currently parented Handle, never by name or shared origin.
+        if typeof(item)=="Instance" and item:IsA("BasePart") then
+            local tool=item.Parent
+            if tool and tool:IsA("Tool") and tool:FindFirstChild("Handle")==item then item=tool end
+        end
         local receipts=State.GunReplyReceipts
         for i=#receipts,1,-1 do
             local receipt=receipts[i]
@@ -18447,7 +18464,6 @@ local function sampleMotion(now)
                     record.Older = record.Previous
                     record.Previous = record.Current
                     record.Current = dt <= 0.15 and (root.Position - record.Position) / dt or nil
-                    local speedCap = math.max(hum and hum.WalkSpeed or 16, 16) * 1.5
                     local networkJump = record.Current and not State.IsAimSamplePlausible(record.Current,root.Position-record.Position,dt)
                     if networkJump then record.Current, record.Previous, record.Older = nil, nil, nil end
                     record.OlderInterval = record.PreviousInterval
@@ -18845,6 +18861,8 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                             -- Translate the ray back into the current body geometry
                             -- rather than accepting an empty corner of a mesh's box.
                             if point and clearPath(origin, point, char, true)
+                                and (kind~="Gun" or not State.GunPathClear
+                                    or State.GunPathClear(State.GunPathSnapshot,origin,point,char))
                                 and sampleRayHitsBody(origin - (point - sample), sample, bodyQuery) then
                                 exposedSamples += 1
                                 local centreWeight = offset == Vector3.zero and 1 or 0.85
@@ -18986,8 +19004,8 @@ local function chooseTarget(kind, origin, item, preferred, strict)
     if not origin then return nil end
     local started = os.clock()
     local camera = workspace.CurrentCamera
-    local inset = GuiService:GetGuiInset()
-    local cursor = UIS:GetMouseLocation() - inset
+    -- GetMouseLocation and WorldToViewportPoint both ignore the GUI inset; subtracting it shifted the cursor up.
+    local cursor = UIS:GetMouseLocation()
     if camera and touchInput() then cursor = camera.ViewportSize / 2 end
     local candidates = {}
     for order, other in ipairs(Players:GetPlayers()) do
@@ -19028,6 +19046,7 @@ local function chooseTarget(kind, origin, item, preferred, strict)
                     bestScore = score
                     bestOrder = candidate.Order
                     solution.Player = other
+                    solution.Character = char
                     solution.Velocity = root.AssemblyLinearVelocity
                     solution.Screen = nil
                     best = solution
@@ -19070,16 +19089,29 @@ local function recordConnect(record, signal, callback)
     local connection = signal:Connect(callback)
     table.insert(record.Connections, connection)
 end
+do
+-- One listener per live projectile, released when the knife is removed (previously one was kept per knife ever thrown).
+local speedListeners = {}
 local function observeKnife(projectile)
     local function updateSpeed()
         local speed = projectile:GetAttribute("ThrowSpeed")
         if type(speed) == "number" and speed >= 20 and speed <= 1000 then State.ObservedKnifeSpeed = speed end
     end
     updateSpeed()
-    connect(projectile:GetAttributeChangedSignal("ThrowSpeed"), updateSpeed)
+    if not speedListeners[projectile] then
+        speedListeners[projectile] = projectile:GetAttributeChangedSignal("ThrowSpeed"):Connect(updateSpeed)
+    end
 end
 for _, projectile in ipairs(CollectionService:GetTagged("ThrowingKnife")) do observeKnife(projectile) end
 connect(CollectionService:GetInstanceAddedSignal("ThrowingKnife"), observeKnife)
+connect(CollectionService:GetInstanceRemovedSignal("ThrowingKnife"), function(projectile)
+    local listener = speedListeners[projectile]
+    if listener then listener:Disconnect(); speedListeners[projectile] = nil end
+end)
+table.insert(State.Connections, {Disconnect = function()
+    for projectile, listener in pairs(speedListeners) do listener:Disconnect(); speedListeners[projectile] = nil end
+end})
+end
 do
     local dodge = {Status = "Knife dodge ready", Focused = true, Tracked = setmetatable({}, {__mode = "k"}),
         Decisions = 0, Jumps = 0, Sidesteps = 0, LastAction = nil}
@@ -19477,61 +19509,268 @@ local function aimPoint(record, preferred, strict)
     -- Never replace a failed target selection with an unaimed cursor shot.
     return nil, nil
 end
+do
+-- Predict only other players' possible ray obstruction; never move or resize an avatar.
+local installGunPathGuard=function(C)
+    local State,player=C.State,C.Player
+    local clock=C.Clock or os.clock
+    local function finite(v)
+        return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e7 and math.abs(v.Y)<1e7 and math.abs(v.Z)<1e7
+    end
+    function State.CreateGunPathSnapshot()
+        local delay=tonumber(State.Config.Ping) or 0
+        if delay~=delay then delay=0 end
+        delay=math.clamp(delay,0,.15)
+        local margin=math.clamp(delay*.25,.012,.035)
+        local times={0,math.max(0,delay-margin),delay,math.min(.185,delay+margin)}
+        local snapshot={Time=clock(),Groups={},Times=times,Parts=0}
+        local ignored={}
+        for _,o in ipairs(C.GetPassthrough()) do ignored[o]=true end
+        local function passthrough(part)
+            local node=part
+            while node do
+                if ignored[node] then return true end
+                node=node.Parent
+            end
+            return false
+        end
+        for _,p in ipairs(C.Players:GetPlayers()) do
+            local char=p.Character
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            if p~=player and root and finite(root.Position) then
+                local group={Character=char,Name=p.Name,Centre=root.Position,Radius=0,Parts={}}
+                for _,part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and (part.CanQuery or part.CanCollide or State.ServerBlockers[part])
+                        and (part.Transparency<1 or State.ServerBlockers[part]) and not passthrough(part)
+                        and finite(part.Position) and finite(part.Size) then
+                        if snapshot.Parts>=512 then snapshot.Truncated=true; break end
+                        local ok,velocity=pcall(function() return root:GetVelocityAtPosition(part.Position) end)
+                        if not ok or not finite(velocity) then velocity=root.AssemblyLinearVelocity end
+                        if not finite(velocity) then velocity=Vector3.zero end
+                        if velocity.Magnitude>900 then velocity=velocity.Unit*900 end
+                        local radius=(part.Position-root.Position).Magnitude+part.Size.Magnitude*.5
+                            +velocity.Magnitude*times[4]+.05
+                        group.Radius=math.max(group.Radius,radius)
+                        table.insert(group.Parts,{Part=part,Frame=part.CFrame,Size=part.Size,Velocity=velocity})
+                        snapshot.Parts+=1
+                    end
+                end
+                if #group.Parts>0 then table.insert(snapshot.Groups,group) end
+                if snapshot.Truncated then break end
+            end
+        end
+        return snapshot
+    end
+    function State.GunPathClear(snapshot,origin,point,targetCharacter)
+        if not snapshot then return true end
+        if clock()-snapshot.Time>.25 or snapshot.Truncated then return false end
+        local delta=point-origin
+        local lengthSquared=delta:Dot(delta)
+        if lengthSquared<.000001 then return false end
+        for _,group in ipairs(snapshot.Groups) do
+            if group.Character~=targetCharacter then
+                local t=math.clamp((group.Centre-origin):Dot(delta)/lengthSquared,0,1)
+                local distance=group.Centre-(origin+delta*t)
+                if distance:Dot(distance)<=group.Radius*group.Radius then
+                    for _,entry in ipairs(group.Parts) do
+                        if entry.Part:IsDescendantOf(group.Character) then
+                            for _,dt in ipairs(snapshot.Times) do
+                                if C.Intersects(origin,point,entry.Frame+entry.Velocity*dt,entry.Size) then
+                                    State.LastGunPathBlock={Player=group.Name,Part=entry.Part.Name,LookAhead=dt}
+                                    return false
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return true
+    end
+end
+
+installGunPathGuard({State=State,Player=player,Players=Players,Intersects=segmentHitsBox,
+    GetPassthrough=function() return CollectionService:GetTagged("WeaponPassthrough") end})
+end
 local function sendGun(record, preferred, strict)
-    if not State.Config.MagicBullet then return end
+    if not record or record.GunSending or not State.Config.MagicBullet then return end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Gun") then return end
-    if not State.Config.MagicBullet or not ready(record) or os.clock() - record.LastGun < 0.1 then return end
-    if not record.Item.Enabled then
-        State.LastGunFeedback = {Message = "Gun is not ready to fire"}
-        return
+    if not State.Config.MagicBullet or not ready(record) or os.clock()-record.LastGun<0.1 then return end
+    local function skip(message)
+        State.Stats.SkippedGunShots+=1
+        State.LastGunFeedback={Message=message}
+        return false
     end
-    local root = player.Character:FindFirstChild("HumanoidRootPart")
-    local attachment = root and root:FindFirstChild("GunRaycastAttachment")
-    local remote = record.Item:FindFirstChild("Shoot")
+    if not record.Item.Enabled then return skip("Gun is not ready to fire") end
+    local ownCharacter=player.Character
+    local root=ownCharacter and ownCharacter:FindFirstChild("HumanoidRootPart")
+    local attachment=root and root:FindFirstChild("GunRaycastAttachment")
+    local remote=record.Item:FindFirstChild("Shoot")
     if not attachment or not remote or not remote:IsA("RemoteEvent") then
-        State.AimStatus = "Gun attachment unavailable"
-        return
+        return skip("Gun attachment or firing remote unavailable")
     end
-    local head = player.Character:FindFirstChild("Head")
-    if head and not clearPath(head.Position, attachment.WorldPosition, player.Character) then
-        State.Stats.SkippedGunShots += 1
-        State.LastGunFeedback = {Message = "Shot skipped: muzzle obstructed"}
-        return
+    local function finite(v)
+        return typeof(v)=="Vector3" and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e8 and math.abs(v.Y)<1e8 and math.abs(v.Z)<1e8
     end
-    local targetFrame, targetName, solution = aimPoint(record, preferred, strict)
-    if not targetFrame then
-        State.Stats.SkippedGunShots += 1
-        State.LastGunFeedback = {Message = "Shot skipped: no clear target"}
-        return
+    local originFrame=attachment.WorldCFrame
+    local snapshot=State.CreateGunPathSnapshot and State.CreateGunPathSnapshot()
+    local function selectAim()
+        State.GunPathSnapshot=snapshot
+        local ok,frame,name,found=pcall(aimPoint,record,preferred,strict)
+        State.GunPathSnapshot=nil
+        if not ok then return nil,nil,nil,tostring(frame) end
+        return frame,name,found
     end
-    if State.ExcludedPlayerInShotPath(attachment.WorldPosition, targetFrame.Position) then
-        State.Stats.SkippedGunShots += 1
-        State.LastGunFeedback = {Message = "Shot skipped: excluded player in firing path"}
-        return
+    local targetFrame,targetName,solution,aimError=selectAim()
+    if aimError then return skip("Shot cancelled: aiming failed: "..aimError) end
+    -- Recalculate once if the muzzle moved materially while selecting a body point.
+    if player.Character~=ownCharacter or not ready(record) or not record.Item.Enabled then
+        return skip("Shot cancelled: weapon or character changed")
     end
-    record.LastGun = os.clock()
-    State.LastGunSentAt = os.clock()
-    State.LastGunFeedback = {SentAt = State.LastGunSentAt, Message = "Waiting for server shot feedback"}
-    local targetPlayer = targetName and Players:FindFirstChild(targetName)
+    if root:FindFirstChild("GunRaycastAttachment")~=attachment then
+        return skip("Shot cancelled: muzzle attachment changed")
+    end
+    if (attachment.WorldPosition-originFrame.Position).Magnitude>.25 then
+        originFrame=attachment.WorldCFrame
+        targetFrame,targetName,solution,aimError=selectAim()
+        if aimError then return skip("Shot cancelled: aiming failed: "..aimError) end
+    end
+    if not targetFrame or typeof(targetFrame)~="CFrame" or not finite(targetFrame.Position) then
+        return skip("Shot skipped: no clear finite target")
+    end
+    local targetPlayer=targetName and Players:FindFirstChild(targetName)
+    local targetCharacter=solution and solution.Character or targetPlayer and targetPlayer.Character
+    if not targetPlayer or not targetCharacter or targetPlayer.Character~=targetCharacter
+        or State.IsPlayerExcluded(targetPlayer) or not alive(targetPlayer) or roleFor(targetPlayer)~="Murderer" then
+        return skip("Shot cancelled: target changed or is protected")
+    end
+    if player.Character~=ownCharacter or not ready(record) or not record.Item.Enabled
+        or root:FindFirstChild("GunRaycastAttachment")~=attachment then
+        return skip("Shot cancelled: weapon or character changed")
+    end
+    -- Use one frame for the pending record and actual payload, after all prediction work.
+    originFrame=attachment.WorldCFrame
+    local origin=originFrame.Position
+    local head=ownCharacter:FindFirstChild("Head")
+    if not finite(origin) or (targetFrame.Position-origin).Magnitude<.001 then
+        return skip("Shot skipped: invalid shot geometry")
+    end
+    if head and not clearPath(head.Position,origin,ownCharacter) then
+        return skip("Shot skipped: muzzle obstructed")
+    end
+    if not clearPath(origin,targetFrame.Position,targetCharacter,true) then
+        return skip("Shot skipped: firing path became blocked")
+    end
+    if State.GunPathClear and not State.GunPathClear(snapshot,origin,targetFrame.Position,targetCharacter) then
+        return skip("Shot skipped: another player may cross the firing path")
+    end
+    if State.ExcludedPlayerInShotPath(origin,targetFrame.Position) then
+        return skip("Shot skipped: excluded player in firing path")
+    end
+    local previousLastGun,previousSentAt=record.LastGun,State.LastGunSentAt
+    local now=os.clock()
+    record.LastGun=now
+    State.LastGunSentAt=now
     State.GunShotSequence = (State.GunShotSequence or 0) + 1
-    table.insert(State.PendingGun, {Item = record.Item, Record = record, Target = targetPlayer,
-        ShotId = State.GunShotSequence, OwnCharacter = player.Character,
-        TargetCharacter = targetPlayer and targetPlayer.Character,
-        Origin = attachment.WorldPosition, SentAt = State.LastGunSentAt, AimPoint = targetFrame.Position,
-        BodyPoint = solution and solution.BodyPoint, Velocity = solution and solution.Velocity,
-        LeadTime = solution and solution.LeadTime, Airborne = solution and solution.Airborne,
-        AimPart = solution and solution.AimPart, SampleOffset = solution and solution.SampleOffset,
-        VelocitySource = solution and solution.VelocitySource,
-        TargetMode = solution and solution.TargetMode,
-        ExposureQuality = solution and solution.ExposureQuality, ClearNeighbours = solution and solution.ClearNeighbours,
-        TimingCoverage = solution and solution.TimingCoverage, TimingPassed = solution and solution.TimingPassed,
-        CursorDistance = solution and solution.CursorDistance})
-    if #State.PendingGun > 8 then table.remove(State.PendingGun, 1) end
-    remote:FireServer(attachment.WorldCFrame, targetFrame)
-    State.Stats.GunRequests += 1
-    State.LastRequest = {Weapon = "Gun", Target = targetName, Position = targetFrame.Position,
-        Offscreen = solution and solution.Offscreen, Mode = "MagicBullet", AimPart = solution and solution.AimPart,
-        TargetMode = solution and solution.TargetMode}
+    local shotId=State.GunShotSequence
+    State.LastGunFeedback={ShotId=shotId,SentAt=now,Message="Waiting for server shot feedback"}
+    local pending={Item=record.Item,Record=record,Target=targetPlayer,ShotId=shotId,
+        OwnCharacter = player.Character,TargetCharacter=targetCharacter,
+        Origin=origin,SentAt=now,AimPoint=targetFrame.Position,
+        BodyPoint=solution and solution.BodyPoint,Velocity=solution and solution.Velocity,
+        LeadTime=solution and solution.LeadTime,Airborne=solution and solution.Airborne,
+        AimPart=solution and solution.AimPart,SampleOffset=solution and solution.SampleOffset,
+        VelocitySource=solution and solution.VelocitySource,TargetMode=solution and solution.TargetMode,
+        ExposureQuality=solution and solution.ExposureQuality,ClearNeighbours=solution and solution.ClearNeighbours,
+        TimingCoverage=solution and solution.TimingCoverage,TimingPassed=solution and solution.TimingPassed,
+        CursorDistance=solution and solution.CursorDistance}
+    table.insert(State.PendingGun,pending)
+    record.GunSending=true
+    local sent,why=pcall(function() remote:FireServer(originFrame,targetFrame) end)
+    record.GunSending=false
+    if not sent then
+        for i=#State.PendingGun,1,-1 do
+            if State.PendingGun[i]==pending then table.remove(State.PendingGun,i); break end
+        end
+        if State.GunShotSequence==shotId then
+            record.LastGun,State.LastGunSentAt=previousLastGun,previousSentAt
+            State.LastGunFeedback={ShotId=shotId,Message="Shot request failed: "..tostring(why)}
+        end
+        State.Stats.GunSendErrors=(State.Stats.GunSendErrors or 0)+1
+        return false
+    end
+    while #State.PendingGun>8 do table.remove(State.PendingGun,1) end
+    State.Stats.GunRequests+=1
+    State.LastRequest={Weapon="Gun",Target=targetName,Position=targetFrame.Position,
+        Offscreen=solution and solution.Offscreen,Mode="MagicBullet",AimPart=solution and solution.AimPart,
+        TargetMode=solution and solution.TargetMode}
+    return true
+end
+
+
+do
+-- Bounded, paired blade-touch requests. Sending either request is not proof of damage.
+local installAuraTouch=function(C)
+    local State,player=C.State,C.Player
+    local clock=C.Clock or os.clock
+    local pending={}
+    local report={Available=type(C.Touch)=="function",Begins=0,Ends=0,Errors=0,Pending=0,Status="Idle"}
+    State.AuraTouch=report
+    local function finish(record,pair)
+        if pending[record]~=pair then return true end
+        local ok,why=pcall(C.Touch,pair.Handle,pair.Hit,1)
+        if ok then
+            pending[record]=nil; report.Pending-=1; report.Ends+=1
+            report.Status="Touch ended; damage unconfirmed"
+        else
+            report.Errors+=1; report.Status="Touch cleanup failed: "..tostring(why)
+        end
+        return ok,why
+    end
+    function State.FlushAuraTouches(record)
+        local success=true
+        if record then
+            local pair=pending[record]
+            if pair then success=finish(record,pair) end
+        else
+            for owner,pair in pairs(pending) do
+                if not finish(owner,pair) then success=false end
+            end
+        end
+        return success,report.Status
+    end
+    function State.TryAuraTouch(record,hit)
+        if not report.Available then report.Status="Touch API unavailable; contact remote only"; return false end
+        if not State.Running or not record.AuraStab or not State.CanAuraContact or not State.CanAuraContact()
+            or clock()>record.StabbingUntil then return false end
+        local target=record.StabTarget
+        local char=target and target.Character
+        local own=player.Character
+        local handle=record.Item and record.Item:FindFirstChild("Handle")
+        if not own or record.Item.Parent~=own or not handle or not handle:IsA("BasePart")
+            or not hit or not hit:IsA("BasePart") or not char or not hit:IsDescendantOf(char)
+            or State.IsPlayerExcluded(target) then return false end
+        -- One outstanding pair per weapon; failed cleanup cannot create an unbounded backlog.
+        if pending[record] then report.Status="Waiting for previous touch cleanup"; return false end
+        if record.AuraTouchWindow==record.StabbingUntil then return false end
+        local pair={Handle=handle,Hit=hit}
+        pending[record]=pair; report.Pending+=1
+        record.AuraTouchWindow=record.StabbingUntil
+        -- Reserve the pair before begin: native Touched may re-enter the contact reporter.
+        local ok,why=pcall(C.Touch,handle,hit,0)
+        if ok then report.Begins+=1; report.Status="Touch requested; damage unconfirmed"
+        else report.Errors+=1; report.Status="Touch begin failed: "..tostring(why) end
+        -- End even after a partial begin error, cancellation, respawn or a replacement character.
+        local scheduled=pcall(C.Schedule,0.04,function() finish(record,pair) end)
+        if not scheduled then finish(record,pair) end
+        return ok
+    end
+    return report
+end
+
+installAuraTouch({State=State,Player=player,Touch=type(firetouchinterest)=="function" and firetouchinterest or nil,Schedule=task.delay})
 end
 local function reportStabContact(record, hit, source)
     if not ready(record) or os.clock() > record.StabbingUntil or not hit or not hit:IsA("BasePart") then return end
@@ -19539,6 +19778,7 @@ local function reportStabContact(record, hit, source)
     record.StabContacts = record.StabContacts or {}
     if record.StabContacts[hit] then return end
     local ownRoot = player.Character:FindFirstChild("HumanoidRootPart")
+    if not ownRoot then return end
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -19549,10 +19789,19 @@ local function reportStabContact(record, hit, source)
             local events = record.Item:FindFirstChild("Events")
             local remote = events and events:FindFirstChild("HandleTouched")
             if remote then
+                record.StabContactFailures=record.StabContactFailures or {}
+                if (record.StabContactFailures[hit] or 0)>=2 then return end
                 record.StabContacts[hit] = true
-                remote:FireServer(hit)
+                local touched=record.AuraStab and State.TryAuraTouch and State.TryAuraTouch(record,hit) or false
+                local sent,why=pcall(function() remote:FireServer(hit) end)
+                State.LastStabContact = {Target=other.Name,Part=hit.Name,Source=source,
+                    TouchRequested=touched,RemoteSent=sent,DamageConfirmed=false,Error=not sent and tostring(why) or nil}
+                if not sent then
+                    record.StabContacts[hit]=nil
+                    record.StabContactFailures[hit]=(record.StabContactFailures[hit] or 0)+1
+                    return
+                end
                 State.Stats.StabContactReports += 1
-                State.LastStabContact = {Target = other.Name, Part = hit.Name, Source = source}
                 if State.LastKnifeInput and State.LastKnifeInput.Action == "Stab" then State.LastKnifeInput.Target = other.Name end
             end
             return
@@ -19616,6 +19865,7 @@ local function stabKnife(record, preferred)
     record.LastStab = os.clock()
     record.StabbingUntil = os.clock() + 0.85
     record.StabContacts = {}
+    record.StabContactFailures = {}
     local handle = record.Item:FindFirstChild("Handle")
     record.BladeFrame, record.BladeTime = handle and handle.CFrame, os.clock()
     stopTracks(record)
@@ -19803,7 +20053,25 @@ local function syncWeapons()
         State.Target, State.AimPreview = nil, nil
         return
     end
-    local target = chooseTarget(kind, shotOrigin(kind, item), item)
+    local target
+    if kind == "Knife" and not State.Config.KnifeAim then
+        target = nil -- the status only reports that knife aim is off; skip the full scan
+    elseif kind == "Knife" then
+        -- The knife preview only feeds status/HUD text; a full scan is ~1000 raycasts, so reuse it for 0.5 s.
+        -- Throws always run their own fresh selection.
+        local now, cached = os.clock(), State.KnifePreview
+        if cached and cached.Item == item and now < cached.Until then
+            target = cached.Target
+            if target and (not alive(target.Player)
+                or (State.IsPlayerExcluded and State.IsPlayerExcluded(target.Player))) then target = nil end
+            if State.RememberAimTarget then State.RememberAimTarget("Knife", target, nil, nil, now) end
+        else
+            target = chooseTarget(kind, shotOrigin(kind, item), item)
+            State.KnifePreview = {Item = item, Target = target, Until = now + 0.5}
+        end
+    else
+        target = chooseTarget(kind, shotOrigin(kind, item), item)
+    end
     State.Target = target and target.Player.Name or nil
     State.AimPreview = kind == "Gun" and target and {Player = target.Player,
         Character = target.Player.Character, AimPart = target.AimPart, SampleOffset = target.SampleOffset, TargetMode = target.TargetMode} or nil
@@ -20175,13 +20443,55 @@ local function updateHiddenBoxes(visual, char, color)
     visual.Hidden=total>0 and hidden>=math.max(1,total*.5)
 end
 
--- Visual eligibility is independent of round combat eligibility.
+-- MM2 keeps the previous round's roles on every player, including players back in the lobby, so
+-- round data alone cannot say who is in the round. A player counts as in the round only while their
+-- living character is inside a loaded map (a workspace Model with Spawns and Base; the lobby has no Base).
+local espInRoundArea, espViewerAtRound
+do
+    local boxes, scanned, list = {}, -math.huge, {}
+    local margin = Vector3.new(60, 60, 60)
+    local function areas()
+        local now = os.clock()
+        if now - scanned >= 1 then
+            scanned, list = now, {}
+            for _, child in ipairs(workspace:GetChildren()) do
+                if child:IsA("Model") and child:FindFirstChild("Spawns") and child:FindFirstChild("Base")
+                    and not string.find(string.lower(child.Name), "lobby", 1, true) then
+                    local box = boxes[child]
+                    -- Bounding a whole map is not free: measure a map once, then every 10 s while it loads in.
+                    if not box or now - box.At >= 10 then
+                        local ok, frame, size = pcall(child.GetBoundingBox, child)
+                        box = ok and {Frame = frame, Half = size / 2 + margin, At = now} or box
+                        boxes[child] = box
+                    end
+                    if box then table.insert(list, box) end
+                end
+            end
+            for map in pairs(boxes) do if map.Parent ~= workspace then boxes[map] = nil end end
+        end
+        return list
+    end
+    espInRoundArea = function(position)
+        for _, box in ipairs(areas()) do
+            local p = box.Frame:PointToObjectSpace(position)
+            if math.abs(p.X) <= box.Half.X and math.abs(p.Y) <= box.Half.Y and math.abs(p.Z) <= box.Half.Z then return true end
+        end
+        return false
+    end
+    -- ESP is for the round: shown while you are in it, or while your camera is there (spectating).
+    espViewerAtRound = function()
+        local camera = workspace.CurrentCamera
+        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        return (camera ~= nil and espInRoundArea(camera.CFrame.Position)) or (root ~= nil and espInRoundArea(root.Position))
+    end
+end
 local function visualCharacterReady(p)
     local char=p.Character
     local hum=char and char:FindFirstChildOfClass("Humanoid")
-    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0
-        and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
-            or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))~=nil
+    local anchor=char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+        or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
+    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0 and anchor~=nil
+        and espInRoundArea(anchor.Position)
 end
 local function visualRoleFor(p)
     local role=roleFor(p)
@@ -20193,10 +20503,11 @@ end
 
 local function updateESP()
     ensureVisualFolder()
+    local viewerAtRound = espViewerAtRound()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
         local role = visualRoleFor(p)
-        if p ~= player and State.Config.ESP and visualCharacterReady(p) and colors[role] then
+        if p ~= player and State.Config.ESP and viewerAtRound and visualCharacterReady(p) and colors[role] then
             local char = p.Character
             local visual = State.Visuals[p]
             if visual and (visual.Character ~= char or visual.Highlight.Parent ~= visualFolder or visual.Label.Parent ~= visualFolder or visual.Text.Parent ~= visual.Label) then removeVisual(p); visual = nil end
@@ -20236,11 +20547,14 @@ local function updateESP()
             updateHiddenBoxes(visual, char, colors[role])
             local targetRoot = char:FindFirstChild("HumanoidRootPart")
             local distance = ownRoot and targetRoot and (targetRoot.Position - ownRoot.Position).Magnitude
-            visual.Text.Text = "@" .. p.Name
+            local labelText = "@" .. p.Name
                 .. (visual.Hidden and " | INVISIBLE" or "")
                 .. (distance and (" | " .. math.floor(distance + 0.5) .. " studs") or "")
-            if State.Config.CleanVisuals then visual.Text.Text="@"..p.Name; visual.Label.Size=UDim2.fromOffset(190,24)
-            else visual.Label.Size=UDim2.fromOffset(280,44) end
+            local labelSize = UDim2.fromOffset(280,44)
+            if State.Config.CleanVisuals then labelText, labelSize = "@"..p.Name, UDim2.fromOffset(190,24) end
+            -- Write only real changes: the old flip between two strings re-rendered every label twice per tick.
+            if visual.Text.Text ~= labelText then visual.Text.Text = labelText end
+            if visual.Label.Size ~= labelSize then visual.Label.Size = labelSize end
             visual.Label.Enabled=true
         else removeVisual(p) end
     end
@@ -20292,6 +20606,9 @@ local markerStroke = Instance.new("UIStroke")
 markerStroke.Color = Color3.fromRGB(95, 255, 160)
 markerStroke.Thickness = 2
 markerStroke.Parent = aimMarker
+do
+-- Position follows every frame; the two line-of-sight raycasts are refreshed ~15 times per second.
+local sight = {At = -math.huge}
 connect(RunService.RenderStepped, function()
     aimMarker.Visible = false
     local preview = State.AimPreview
@@ -20304,12 +20621,18 @@ connect(RunService.RenderStepped, function()
     local origin = shotOrigin("Gun", item)
     if not part or not origin then return end
     local point = part.CFrame:PointToWorldSpace(part.Size * preview.SampleOffset)
-    local head = player.Character:FindFirstChild("Head")
-    if (head and not clearPath(head.Position, origin, player.Character))
-        or not clearPath(origin, point, preview.Character) then return end
+    local now = os.clock()
+    if now - sight.At >= 0.066 or sight.Part ~= part or sight.Character ~= player.Character then
+        local head = player.Character:FindFirstChild("Head")
+        sight.Clear = not ((head and not clearPath(head.Position, origin, player.Character))
+            or not clearPath(origin, point, preview.Character))
+        sight.At, sight.Part, sight.Character = now, part, player.Character
+    end
+    if not sight.Clear then return end
     local screen, visible = camera:WorldToViewportPoint(point)
     if visible then aimMarker.Position = UDim2.fromOffset(screen.X, screen.Y); aimMarker.Visible = true end
 end)
+end
 local threatBanner = Instance.new("TextLabel")
 threatBanner.Name = "NearbyMurdererWarning"
 threatBanner.AnchorPoint = Vector2.new(0.5, 0)
@@ -20331,9 +20654,11 @@ local function updateThreat()
     threatBanner.Visible = false
     if not State.Config.ThreatWarning or not alive(player) then return end
     local ownRoot = player.Character:FindFirstChild("HumanoidRootPart")
+    if not espInRoundArea(ownRoot.Position) then return end
     local closest
     for _, other in ipairs(Players:GetPlayers()) do
-        if other ~= player and roleFor(other) == "Murderer" and alive(other) then
+        if other ~= player and roleFor(other) == "Murderer" and alive(other)
+            and espInRoundArea(other.Character.HumanoidRootPart.Position) then
             local info = threatDetails(ownRoot, other.Character:FindFirstChild("HumanoidRootPart"), workspace.CurrentCamera)
             if info.Distance <= State.Config.ThreatRange and (not closest or info.Distance < closest.Distance) then
                 info.Name, info.DisplayName = other.Name, other.DisplayName
@@ -20861,12 +21186,13 @@ local function removeGunVisual(object)
 end
 updateGunESP = function()
     ensureVisualFolder()
+    local atRound = espViewerAtRound()
     for object in pairs(State.GunVisuals) do
-        if not State.Config.GunESP or not drops[object] or not object:IsDescendantOf(workspace) then
+        if not State.Config.GunESP or not atRound or not drops[object] or not object:IsDescendantOf(workspace) then
             removeGunVisual(object)
         end
     end
-    if not State.Config.GunESP then return end
+    if not State.Config.GunESP or not atRound then return end
     local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for object in pairs(drops) do
         local part = object:IsDescendantOf(workspace) and dropPart(object)
@@ -21022,6 +21348,10 @@ function State.Destroy()
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
+    if State.FlushAuraTouches and not State.FlushAuraTouches() then
+        warn("Unload stopped: blade touch cleanup incomplete; retry unload")
+        return false
+    end
     if State.StopKillAura then State.StopKillAura("Unloaded") end
     if State.SetInvisibility and not State.SetInvisibility(false) then
         warn("Unload stopped: character restoration is incomplete; retry Restore character")
@@ -22344,8 +22674,9 @@ local installKillAura=function(C)
     end
     local function cancel()
         if C.CancelStab then
-            local ok,message=pcall(C.CancelStab)
-            if not ok then return false,tostring(message) end
+            local ok,result,message=pcall(C.CancelStab)
+            if not ok then return false,tostring(result) end
+            if result==false then return false,tostring(message or "Blade touch cleanup incomplete") end
         end
         return true
     end
@@ -22497,6 +22828,7 @@ installKillAura({State=State,Player=player,Players=Players,RunService=RunService
         for _,record in pairs(State.WeaponHandlers) do
             if record.AuraStab then record.StabbingUntil,record.StabTarget,record.AuraStab=0,nil,false end
         end
+        if State.FlushAuraTouches then return State.FlushAuraTouches() end
     end,
     Stab=function(item,target)
         if not State.CanAuraContact() then return false end
@@ -23188,7 +23520,7 @@ local installTacticalGuide = function(C)
     end
     local function billboard(parent,name)
         local b=Instance.new("BillboardGui"); b.Name=name; b.Size=UDim2.fromOffset(190,26)
-        b.AlwaysOnTop=false; b.MaxDistance=140; b.StudsOffset=Vector3.new(0,2.8,0); b.Parent=parent
+        b.AlwaysOnTop=false; b.StudsOffset=Vector3.new(0,2.8,0); b.Parent=parent
         local t=Instance.new("TextLabel"); t.Size=UDim2.fromScale(1,1); t.BackgroundTransparency=1
         t.TextSize=12; t.Font=Enum.Font.GothamBold; t.TextStrokeTransparency=.25; t.TextColor3=Color3.fromRGB(245,218,126); t.Parent=b
         return b,t
@@ -23288,7 +23620,7 @@ local installTacticalGuide = function(C)
         end
         table.sort(list,function(a,b) return a.Distance<b.Distance end)
         for i=1,#list do
-            local p=list[i]; if p.Distance<140 then p.Visible=C.ClearPath(root.Position,p.Position,p.Character) end
+            local p=list[i]; if p.Distance<=(State.Config.MaxRange or 1000) then p.Visible=C.ClearPath(root.Position,p.Position,p.Character) end
         end
         local item=C.EquippedWeapon()
         local points,map,origin=destinations(root.Position)
@@ -23430,6 +23762,8 @@ local installCombatHUD = function(C)
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         local living=hum and hum.Health>0
         local role=not hum and "Waiting for character" or (living and (C.RoleFor(player) or "Unknown") or "Eliminated")
+        -- Round data keeps your last role after the round; outside the map there is no role.
+        if living and C.InRound and not C.InRound() then role="Lobby" end
         local item=living and C.EquippedWeapon() or nil
         local record=item and State.WeaponHandlers and State.WeaponHandlers[item]
         local weapon="No weapon equipped"
@@ -23475,7 +23809,8 @@ local installCombatHUD = function(C)
     end
 end
 
-installCombatHUD({State=State,Player=player,Players=Players,RoleFor=roleFor,EquippedWeapon=equippedWeapon,IsAlive=alive})
+installCombatHUD({State=State,Player=player,Players=Players,RoleFor=roleFor,EquippedWeapon=equippedWeapon,IsAlive=alive,
+    InRound=function() local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart"); return root~=nil and espInRoundArea(root.Position) end})
 end
 
 
@@ -23585,11 +23920,16 @@ local installGhostAppearance=function(C)
     local parts,character,nextScan={},nil,0
     local binding="MM2LocalGhost_"..tostring(State)
     State.GhostAppearance=ghost
+    -- The engine stores this property as a 32-bit float (0.45 reads back as 0.4499999881),
+    -- so "is this still our write?" must compare with a tolerance, never ==.
+    local function ours(part,r)
+        return r.Applied~=nil and math.abs(part.LocalTransparencyModifier-r.Applied)<1e-4
+    end
     local function restore()
         local failures={}
         for part,r in pairs(parts) do
             local ok,err=pcall(function()
-                if part.Parent and r.Applied~=nil and part.LocalTransparencyModifier==r.Applied then
+                if part.Parent and ours(part,r) then
                     part.LocalTransparencyModifier=r.Before
                 end
             end)
@@ -23628,15 +23968,16 @@ local installGhostAppearance=function(C)
         for part,r in pairs(parts) do
             if not part.Parent or not part:IsDescendantOf(char) or part:FindFirstAncestorOfClass("Tool") then
                 -- A removed part no longer participates in the ghost. Restore only our own write.
-                if part.Parent and r.Applied and part.LocalTransparencyModifier==r.Applied then part.LocalTransparencyModifier=r.Before end
+                if part.Parent and ours(part,r) then part.LocalTransparencyModifier=r.Before end
                 parts[part]=nil
             else
+                -- Only a value clearly below the ghost alpha needs a write; that value belongs to the
+                -- player or camera, so it is what restoring must return to.
                 local current=part.LocalTransparencyModifier
-                local wanted=math.max(current,ghost.Alpha)
-                if current~=wanted then
-                    if r.Applied==nil or current~=r.Applied then r.Before=current end
-                    r.Applied=wanted
-                    part.LocalTransparencyModifier=wanted
+                if current<ghost.Alpha-1e-4 then
+                    r.Before=current
+                    part.LocalTransparencyModifier=ghost.Alpha
+                    r.Applied=part.LocalTransparencyModifier
                 end
                 ghost.Parts+=1
             end
