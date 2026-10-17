@@ -3,10 +3,13 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import shutil
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--luau", default="luau")
 args = parser.parse_args()
+if not shutil.which(args.luau):
+    parser.error("Luau executable not found. Pass --luau /path/to/luau.")
 root = Path(__file__).resolve().parent.parent
 source = (root / "main.lua").read_text(encoding="utf-8")
 template = (root / "tests" / "combat.luau").read_text(encoding="utf-8")
@@ -27,4 +30,13 @@ for name, (start, end) in sections.items():
 with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness = Path(directory) / "combat.luau"
     harness.write_text(template, encoding="utf-8")
-    subprocess.run([args.luau, str(harness)], check=True)
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+    release = (root / "tests" / "release.luau").read_text(encoding="utf-8")
+    start = source.index("function State.GetSupportSnapshot()")
+    end = source.index('if State.Config.ESPStyleVersion', start)
+    release = release.replace("-- INSERT_SUPPORT", source[start:end])
+    release = release.replace("-- INSERT_LOADER", (root / "loader.lua").read_text(encoding="utf-8"))
+    if "-- INSERT_" in release or "-- INSERT_" in template:
+        raise RuntimeError("Unexpanded regression-test source marker")
+    harness.write_text(release, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

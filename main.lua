@@ -17732,7 +17732,41 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-17-Performance"
+State.Version = "1.0.0-rc.1"
+State.ReleaseChannel = "Release candidate"
+State.Build = "MM2Universal/" .. State.Version
+-- Support diagnostics intentionally omit player identities, access keys and shot payloads.
+function State.GetSupportSnapshot()
+    local handlers, connections = 0, 0
+    for _ in pairs(State.WeaponHandlers) do handlers += 1 end
+    for _, connection in ipairs(State.Connections) do
+        if connection.Connected ~= false then connections += 1 end
+    end
+    local flags = {}
+    for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "KnifeAim", "KnifeAllDirections",
+        "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura"}) do
+        flags[name] = State.Config[name] == true
+    end
+    local stats = {}
+    for _, name in ipairs({"GunRequests", "GunReplies", "GunTargetHits", "GunMisses", "GunUnconfirmed",
+        "SkippedGunShots", "KnifeRequests", "SkippedKnifeThrows", "StabRequests", "StabContactReports"}) do
+        stats[name] = State.Stats[name] or 0
+    end
+    local performance = {}
+    for _, name in ipairs({"Selections", "CandidateEvaluations", "PrunedCandidates", "LastSelectionMs", "MotionSweeps", "PreviewCacheHits"}) do
+        performance[name] = State.Performance[name] or 0
+    end
+    return {Version=State.Version,Build=State.Build,Channel=State.ReleaseChannel,Running=State.Running,
+        PlaceId=game.PlaceId,PlaceVersion=game.PlaceVersion,InputMode=State.InputMode or "Unknown",
+        Players=#Players:GetPlayers(),WeaponHandlers=handlers,Connections=connections,PendingShots=#State.PendingGun,
+        Capabilities={Clipboard=type(setclipboard)=="function" or type(toclipboard)=="function",
+            Touch=type(firetouchinterest)=="function",FileRead=type(readfile)=="function" and type(isfile)=="function",
+            FileWrite=type(writefile)=="function" and type(makefolder)=="function" and type(isfolder)=="function"},
+        Settings=flags,Stats=stats,Performance=performance}
+end
+function State.GetSupportReport()
+    return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
+end
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -24305,6 +24339,7 @@ local createMobileUI = function(C)
         return toggle
     end
     mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Reading your current role and weapon…"})
+    home:Paragraph({Title="MM2 Universal · " .. State.Version,Desc="Release candidate · PC and mobile\nUse Settings → Copy support report when reporting an issue."})
     option(combat,"Aim assist","Aim","Master switch for gun aim, knife aim and automatic stabs.")
     option(combat, "Gun aim", "MagicBullet", "Aim at the known murderer when you fire.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Require every sampled timing check to intersect the target. Skips uncertain shots; server hits are not guaranteed.")
@@ -24417,6 +24452,19 @@ local createMobileUI = function(C)
     settings:Button({Title = "Equip gun / knife", Callback = function() C.EquipWeapon() end})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
     local repairs=settings
+    local supportStatus=settings:Paragraph({Title="Support",Desc=State.Build .. " · " .. State.ReleaseChannel})
+    settings:Button({Title="Copy support report",Desc="Version, feature settings and counters. No access key or player names.",Callback=function()
+        suppressInput()
+        local ok,report=pcall(State.GetSupportReport)
+        local message
+        if not ok then message="Couldn't generate the report. Try unloading and reloading."
+        else
+            local copy=setclipboard or toclipboard
+            if type(copy)=="function" and pcall(copy,report) then message="Support report copied. Paste it into your issue."
+            else print("MM2 support report: " .. report); message="Clipboard unavailable. Report printed in the developer console." end
+        end
+        if supportStatus and supportStatus.ParagraphFrame then supportStatus.ParagraphFrame:SetDesc(message) end
+    end})
     repairs:Button({Title = "Repair camera input", Callback = function() State.FixCamera() end})
     repairs:Button({Title = "Repair character (respawns)", Callback = function() State.RepairCharacter() end})
     settings:Button({Title = "Close menu", Callback = function() window:Close() end})

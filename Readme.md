@@ -1,6 +1,12 @@
 # MM2 Universal
 
+**v1.0.0-rc.1 · Release candidate · PC + mobile**
+
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
+
+Final live compatibility checks are pending. See the [release checklist](docs/RELEASE_CHECKLIST.md) and [validation results](tests/VALIDATION.md) before treating this as a stable release.
+
+[Changes](CHANGELOG.md) · [Support](docs/SUPPORT.md) · [Report a bug](https://github.com/ObsidianWorkss/Murder-Mystery-2/issues/new?template=bug_report.md)
 
 ## Load the script
 
@@ -11,6 +17,8 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ObsidianWorkss/Murder
 Enter your access key when prompted, then equip your gun or knife. The loader always retrieves `main.lua` from this repository's `main` branch. Re-run it after an update; the previous instance is cleaned up before the replacement starts.
 
 Requires a compatible Roblox client scripting environment with `loadstring` and HTTP access. Some optional actions require additional executor APIs. Compatibility varies by device and executor.
+
+For clearer startup errors, execute the included [`loader.lua`](loader.lua) file. It fetches the same latest `main.lua` and reports download, compilation, and initialization failures. For an offline copy of this version, execute the packaged `main.lua` directly; the loader always follows the latest `main` branch.
 
 ## Combat assistance
 
@@ -64,19 +72,11 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 - **Controls stop responding:** close the menu and any focused text box. Try camera repair or unload and reload.
 - **Optional feature unavailable:** check the feature's status in the menu; required executor functionality may be missing.
 
-## Latest changes
+## Release and support
 
-- Reduced motion-roster sampling to its existing 50 Hz recording limit; attacks still force a fresh inspection.
-- Cached visual gun/knife previews for up to half a second, with invalidation for character, exclusion, and relevant setting changes. Actual attacks always select a fresh target.
-- Reused identical timing-ray results within each candidate, stopped conservative checks at the first failure, and moved rejected candidates ahead of neighbouring clearance work.
-- Reused the line-of-sight filter scratch array to reduce allocations during target scans.
-- Added conservative gun shots: wider timing samples, rejection of partial coverage, and feedback explaining skipped shots. This filters uncertain aim solutions; it does not guarantee server hits.
-- Matched manual stabs to the live native knife controller's post-throw cooldown (`2 * ThrowSpeed`), with feedback while waiting.
-- Added all-direction knife acquisition and explicit clear-target protection.
-- Added nearby-target assistance for clicked stabs, with normal cooldown and exclusion checks.
-- Revalidate the charged target and weapon before releasing a knife; reject stale targets and blocked paths.
-- Keep gun prediction, path checks, and the shot payload on the same sampled origin; reject repeated large muzzle movement.
-- A failed stab request no longer consumes the local stab cooldown. Optional animation errors do not block contact assistance.
+Use **Settings → Copy support report** to include your version, feature settings, capabilities, and counters in a bug report. It excludes player identities and access keys. See [support instructions](docs/SUPPORT.md) for recovery steps and clipboard fallback.
+
+Recent updates add conservative combat checks, fewer background scans, reusable timing queries, and a versioned release package. Full details are in the [changelog](CHANGELOG.md).
 
 ## Development
 
@@ -86,9 +86,12 @@ Run the combat regression tests with Python 3 and the Luau CLI:
 
 ```sh
 python tests/run.py --luau /path/to/luau
-luau-compile --null main.lua
+luau-compile --null main.lua loader.lua
+python tools/package.py --output dist
 ```
 
-The tests extract the current combat functions from `main.lua` and exercise them with mocked client state. They do not verify server damage or live executor compatibility.
+The tests extract current functions from `main.lua` and exercise combat, loader failure handling, and support-report privacy with mocked client state. They do not verify server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
 
-Bundled WindUI and Footages Icons license notices are preserved inside `main.lua`.
+Packaging uses an explicit file list, verifies the ZIP against its per-file `MANIFEST.json`, and writes `SHA256SUMS.txt` alongside the archive. Local key files and repository metadata are not packaged.
+
+Bundled WindUI and Footages Icons license notices are preserved inside `main.lua`; see [third-party notices](THIRD_PARTY_NOTICES.md).

@@ -1,0 +1,30 @@
+name: Validate script
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build pinned Luau 0.739
+        shell: bash
+        run: |
+          git init "$RUNNER_TEMP/luau"
+          git -C "$RUNNER_TEMP/luau" fetch --depth=1 https://github.com/luau-lang/luau.git a62362a53ddc9c629b0e29378a84abb4534d8b64
+          git -C "$RUNNER_TEMP/luau" checkout --detach FETCH_HEAD
+          cmake -S "$RUNNER_TEMP/luau" -B "$RUNNER_TEMP/luau/build" -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/luau/build" --target Luau.Repl.CLI Luau.Compile.CLI --parallel 2
+      - name: Compile and run regression suites
+        run: |
+          "$RUNNER_TEMP/luau/build/luau-compile" --null main.lua loader.lua
+          python3 tests/run.py --luau "$RUNNER_TEMP/luau/build/luau"
+      - name: Verify distributable package
+        run: python3 tools/package.py --output dist
