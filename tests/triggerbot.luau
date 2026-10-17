@@ -94,9 +94,9 @@ end
 do
     local f=fixture(); f.State.SetTriggerbot(true); f.Send=false; f.Step(1/60)
     check(f.Bot.Shots==0 and f.Bot.LastShot==-math.huge and not f.Bot.LastAimCheck.Sent,"failed check never counts a gun request")
-    f.Step(1/60); check(f.Attempts==1,"heavy aim checks are throttled between frames")
-    f.Send=true; f.Step(.035)
-    check(f.Attempts==2 and f.Bot.Shots==1,"new target is retried after 50 ms instead of 250 ms")
+    f.Step(.004); check(f.Attempts==2,"aim is reconsidered on the next heartbeat even below the old 50 ms interval")
+    f.Send=true; f.Step(.004)
+    check(f.Attempts==3 and f.Bot.Shots==1,"new target fires on the next heartbeat with no artificial wait")
     f=fixture(); f.State.SetTriggerbot(true); f.Send=false; f.Step(); f.Blocked=true; f.Step()
     check(f.Bot.BeforePause=="No clear on-screen shot" and f.Bot.LastAimCheck.Message=="No clear on-screen shot","pause preserves last rejection")
     f=fixture(); f.State.SetTriggerbot(true); f.ThrowError=true; f.Step()
@@ -131,7 +131,7 @@ for _,case in ipairs({
 end
 do
     local f=fixture(); f.EnableKnife(); f.OnScreen=false; f.Step(); f.OnScreen=true; f.Step(.06)
-    check(f.Attempts==1,"knife reacts promptly when target becomes visible")
+    check(f.Attempts==1,"knife reacts on the next heartbeat when target becomes visible")
     f=fixture(); f.EnableKnife(); f.NoTarget=true; f.Step(.5)
     check(f.Attempts==0,"frame stall never fires at a cached knife target")
     f=fixture(); f.State.SetTriggerbot(true); f.Callbacks[f.UIS.WindowFocusReleased](); f.Step()

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.23 — 2026-10-17
+
+- Added **Kill all** and **Stop Kill all** to Murderer → Kill Aura, with optional unbound keys in Combat keys. The action makes one pass through eligible players within the configured aura radius, respecting cooldowns, protection and clear paths. It reports requests and skips without claiming kills. Existing aura state is restored when the pass ends; explicit stops and character/role changes cancel the queue.
+- Extended reach now permits up to 200 studs, with a 60-stud default. The previous 30-stud default migrates once; other saved ranges remain. This expands contact attempts, not the server's accepted damage range.
+- Removed triggerbot's artificial polling timers: it checks on every heartbeat while enabled and ready. On-screen targeting, pause guards, gun/stab/throw cooldowns and exclusion checks remain enforced. Actual reaction time depends on client frames and network conditions.
+
 ## 1.0.0-rc.22 — 2026-10-17
 
 - Automatic gun shots now use visible on-screen targets only. The policy filters body samples before prediction, filters predicted points, and rechecks both the current body point and the selected lead point before sending. It cannot fall back to an offscreen target. Manual Gun aim keeps its existing behavior.

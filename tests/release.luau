@@ -25,6 +25,9 @@ do
     report=State.GetSupportSnapshot()
     check(report.Capabilities.Clipboard and report.Capabilities.FileRead,"fallback clipboard and file capabilities are detected")
     check(State.GetSupportReport()=="encoded-report" and encoded.Version==State.Version,"support report serializes the bounded snapshot")
+    State.KillAll={Active=true,Targets={"PrivatePlayer"}}
+    report=State.GetSupportSnapshot()
+    check(report.Settings.KillAll==true and report.KillAll==nil,"support reports Kill all activity without leaking its target queue")
 end
 do
     local mode,executions="success",0
@@ -339,6 +342,8 @@ do
     function State.SetMagicBullet(enabled) cfg.MagicBullet=enabled end
     function State.SetTriggerbot(enabled) cfg.Triggerbot=enabled end
     function State.SetKnifeTriggerbot(enabled) cfg.KnifeTriggerbot=enabled end
+    function State.StartKillAll() return false,"Kill all requires a living murderer" end
+    function State.StopKillAll() return true,"Kill all stopped" end
     function State.SetKillAura(enabled) if enabled then return false,"Waiting until you are murderer" end cfg.KillAura=false; return true end
     function State.SetInvisibility(enabled) cfg.Invisibility=enabled end
     function State.SetMageAnimations(enabled) cfg.MageAnimations=enabled end
@@ -431,6 +436,11 @@ do
     State.SetKeybind("KnifeTriggerbot","B")
     check(press("B")=="Knife triggerbot on" and options[#options]=="KnifeTriggerbot=true",
         "knife trigger key uses its independent menu setter")
+    check(cfg.Keybinds.KillAll=="None" and cfg.Keybinds.StopKillAll=="None","Kill all and its stop action are rebindable and start unbound")
+    State.SetKeybind("KillAll","P")
+    check(press("P")=="Kill all requires a living murderer" and tones[#tones]=="warn","Kill all key reports a role refusal")
+    State.SetKeybind("StopKillAll","L")
+    check(press("L")=="Kill all stopped","Stop Kill all key runs the stop action")
     State.MobileUI.SetOption=nil
     State.ResetKeybinds()
     check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None" and cfg.Keybinds.Menu=="RightShift"

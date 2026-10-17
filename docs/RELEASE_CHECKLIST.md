@@ -1,16 +1,17 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.22**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.23**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot and aura regression suites pass locally (300 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot and aura regression suites pass locally (334 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
 
+- [ ] Kill all: one pass, skip reasons, queue cancellation, prior aura restoration, and actual server outcomes; separately verify the accepted extended distance rather than treating the 200-stud attempt setting as accepted range.
 - [ ] Aura: normal contact without blade overlap, extended contact acceptance, partial cover, automatic equip and respawn recovery while murderer. Distinguish sent requests from observed server damage.
 - [x] PC triggerbot smoke check: rc.18 running, both status cards present, independent menu setters, unchanged master aim, unbound keys, both modes off, and no trigger requests sent.
 - [ ] Triggerbot: visible on-screen gun and knife acquisition without cursor contact, offscreen cancellation including camera turns, reaction scheduling, weapon cooldowns, independent toggles, pause/resume, emergency stop and reload-off behavior. Record sent requests separately from matched server feedback and observed eliminations.

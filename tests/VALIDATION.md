@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.23
+
+- Luau 0.739 compiles both scripts; 80 combat, 122 release, 56 triggerbot and 76 aura assertions pass (334 total).
+- Kill all tests exercise one-pass ordering, cooldowns, cancellation, completion without extra swings, restoration of ordinary aura, role refusal, protected/dead/departed/respawned/out-of-range targets, menu pauses, automatic equipping, and failed swing/contact reports. Keybind and support-report tests cover the new actions and bounded activity flag.
+- Updated range checks accept 200 and reject 201. Trigger regressions verify reconsideration on heartbeats below the former 50 ms interval without bypassing successful-shot cooldowns.
+- Exact accepted extended distance and live Kill all outcomes remain unverified. The responsive client is disconnected; no new server damage or latency measurement is claimed.
+
 ## Release candidate 1.0.0-rc.22
 
 - Luau 0.739 compiles both scripts; 80 combat, 118 release, 56 triggerbot and 46 aura assertions pass (300 total). Obsolete cursor-ray and dwell cases were replaced with screen-policy and fast-acquisition regressions.

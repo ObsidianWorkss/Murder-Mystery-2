@@ -110,12 +110,13 @@ do
     f.State.SetAuraExtendedReach(true); f.Step()
     check(f.Aura.Attempts==1 and f.Aura.Contacts==1 and f.State.LastStabContact.Source=="AuraReachAttempt",
         "extended aura attempts body contact at the configured extended range")
-    check(f.State.GetKillAuraRange()==30 and f.Aura.LastDistance==20,"extended range selects using its own radius")
+    check(f.State.GetKillAuraRange()==60 and f.Aura.LastDistance==20,"extended range defaults to the larger 60-stud attempt radius")
     f.State.SetAuraReachRange(10); f.Step(1)
     check(f.Aura.Attempts==1,"reducing extended range excludes the previous target")
     f.State.SetAuraExtendedReach(false)
     check(f.State.GetKillAuraRange()==6,"disabling reach restores the normal radius")
-    check(not f.State.SetAuraReachRange(101) and not f.State.SetKillAuraRange(7),"invalid aura ranges are refused")
+    check(f.State.SetAuraReachRange(200) and f.State.GetKillAuraRange()==6,"extended reach setting accepts 200 without changing the disabled normal radius")
+    check(not f.State.SetAuraReachRange(201) and not f.State.SetKillAuraRange(7),"invalid aura ranges are refused")
     local before=f.Cancels; f.State.SetKillAuraRange(4)
     check(f.Cancels>before,"normal range changes cancel outstanding aura contacts")
 end
@@ -188,5 +189,71 @@ do
     check(not f.Enable() and not f.Aura.Enabled,"initialization failure leaves aura disabled")
     f=fixture(); f.Record.LastThrow=f.Now; f.Knife.ThrowSpeed=0/0; f.Enable(); f.Step()
     check(f.Aura.Attempts==0,"invalid throw-speed attribute cannot bypass throw cooldown")
+end
+do
+    local f=fixture()
+    local second={Name="Second",UserId=3,Character=f.Character(6),Role="Innocent",Alive=true}
+    table.insert(f.Players,second)
+    check(f.State.StartKillAll() and f.State.KillAll.Active and f.State.KillAll.Total==2,"Kill all snapshots eligible players for one pass")
+    check(not f.State.StartKillAll(),"a second Kill all cannot duplicate an active queue")
+    f.Step()
+    check(f.Record.StabTarget==f.Target and f.State.KillAll.Contacts==1,"Kill all sends one contact to the first player")
+    f.Step(.4)
+    check(f.State.KillAll.Index==2 and f.State.KillAll.Attempts==1,"Kill all waits for native stab cooldown")
+    f.Step(.5)
+    check(f.Record.StabTarget==second and f.State.KillAll.Contacts==2,"Kill all advances to the next player instead of repeating the nearest")
+    f.Step(1)
+    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.State.KillAll.Attempts==2,"completed pass stops aura when it was previously off")
+    check(f.State.KillAll.Status:find("kills unconfirmed",1,true)~=nil,"completed pass does not claim contact requests are kills")
+    f.Step(1)
+    check(f.State.Stats.StabRequests==2,"completed Kill all never sends a queued extra swing")
+end
+do
+    local f=fixture(); f.Enable(); f.State.StartKillAll(); f.Step(); f.Step(1)
+    check(not f.State.KillAll.Active and f.Aura.Enabled,"finishing Kill all preserves a previously enabled aura")
+    f.Step()
+    check(f.Aura.Contacts==2,"ordinary nearest-target aura resumes after a completed pass")
+    f=fixture(); f.State.StartKillAll(); f.State.StopKillAll("Cancelled"); f.Step()
+    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.Aura.Attempts==0,"Stop Kill all cancels before any attack")
+    f=fixture(); f.State.StartKillAll(); f.State.StopKillAura("Emergency stop"); f.Step()
+    check(not f.State.KillAll.Active and not f.Aura.Enabled,"stopping aura also stops Kill all")
+    f=fixture(); f.Player.Role="Innocent"
+    check(not f.State.StartKillAll() and not f.Aura.Enabled,"Kill all refuses when not murderer")
+    f=fixture(); f.Target.Excluded=true
+    check(not f.State.StartKillAll() and not f.State.KillAll.Active,"Kill all refuses an empty eligible queue")
+end
+for _,case in ipairs({
+    {"new exclusion",function(f) f.Target.Excluded=true end},
+    {"target death",function(f) f.Target.Alive=false end},
+    {"target respawn",function(f) f.Target.Character=f.Character(5) end},
+    {"departed player",function(f) f.Players={f.Player} end},
+    {"out-of-range target",function(f) f.Target.Character=f.Character(201) end},
+    {"obstructed target",function(f) f.BlockAll=true end},
+}) do
+    local f=fixture(); f.State.StartKillAll(); case[2](f); f.Step(); f.Step()
+    check(f.State.KillAll.Skipped==1 and f.State.KillAll.Attempts==0 and not f.State.KillAll.Active,
+        "Kill all skips "..case[1].." without a request")
+end
+do
+    local f=fixture(); f.State.StartKillAll(); f.InputBlocked=true; f.Step()
+    check(f.State.KillAll.Active and f.State.KillAll.Index==1 and f.Aura.Attempts==0,"menu pauses Kill all without losing its queue")
+    f.InputBlocked=false; f.Step()
+    check(f.State.KillAll.Contacts==1,"Kill all resumes after menu closes")
+    f=fixture(); f.Equipped=false; f.Knife.Parent={}; f.State.StartKillAll(); f.Step()
+    check(f.EquipCount==1 and f.State.KillAll.Contacts==1,"Kill all uses automatic knife equipping")
+    f=fixture(); f.State.StartKillAll(); f.Callbacks[f.Player.CharacterRemoving]()
+    check(not f.State.KillAll.Active and not f.Aura.Enabled,"respawn cancels Kill all instead of carrying it into a new round")
+    f=fixture(); f.Enable(); f.State.StartKillAll(); f.Callbacks[f.Player.CharacterRemoving]()
+    check(not f.State.KillAll.Active and f.Aura.Enabled,"respawn cancellation preserves the pre-existing ordinary aura")
+    f=fixture(); f.State.StartKillAll(); f.Player.Role="Sheriff"; f.Step()
+    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"losing murderer role cancels Kill all")
+    f=fixture(); f.State.StartKillAll(); f.State.Running=false; f.Step()
+    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.State.KillAll.Attempts==0,"unload cancels Kill all without a final request")
+    f=fixture(); f.ContactFail=true; f.State.StartKillAll(); f.Step(); f.Step(1)
+    check(f.State.KillAll.Attempts==1 and f.State.KillAll.Contacts==0 and f.State.KillAll.Skipped==1,
+        "failed batch contact is not reported as a hit or successful contact")
+    f=fixture(); f.SwingFail=true; f.State.StartKillAll(); f.Step(); f.Step()
+    check(f.State.KillAll.Attempts==0 and f.State.KillAll.Skipped==1 and not f.State.KillAll.Active,
+        "failed batch swing advances and completes without retry spam")
 end
 print(passed.." aura assertions passed")

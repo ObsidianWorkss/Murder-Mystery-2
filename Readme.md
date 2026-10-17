@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.22 · Release candidate · PC + mobile**
+**v1.0.0-rc.23 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -50,15 +50,21 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. Both modes select a fresh on-screen target when they resume. Missed manual clicks are never queued.
 
-Gun requests have a conservative **3-second minimum interval**, also measured from manual assisted shots, and wait for the tool to be enabled. Knife requests respect the existing stab and throw cooldowns; extended aura range does not extend triggerbot reach. The gun preserves prediction, timing, wall, player-path, and exclusion checks while filtering body samples to the screen and checking visibility again before sending. Ready-weapon aim checks use a **50 ms minimum interval** (previously 250 ms); cheap readiness checks run at most 60 times per second. Frame rate, selection cost and network delay affect actual reaction time. The status card retains the last gun-check reason across pauses. Request counters are not hit or kill counters.
+Gun requests have a conservative **3-second minimum interval**, also measured from manual assisted shots, and wait for the tool to be enabled. Knife requests respect the existing stab and throw cooldowns; extended aura range does not extend triggerbot reach. The gun preserves prediction, timing, wall, player-path, and exclusion checks while filtering body samples to the screen and checking visibility again before sending. **Triggerbot checks every heartbeat with no added polling delay**; the old 50 ms wait is removed. Frame rate, selection cost and network delay determine actual reaction time. The status card retains the last gun-check reason across pauses. Request counters are not hit or kill counters.
 
 ### Using kill aura and extended reach
 
 Enable **Murderer → Kill Aura → Kill aura**, or press **K** after closing the menu. **Equip knife for aura** equips your knife automatically. While you are murderer, aura selects a clear nearby body part, swings, and sends its contact report without waiting for your blade to touch the player. It checks alternative body parts when the target's center is behind cover.
 
-With **Extended stab reach** off, **Aura range** sets the radius (1–6.5 studs). With it on, **Extended reach** sets the attempted radius (1–100 studs, default 30). Extended reach modifies kill aura; it does not enable aura by itself or change the server's damage validation. A contact request beyond the server's allowed distance can still be rejected.
+With **Extended stab reach** off, **Aura range** sets the radius (1–6.5 studs). With it on, **Extended reach** sets the attempted radius (**1–200 studs, default 60**). The old 30-stud default upgrades to 60 once; other saved values are preserved. Extended reach modifies kill aura; it does not enable aura by itself or change the server's damage validation. You reported aura working in a live test, but the exact accepted extended distance has not been measured. A distant contact request can still be rejected.
 
 The aura stays enabled while waiting through normal death, respawn, or innocent rounds, and resumes when you have a ready murderer knife. It pauses for menus, typing, lost focus, fling, and unavailable weapon states. Emergency stop, unload/reload, and actions that explicitly stop aura turn it off. Its status distinguishes a successful contact request from a swing with no contact report; neither proves a kill.
+
+### Kill all
+
+**Murderer → Kill Aura → Kill all** makes one pass through eligible players using the current aura range. It requires a living murderer, equips the knife if allowed, and attempts one target at a time while respecting stab and throw cooldowns. Close the menu for the pass to run. It skips protected, departed, respawned, blocked, and out-of-range targets. It does not teleport you or force server eliminations.
+
+**Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the queue. If aura was already enabled, it resumes normal nearest-target operation after the pass; otherwise it switches off when the pass ends. The status counts swing/contact requests and skipped targets, not confirmed kills. Optional Kill all and Stop Kill all keys are available in **Settings → Combat keys**, initially unbound.
 
 ## Controls
 
