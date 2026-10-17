@@ -66,6 +66,10 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 
 ## Latest changes
 
+- Reduced motion-roster sampling to its existing 50 Hz recording limit; attacks still force a fresh inspection.
+- Cached visual gun/knife previews for up to half a second, with invalidation for character, exclusion, and relevant setting changes. Actual attacks always select a fresh target.
+- Reused identical timing-ray results within each candidate, stopped conservative checks at the first failure, and moved rejected candidates ahead of neighbouring clearance work.
+- Reused the line-of-sight filter scratch array to reduce allocations during target scans.
 - Added conservative gun shots: wider timing samples, rejection of partial coverage, and feedback explaining skipped shots. This filters uncertain aim solutions; it does not guarantee server hits.
 - Matched manual stabs to the live native knife controller's post-throw cooldown (`2 * ThrowSpeed`), with feedback while waiting.
 - Added all-direction knife acquisition and explicit clear-target protection.

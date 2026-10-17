@@ -17706,7 +17706,8 @@ local State = {
         SkippedGunShots = 0, SkippedKnifeThrows = 0},
     PendingGun = {}, Motion = {}, ServerBlockers = previousBlockers or setmetatable({}, {__mode = "k"}),
     ShotLog = previousShotLog or {},
-    Performance = {Selections = 0, CandidateEvaluations = 0, PrunedCandidates = 0, LastSelectionMs = 0},
+    Performance = {Selections = 0, CandidateEvaluations = 0, PrunedCandidates = 0, LastSelectionMs = 0,
+        MotionSweeps = 0, PreviewCacheHits = 0},
     MeasuredGunDelay = previousGunDelay,
 }
 if previousStats then
@@ -17731,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-17-ConservativeGun"
+State.Build = "Universal-WindUI-2026-10-17-Performance"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -18075,6 +18076,9 @@ connect(CollectionService:GetInstanceRemovedSignal("WeaponPassthrough"), functio
 local params = RaycastParams.new()
 params.FilterType = Enum.RaycastFilterType.Exclude
 params.IgnoreWater = true
+-- RaycastParams copies its filter on assignment. This non-yielding helper can
+-- reuse the scratch array without sharing filters between separate queries.
+local ignored = {}
 clearPath = function(origin, position, char, ignoreTarget)
     for blocker in pairs(State.ServerBlockers) do
         if not blocker:IsDescendantOf(workspace) then
@@ -18086,7 +18090,8 @@ clearPath = function(origin, position, char, ignoreTarget)
             return false
         end
     end
-    local ignored = {player.Character}
+    table.clear(ignored)
+    if player.Character then table.insert(ignored, player.Character) end
     if ignoreTarget then table.insert(ignored, char) end
     for instance in pairs(passthrough) do
         if not State.ServerBlockers[instance] then table.insert(ignored, instance) end
@@ -18444,7 +18449,13 @@ end
 
 installAimFeedbackSafety(State)
 end
-local function sampleMotion(now)
+local function sampleMotion(now, force)
+    -- Records already have a 20 ms minimum interval; avoid walking the entire
+    -- roster on intervening frames. Attack-time calls always inspect fresh state.
+    if not force and State.LastMotionSampleAt and now >= State.LastMotionSampleAt
+        and now - State.LastMotionSampleAt < 0.02 then return end
+    State.LastMotionSampleAt = now
+    State.Performance.MotionSweeps += 1
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -18807,12 +18818,21 @@ end
 local function gunTimingCoverage(origin, point, translations, params)
     if not translations then return 1, 0 end
     local passed = 0
-    for _, shift in ipairs(translations) do
-        if sampleRayHitsBody(origin - shift, point - shift, params) then passed += 1 end
+    local hits = {}
+    for index, shift in ipairs(translations) do
+        local hit
+        -- Stationary targets often produce five identical translations. Reuse
+        -- exact matches only within this synchronous point evaluation.
+        for previous = 1, index - 1 do
+            if shift == translations[previous] then hit = hits[previous]; break end
+        end
+        if hit == nil then hit = sampleRayHitsBody(origin - shift, point - shift, params) end
+        hits[index] = hit
+        if hit then passed += 1
+        elseif State.Config.ConservativeGun then return 0, passed end
     end
     -- The nominal ray was already verified. Conservative mode requires every
     -- additional sampled time to intersect; this is geometry, not a hit probability.
-    if State.Config.ConservativeGun and passed < #translations then return 0, passed end
     return (1 + passed) / (1 + #translations), passed
 end
 function State.GunTimingShifts(positionAt, lead, position)
@@ -18880,17 +18900,18 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                                 exposedSamples += 1
                                 local centreWeight = offset == Vector3.zero and 1 or 0.85
                                 if maximumQuality * centreWeight > partBestQuality then
+                                local timingCoverage, timingPassed = gunTimingCoverage(origin, point, timingShifts, bodyQuery)
+                                -- Reject failed timing hypotheses before the six
+                                -- neighbouring clearance rays. The bound cannot
+                                -- remove a candidate capable of beating the best.
+                                if maximumQuality * centreWeight * timingCoverage > partBestQuality then
                                 local clearNeighbours = 0
                                 for _, neighbour in ipairs(clearanceOffsets) do
                                     local delta = info.Frame:VectorToWorldSpace(info.Size * neighbour)
                                     if clearPath(origin, point + delta, char, true) then clearNeighbours += 1 end
                                 end
-                                local upperQuality = maximumQuality * ((1 + clearNeighbours) / (1 + #clearanceOffsets)) * centreWeight
-                                -- Timing coverage cannot exceed one. Skip its extra
-                                -- geometry queries when this point cannot win.
-                                if upperQuality > partBestQuality then
-                                    local timingCoverage, timingPassed = gunTimingCoverage(origin, point, timingShifts, bodyQuery)
-                                    local quality = upperQuality * timingCoverage
+                                    local quality = maximumQuality * ((1 + clearNeighbours) / (1 + #clearanceOffsets))
+                                        * centreWeight * timingCoverage
                                     if quality > partBestQuality then
                                         partBestQuality = quality
                                         partBest = {Position = point, BodyPoint = sample, LeadTime = sampleLead,
@@ -19070,6 +19091,32 @@ local function chooseTarget(kind, origin, item, preferred, strict)
     State.RememberAimTarget(kind,best,preferred,strict,started)
     State.Performance.LastSelectionMs = (os.clock() - started) * 1000
     return best
+end
+
+-- Visual previews may lag by half a second; attack paths never use this cache.
+function State.GetCachedAimPreview(kind, item, origin)
+    local now, cached = os.clock(), State.PreviewCache
+    local target = cached and cached.Target
+    local valid = cached and cached.Kind == kind and cached.Item == item
+        and cached.OwnCharacter == player.Character and now >= cached.At and now < cached.Until
+        and cached.ExclusionsRevision == State.ExclusionsRevision
+        and cached.ConservativeGun == State.Config.ConservativeGun
+        and cached.KnifeAllDirections == State.Config.KnifeAllDirections
+    if target then
+        valid = valid and target.Player.Character == target.Character and alive(target.Player)
+            and not State.IsPlayerExcluded(target.Player)
+            and (kind ~= "Gun" or roleFor(target.Player) == "Murderer")
+    end
+    if valid then
+        State.Performance.PreviewCacheHits += 1
+        State.RememberAimTarget(kind, target, nil, nil, now)
+        return target
+    end
+    target = chooseTarget(kind, origin, item)
+    State.PreviewCache = {Kind=kind,Item=item,OwnCharacter=player.Character,Target=target,At=now,Until=now+0.5,
+        ExclusionsRevision=State.ExclusionsRevision,ConservativeGun=State.Config.ConservativeGun,
+        KnifeAllDirections=State.Config.KnifeAllDirections}
+    return target
 end
 
 -- This executor cannot hook the live script's module cache. Replace only the local
@@ -19510,7 +19557,7 @@ function State.ExcludedPlayerInShotPath(origin, destination)
     return false
 end
 local function aimPoint(record, preferred, strict, origin)
-    sampleMotion(os.clock())
+    sampleMotion(os.clock(), true)
     State.Stats.AimCalls += 1
     if record.Kind == "Knife" and not State.Config.KnifeAim then return weapon:GetMouseTargetCFrame(), nil end
     local target = chooseTarget(record.Kind, origin or shotOrigin(record.Kind, record.Item), record.Item, preferred, strict)
@@ -20172,21 +20219,8 @@ local function syncWeapons()
     local target
     if kind == "Knife" and not State.Config.KnifeAim then
         target = nil -- the status only reports that knife aim is off; skip the full scan
-    elseif kind == "Knife" then
-        -- The knife preview only feeds status/HUD text; a full scan is ~1000 raycasts, so reuse it for 0.5 s.
-        -- Throws always run their own fresh selection.
-        local now, cached = os.clock(), State.KnifePreview
-        if cached and cached.Item == item and now < cached.Until then
-            target = cached.Target
-            if target and (not alive(target.Player)
-                or (State.IsPlayerExcluded and State.IsPlayerExcluded(target.Player))) then target = nil end
-            if State.RememberAimTarget then State.RememberAimTarget("Knife", target, nil, nil, now) end
-        else
-            target = chooseTarget(kind, shotOrigin(kind, item), item)
-            State.KnifePreview = {Item = item, Target = target, Until = now + 0.5}
-        end
     else
-        target = chooseTarget(kind, shotOrigin(kind, item), item)
+        target = State.GetCachedAimPreview(kind, item, shotOrigin(kind, item))
     end
     State.Target = target and target.Player.Name or nil
     State.AimPreview = kind == "Gun" and target and {Player = target.Player,
@@ -21553,7 +21587,7 @@ function State.DebugSnapshot()
 end
 function State.PreviewGunShot()
     if not State.Config.Aim or not State.Config.MagicBullet then return {Enabled = false} end
-    sampleMotion(os.clock())
+    sampleMotion(os.clock(), true)
     local item = toolFor(player, "Gun")
     local origin = shotOrigin("Gun", item)
     local solution = chooseTarget("Gun", origin, item)

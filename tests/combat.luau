@@ -7,6 +7,7 @@ end
 local vectorMeta = {}
 local function vec(x) return setmetatable({X=x,Y=0,Z=0,Kind="Vector3"},vectorMeta) end
 vectorMeta.__sub = function(a,b) return vec(a.X-b.X) end
+vectorMeta.__eq = function(a,b) return a.X==b.X end
 vectorMeta.__index = function(v,k) if k=="Magnitude" then return math.abs(v.X) end end
 local function frame(x) return {Position=vec(x),Kind="CFrame"} end
 local function typeof(v) return type(v)=="table" and v.Kind or type(v) end
@@ -17,7 +18,8 @@ do
     local State={Config={ConservativeGun=true}}
     local Vector3={zero=vec(0)}
     local blockedX=nil
-    local function sampleRayHitsBody(origin) return origin.X~=blockedX end
+    local rays=0
+    local function sampleRayHitsBody(origin) rays+=1; return origin.X~=blockedX end
     -- INSERT_TIMING
     local shifts=State.GunTimingShifts(function(t) return vec(t*100) end,.04,vec(0))
     check(#shifts==5 and math.abs(shifts[2].X-8)<.00001 and math.abs(shifts[5].X-10)<.00001,
@@ -34,10 +36,74 @@ do
         "standard mode retains the original three timing samples")
     State.Config.ConservativeGun=true; blockedX=nil
     shifts=State.GunTimingShifts(function() return vec(0) end,0,vec(0))
+    rays=0
     check(gunTimingCoverage(vec(0),vec(10),shifts,{})==1,"stationary targets remain eligible")
+    check(rays==1,"five identical timing samples reuse one ray test")
+    rays=0; blockedX=0
+    check(gunTimingCoverage(vec(0),vec(10),shifts,{})==0 and rays==1,
+        "conservative mode stops after its first failed hypothesis")
     local latest=0
     State.GunTimingShifts(function(t) latest=math.max(latest,t); return vec(t) end,.15,vec(0))
     check(latest<=.2,"high-ping timing hypotheses remain bounded")
+end
+
+do
+    local State={Performance={MotionSweeps=0},Motion={}}
+    local Players={GetPlayers=function() return {} end}
+    -- INSERT_MOTION
+    sampleMotion(10)
+    for i=1,5 do sampleMotion(10+i*.003) end
+    check(State.Performance.MotionSweeps==1,"motion sampling skips redundant high-FPS roster walks")
+    sampleMotion(10.021)
+    check(State.Performance.MotionSweeps==2,"motion sampling resumes at the recording interval")
+    sampleMotion(10.022,true)
+    check(State.Performance.MotionSweeps==3,"attack-time sampling bypasses the throttle")
+    sampleMotion(1)
+    check(State.Performance.MotionSweeps==4,"clock rollback cannot freeze motion sampling")
+end
+
+do
+    local State={Config={ConservativeGun=true,KnifeAllDirections=true,KnifeAim=true},
+        Performance={PreviewCacheHits=0},Stats={AimCalls=0,Redirects=0,KnifeRedirects=0},ExclusionsRevision=0}
+    local player={Character={}}
+    local targetPlayer={Character={},Role="Murderer",Name="Target"}
+    local function alive(p) return not p.Dead end
+    local function roleFor(p) return p.Role end
+    State.IsPlayerExcluded=function(p) return p.Excluded end
+    State.RememberAimTarget=function() end
+    local selected,scans=nil,0
+    local function chooseTarget() scans+=1; return selected end
+    local item={}
+    local function snapshot() return {Player=targetPlayer,Character=targetPlayer.Character,Position=vec(10)} end
+    selected=snapshot()
+    -- INSERT_PREVIEW
+    State.GetCachedAimPreview("Gun",item,vec(0))
+    now+=.2; State.GetCachedAimPreview("Gun",item,vec(0))
+    now+=.2; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==1 and State.Performance.PreviewCacheHits==2,"gun HUD reuses preview across status ticks")
+    now+=.2; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==2,"expired preview performs a fresh scan")
+    targetPlayer.Character={}; selected=snapshot(); State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==3,"target respawn invalidates preview")
+    State.ExclusionsRevision+=1; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==4,"exclusion changes invalidate preview")
+    State.Config.ConservativeGun=false; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==5,"timing policy changes invalidate preview")
+    player.Character={}; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==6,"own respawn invalidates preview")
+    targetPlayer.Dead=true; selected=nil; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==7,"dead target invalidates preview")
+    State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==7,"no-target previews also avoid repeated expensive scans")
+    targetPlayer.Dead=false; selected=snapshot()
+    local CFrame={new=function(p) return {Position=p} end}
+    local forced=false
+    local function sampleMotion(_,force) forced=force end
+    local function shotOrigin() return vec(0) end
+    -- INSERT_AIMPOINT
+    local _,name=aimPoint({Kind="Gun",Item=item})
+    check(scans==8 and name=="Target" and forced,"attack bypasses stale empty HUD cache and forces fresh motion")
+    now=10
 end
 
 do
