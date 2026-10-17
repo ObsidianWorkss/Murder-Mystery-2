@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.0-rc.2 — 2026-10-17
+
+Same features and settings as rc.1.
+
+### Menu
+
+- 20 sidebar tabs reduced to 7: Home, Combat, Visuals, Character, Players, Fling and Settings.
+- Each former tab is now a collapsible card inside its group; the first card in each tab starts open.
+- Search still finds controls inside cards and opens the card that holds the result.
+
+### Performance
+
+- ESP refresh restyles a highlight only when it is new or the player's role changes, instead of rewriting nine properties per player every tick.
+- Dropped-gun ESP and the legacy status labels write only values that changed.
+- The aim marker no longer hides and re-shows itself every frame, and skips weapon lookups while the marker is off.
+- Idle per-frame work is cheaper: knife dodge checks its setting first, the ghost appearance skips cleanup when nothing is applied, and input-mode detection no longer allocates a closure each frame.
+
 ## 1.0.0-rc.1 — 2026-10-17
 
 First packaged release candidate. Existing access keys and the original loader URL remain supported.

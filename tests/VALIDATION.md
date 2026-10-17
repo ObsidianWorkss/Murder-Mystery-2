@@ -1,5 +1,13 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.2
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; the 72 rc.1 assertions still pass.
+- `luau-analyze` reports no new errors or unknown globals compared with rc.1.
+- The menu builder creates the same 89 titled controls and 46 callbacks as rc.1; only their grouping changed.
+- The seven-tab layout and collapsible cards have not been viewed live because no Roblox client was connected.
+- The performance changes remove redundant writes and per-frame allocations. No live FPS measurement was taken.
+
 ## Release candidate 1.0.0-rc.1
 
 - `main.lua` and `loader.lua` compile with Luau 0.739.

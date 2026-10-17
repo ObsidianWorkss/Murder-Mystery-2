@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.1"
+State.Version = "1.0.0-rc.2"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17844,8 +17844,10 @@ end
 installPlayerExclusions({State=State,Players=Players,Player=player})
 end
 -- Prefer Roblox's active input so a touchscreen laptop can still use PC controls.
+-- Called every frame by the camera guard; a shared reader avoids allocating a closure per call.
+local function readPreferredInput(service) return service.PreferredInput end
 local detectInputMode = function(UIS)
-    local ok, preferred = pcall(function() return UIS.PreferredInput end)
+    local ok, preferred = pcall(readPreferredInput, UIS)
     if ok then
         if preferred == Enum.PreferredInput.Touch then return "Mobile" end
         if preferred == Enum.PreferredInput.KeyboardAndMouse then return "PC" end
@@ -19329,7 +19331,7 @@ do
     connect(UIS.WindowFocused, function() dodge.Focused = true end)
     connect(player.CharacterRemoving, function() dodge.Direction, dodge.Character = nil, nil end)
     RunService:BindToRenderStep(bindName, Enum.RenderPriority.Input.Value + 2, function()
-        if not State.Running or mobileBlocked() or not State.Config.AutoKnifeDodge or not dodge.Focused or GuiService.MenuIsOpen
+        if not State.Config.AutoKnifeDodge or not State.Running or mobileBlocked() or not dodge.Focused or GuiService.MenuIsOpen
             or UIS:GetFocusedTextBox() or not alive(player) or State.Invis.Busy
             or (State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy)) then
             dodge.Direction, dodge.Character = nil, nil
@@ -20720,14 +20722,20 @@ local function updateESP()
                 State.Visuals[p] = visual
             end
             refreshNativeBody(visual,char)
-            visual.Highlight.Adornee = char
-            visual.Highlight.Enabled = true
-            visual.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            visual.Highlight.FillTransparency = 0.3
-            visual.Highlight.FillColor = colors[role]
-            visual.Highlight.OutlineColor = colors[role]
-            visual.Label.Adornee = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-            visual.Text.TextColor3 = colors[role]
+            local highlight = visual.Highlight
+            -- Restyle only a new highlight or a role change; float properties never read back equal.
+            if visual.StyledHighlight ~= highlight or visual.StyledRole ~= role then
+                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                highlight.FillTransparency = 0.3
+                highlight.FillColor = colors[role]
+                highlight.OutlineColor = colors[role]
+                visual.Text.TextColor3 = colors[role]
+                visual.StyledHighlight, visual.StyledRole = highlight, role
+            end
+            if highlight.Adornee ~= char then highlight.Adornee = char end
+            if not highlight.Enabled then highlight.Enabled = true end
+            local anchor = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+            if visual.Label.Adornee ~= anchor then visual.Label.Adornee = anchor end
             updateHiddenBoxes(visual, char, colors[role])
             local targetRoot = char:FindFirstChild("HumanoidRootPart")
             local distance = ownRoot and targetRoot and (targetRoot.Position - ownRoot.Position).Magnitude
@@ -20739,7 +20747,7 @@ local function updateESP()
             -- Write only real changes: the old flip between two strings re-rendered every label twice per tick.
             if visual.Text.Text ~= labelText then visual.Text.Text = labelText end
             if visual.Label.Size ~= labelSize then visual.Label.Size = labelSize end
-            visual.Label.Enabled=true
+            if not visual.Label.Enabled then visual.Label.Enabled=true end
         else removeVisual(p) end
     end
 end
@@ -20793,13 +20801,13 @@ markerStroke.Parent = aimMarker
 do
 -- Position follows every frame; the two line-of-sight raycasts are refreshed ~15 times per second.
 local sight = {At = -math.huge}
-connect(RunService.RenderStepped, function()
-    aimMarker.Visible = false
+local function markerScreenPoint()
     local preview = State.AimPreview
+    -- Settings first: the common "marker off" frame costs no instance lookups.
+    if not State.Config.AimMarker or not State.Config.Aim or not State.Config.MagicBullet or not preview then return end
     local item, kind = equippedWeapon()
     local camera = workspace.CurrentCamera
-    if not State.Config.AimMarker or not State.Config.Aim or not State.Config.MagicBullet or kind ~= "Gun"
-        or not preview or not camera or not alive(player) or not alive(preview.Player)
+    if kind ~= "Gun" or not camera or not alive(player) or not alive(preview.Player)
         or preview.Player.Character ~= preview.Character then return end
     local part = preview.Character:FindFirstChild(preview.AimPart)
     local origin = shotOrigin("Gun", item)
@@ -20814,7 +20822,15 @@ connect(RunService.RenderStepped, function()
     end
     if not sight.Clear then return end
     local screen, visible = camera:WorldToViewportPoint(point)
-    if visible then aimMarker.Position = UDim2.fromOffset(screen.X, screen.Y); aimMarker.Visible = true end
+    if visible then return screen end
+end
+connect(RunService.RenderStepped, function()
+    local ok, screen = pcall(markerScreenPoint)
+    if not ok then aimMarker.Visible = false; error(screen, 0) end
+    if screen then aimMarker.Position = UDim2.fromOffset(screen.X, screen.Y) end
+    -- Toggling Visible off and on every frame invalidated the marker's layout each frame.
+    local shown = screen ~= nil
+    if aimMarker.Visible ~= shown then aimMarker.Visible = shown end
 end)
 end
 local threatBanner = Instance.new("TextLabel")
@@ -21411,14 +21427,15 @@ updateGunESP = function()
                 visual = {Highlight = highlight, Label = label, Text = text}
                 State.GunVisuals[object] = visual
             end
-            visual.Highlight.Adornee = object:IsA("Model") and object or part
-            visual.Highlight.Enabled = true
-            visual.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            visual.Highlight.FillTransparency = 0.2
-            visual.Label.Enabled = true
-            visual.Label.Adornee = part
+            -- Depth mode and transparency are set once at creation; only adornees and text can change.
+            local adornee = object:IsA("Model") and object or part
+            if visual.Highlight.Adornee ~= adornee then visual.Highlight.Adornee = adornee end
+            if not visual.Highlight.Enabled then visual.Highlight.Enabled = true end
+            if not visual.Label.Enabled then visual.Label.Enabled = true end
+            if visual.Label.Adornee ~= part then visual.Label.Adornee = part end
             local distance = root and math.round((part.Position - root.Position).Magnitude)
-            visual.Text.Text = "DROPPED GUN" .. (distance and " | " .. distance .. " studs" or "")
+            local text = "DROPPED GUN" .. (distance and " | " .. distance .. " studs" or "")
+            if visual.Text.Text ~= text then visual.Text.Text = text end
         else
             removeGunVisual(object)
         end
@@ -21677,10 +21694,14 @@ connect(RunService.Heartbeat, function(dt)
     updateThreat()
     updateGunESP()
     autoPickup()
-    status.Text = State.AimStatus
-    gunFeedback.Text = State.LastGunFeedback and State.LastGunFeedback.Message or "Gun feedback: waiting for shot"
-    dodgeStatus.Text = State.Config.AutoKnifeDodge and State.KnifeDodge.Status or "Knife dodge OFF"
-    invisStatus.Text = State.Invis.Status
+    -- Legacy panel labels: write only real changes so unchanged text is not re-laid out.
+    local aimText = State.AimStatus
+    local gunText = State.LastGunFeedback and State.LastGunFeedback.Message or "Gun feedback: waiting for shot"
+    local dodgeText = State.Config.AutoKnifeDodge and State.KnifeDodge.Status or "Knife dodge OFF"
+    if status.Text ~= aimText then status.Text = aimText end
+    if gunFeedback.Text ~= gunText then gunFeedback.Text = gunText end
+    if dodgeStatus.Text ~= dodgeText then dodgeStatus.Text = dodgeText end
+    if invisStatus.Text ~= State.Invis.Status then invisStatus.Text = State.Invis.Status end
 end)
 updateESP()
 updateThreat()
@@ -24134,7 +24155,11 @@ local installGhostAppearance=function(C)
         if not State.Running then State.StopGhostAppearance(); return end
         local active=State.Invis and State.Invis.Active and not State.Invis.Busy
         local char=player.Character
-        if not active or not char then restore(); character=nil; return end
+        if not active or not char then
+            -- Already restored: skip the per-frame cleanup pass and its allocation.
+            if next(parts)~=nil or ghost.Active or ghost.Parts~=0 or ghost.LastError~=nil then restore() end
+            character=nil; return
+        end
         if char~=character then
             local ok=restore(); if not ok then return end
             character=char; nextScan=0
@@ -24265,46 +24290,56 @@ local createMobileUI = function(C)
         if State.Running then State.Destroy() end
     end)
 
+    -- Seven sidebar tabs; each former page is a collapsible card, created in display order
+    -- so the builders below can keep filling them in any order.
     mobile.Pages={}
-    local function page(key,title,icon,description)
-        local tab=window:Tab({Title=title,Icon=icon})
-        mobile.Pages[key]=tab
-        tab:Paragraph({Title=title,Desc=description})
-        return tab
+    local function tab(title,icon)
+        return window:Tab({Title=title,Icon=icon})
     end
-    local home=page("Home","Home","house","Session and quick actions. Scroll the sidebar or search to find a feature.")
-    local combat=page("GunAim","Gun Aim","crosshair","Gun aim and target selection without moving your camera.")
-    local knife=page("KnifeAim","Knife Aim","sword","Knife throws and manual stab assistance.")
-    local automation=page("KillAura","Kill Aura","zap","Automatic stab attempts while you are the murderer.")
-    local pickupTab=page("Pickup","Gun Pickup","hand","Collect dropped guns without teleporting.")
-    local dodgeTab=page("Dodge","Knife Dodge","shield","Automatic jumps or sidesteps for incoming knives.")
-    local visuals=page("ESP","Player ESP","eye","Player body colors and username labels.")
-    local hud=page("HUD","HUD & Alerts","layout-dashboard","Your status panel, aim marker and nearby warnings.")
-    local movement=page("Invisibility","Invisibility","ghost","Toggle invisibility and restore your character.")
-    local travel=page("Teleports","Teleports","map-pin","Go to a loaded map or the lobby.")
-    local animations=page("Animations","Animations","sparkles","Mage movement, poses and custom animation IDs.")
-    local flingTab=page("Fling","Fling","wind","Choose one target, a role or everyone eligible.")
-    local roleFling=page("RoleFling","Role Fling","target","Quick actions for the murderer, sheriff or opposing role.")
-    local flingOptions=page("FlingOptions","Fling Setup","sliders-horizontal","Contact mode, target tracking and diagnostics.")
-    local flingReports=page("FlingReports","Fling Reports","clipboard-list","Current contact status and all-player progress.")
-    local playersTab=page("Players","Player Actions","users","Teleport to or auto-attack a selected player.")
-    local protected=page("Protected","Protected","shield-check","Players your automatic actions must skip.")
-    local guidance=page("Guidance","Guidance","route","Optional target and route suggestions.")
-    local appearance=page("Appearance","Appearance","palette","Menu theme and quick display presets.")
-    local settings=page("Settings","Settings","settings","Button layout, repairs and unloading.")
+    local function page(key,parent,title,icon,opened)
+        local section=parent:Section({Title=title,Icon=icon,Box=true,BoxBorder=true,Opened=opened==true})
+        mobile.Pages[key]={Tab=parent,Section=section}
+        return section
+    end
+    local home=tab("Home","house")
+    mobile.Pages.Home={Tab=home}
+    local combatPage=tab("Combat","crosshair")
+    local combat=page("GunAim",combatPage,"Gun Aim","crosshair",true)
+    local knife=page("KnifeAim",combatPage,"Knife Aim","sword")
+    local automation=page("KillAura",combatPage,"Kill Aura","zap")
+    local dodgeTab=page("Dodge",combatPage,"Knife Dodge","shield")
+    local pickupTab=page("Pickup",combatPage,"Gun Pickup","hand")
+    local visualsPage=tab("Visuals","eye")
+    local visuals=page("ESP",visualsPage,"Player ESP","eye",true)
+    local hud=page("HUD",visualsPage,"HUD & Alerts","layout-dashboard")
+    local guidance=page("Guidance",visualsPage,"Guidance","route")
+    local characterPage=tab("Character","ghost")
+    local movement=page("Invisibility",characterPage,"Invisibility","ghost",true)
+    local travel=page("Teleports",characterPage,"Teleports","map-pin")
+    local animations=page("Animations",characterPage,"Animations","sparkles")
+    local playersPage=tab("Players","users")
+    local playersTab=page("Players",playersPage,"Player Actions","users",true)
+    local protected=page("Protected",playersPage,"Protected","shield-check")
+    local flingPage=tab("Fling","wind")
+    local flingTab=page("Fling",flingPage,"Fling","wind",true)
+    local roleFling=page("RoleFling",flingPage,"Role Fling","target")
+    local flingOptions=page("FlingOptions",flingPage,"Fling Setup","sliders-horizontal")
+    local flingReports=page("FlingReports",flingPage,"Fling Reports","clipboard-list")
+    local settingsPage=tab("Settings","settings")
+    local settings=page("Settings",settingsPage,"General","settings",true)
+    local appearance=page("Appearance",settingsPage,"Appearance","palette")
     function mobile.OpenPage(key)
         local target=mobile.Pages[key]
         if not target or mobile.Destroyed then return false end
-        suppressInput(); target:Select(); return true
+        suppressInput(); target.Tab:Select()
+        if target.Section then target.Section:Open() end
+        return true
     end
     local exclusionsTab
     if State.SetPlayerExcluded and State.GetPlayerExclusions then
         exclusionsTab=protected
         mobile.ExclusionsTab = exclusionsTab
-        function mobile.OpenExclusions()
-            suppressInput()
-            protected:Select()
-        end
+        function mobile.OpenExclusions() mobile.OpenPage("Protected") end
     end
     local function refresh()
         syncing = true

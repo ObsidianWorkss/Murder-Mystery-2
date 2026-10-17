@@ -1,6 +1,6 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.1**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.2**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
@@ -12,6 +12,7 @@ Version: **1.0.0-rc.1**. Do not describe this candidate as fully verified until 
 ## Live checks — pending a connected Roblox client
 
 - [ ] First launch: valid key, invalid key, cancel, and saved-key behavior.
+- [ ] Menu: seven tabs, cards open and close, live status text resizes its card, search opens the card holding a result.
 - [ ] PC: Right Shift menu, click fire/stab, E/right-click throw, End stop.
 - [ ] Mobile: dragging, FIRE/STAB, THROW, STOP, and switching input modes.
 - [ ] Support report: clipboard success and unavailable-clipboard fallback.
