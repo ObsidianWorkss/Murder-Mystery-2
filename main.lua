@@ -17729,7 +17729,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-16-MovingOcclusion"
+State.Build = "Universal-WindUI-2026-10-17-ContinuousOcclusion"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -19518,13 +19518,42 @@ local installGunPathGuard=function(C)
         return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
             and math.abs(v.X)<1e7 and math.abs(v.Y)<1e7 and math.abs(v.Z)<1e7
     end
+    -- Segment versus an OBB swept through a constant translation. In box space
+    -- the Minkowski difference has five generators (three box axes, ray, motion).
+    -- The ten pairwise cross-product axes give a continuous SAT test, without
+    -- filling the empty corners of an expanded enclosing box.
+    local function sweptIntersects(origin,point,entry,age,horizon)
+        if entry.Velocity.Magnitude<.000001 then
+            return C.Intersects(origin,point,entry.Frame,entry.Size)
+        end
+        local frame=entry.Frame
+        local start=frame:PointToObjectSpace(origin)
+        local finish=frame:PointToObjectSpace(point)
+        local velocity=frame:VectorToObjectSpace(entry.Velocity)
+        local d=(finish-start)*.5
+        local v=velocity*(horizon*.5)
+        local c=(start+finish)*.5-velocity*(age+horizon*.5)
+        local h=entry.Size*.5
+        local function separated(x,y,z)
+            local norm=math.sqrt(x*x+y*y+z*z)
+            if norm<1e-12 then return false end
+            local distance=math.abs(c.X*x+c.Y*y+c.Z*z)
+            local extent=h.X*math.abs(x)+h.Y*math.abs(y)+h.Z*math.abs(z)
+                +math.abs(d.X*x+d.Y*y+d.Z*z)+math.abs(v.X*x+v.Y*y+v.Z*z)
+            return distance>extent+1e-6*norm
+        end
+        return not (separated(1,0,0) or separated(0,1,0) or separated(0,0,1)
+            or separated(0,-d.Z,d.Y) or separated(d.Z,0,-d.X) or separated(-d.Y,d.X,0)
+            or separated(0,-v.Z,v.Y) or separated(v.Z,0,-v.X) or separated(-v.Y,v.X,0)
+            or separated(d.Y*v.Z-d.Z*v.Y,d.Z*v.X-d.X*v.Z,d.X*v.Y-d.Y*v.X))
+    end
     function State.CreateGunPathSnapshot()
         local delay=tonumber(State.Config.Ping) or 0
         if delay~=delay then delay=0 end
         delay=math.clamp(delay,0,.15)
         local margin=math.clamp(delay*.25,.012,.035)
         local times={0,math.max(0,delay-margin),delay,math.min(.185,delay+margin)}
-        local snapshot={Time=clock(),Groups={},Times=times,Parts=0}
+        local snapshot={Time=clock(),Groups={},Times=times,Horizon=times[4],Parts=0}
         local ignored={}
         for _,o in ipairs(C.GetPassthrough()) do ignored[o]=true end
         local function passthrough(part)
@@ -19539,7 +19568,7 @@ local installGunPathGuard=function(C)
             local char=p.Character
             local root=char and char:FindFirstChild("HumanoidRootPart")
             if p~=player and root and finite(root.Position) then
-                local group={Character=char,Name=p.Name,Centre=root.Position,Radius=0,Parts={}}
+                local group={Character=char,Name=p.Name,Centre=root.Position,Radius=0,MaxSpeed=0,Parts={}}
                 for _,part in ipairs(char:GetDescendants()) do
                     if part:IsA("BasePart") and (part.CanQuery or part.CanCollide or State.ServerBlockers[part])
                         and (part.Transparency<1 or State.ServerBlockers[part]) and not passthrough(part)
@@ -19549,10 +19578,11 @@ local installGunPathGuard=function(C)
                         if not ok or not finite(velocity) then velocity=root.AssemblyLinearVelocity end
                         if not finite(velocity) then velocity=Vector3.zero end
                         if velocity.Magnitude>900 then velocity=velocity.Unit*900 end
-                        local radius=(part.Position-root.Position).Magnitude+part.Size.Magnitude*.5
+                        local radius=(part.Position-group.Centre).Magnitude+part.Size.Magnitude*.5
                             +velocity.Magnitude*times[4]+.05
                         group.Radius=math.max(group.Radius,radius)
-                        table.insert(group.Parts,{Part=part,Frame=part.CFrame,Size=part.Size,Velocity=velocity})
+                        group.MaxSpeed=math.max(group.MaxSpeed,velocity.Magnitude)
+                        table.insert(group.Parts,{Part=part,Frame=part.CFrame,Size=part.Size,Velocity=velocity,Time=clock()})
                         snapshot.Parts+=1
                     end
                 end
@@ -19564,7 +19594,9 @@ local installGunPathGuard=function(C)
     end
     function State.GunPathClear(snapshot,origin,point,targetCharacter)
         if not snapshot then return true end
-        if clock()-snapshot.Time>.25 or snapshot.Truncated then return false end
+        local now=clock()
+        local age=now-snapshot.Time
+        if age<0 or age>.25 or snapshot.Truncated then return false end
         local delta=point-origin
         local lengthSquared=delta:Dot(delta)
         if lengthSquared<.000001 then return false end
@@ -19572,14 +19604,16 @@ local installGunPathGuard=function(C)
             if group.Character~=targetCharacter then
                 local t=math.clamp((group.Centre-origin):Dot(delta)/lengthSquared,0,1)
                 local distance=group.Centre-(origin+delta*t)
-                if distance:Dot(distance)<=group.Radius*group.Radius then
+                local radius=group.Radius+(group.MaxSpeed or 0)*age
+                if distance:Dot(distance)<=radius*radius then
                     for _,entry in ipairs(group.Parts) do
                         if entry.Part:IsDescendantOf(group.Character) then
-                            for _,dt in ipairs(snapshot.Times) do
-                                if C.Intersects(origin,point,entry.Frame+entry.Velocity*dt,entry.Size) then
-                                    State.LastGunPathBlock={Player=group.Name,Part=entry.Part.Name,LookAhead=dt}
-                                    return false
-                                end
+                            local elapsed=math.max(0,now-(entry.Time or snapshot.Time))
+                            local horizon=snapshot.Horizon or snapshot.Times[4]
+                            if sweptIntersects(origin,point,entry,elapsed,horizon) then
+                                State.LastGunPathBlock={Player=group.Name,Part=entry.Part.Name,
+                                    LookAhead=horizon,SnapshotAge=elapsed,Continuous=true}
+                                return false
                             end
                         end
                     end
