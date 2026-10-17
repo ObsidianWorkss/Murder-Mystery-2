@@ -48,6 +48,9 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     start = source.index("    local animationPacks = {")
     end = source.index("\n", source.index('State.Config.AnimationPack = "Mage" end', start))
     release = release.replace("-- INSERT_PACKS", source[start:end])
+    start = source.index("local installKeybinds=function(C)")
+    end = source.index("installKeybinds({", start)
+    release = release.replace("-- INSERT_KEYBINDS", source[start:end])
     if "-- INSERT_" in release or "-- INSERT_" in template:
         raise RuntimeError("Unexpanded regression-test source marker")
     harness.write_text(release, encoding="utf-8")

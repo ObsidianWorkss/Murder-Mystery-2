@@ -321,4 +321,63 @@ do
     -- INSERT_PACKS
     check(State.Config.AnimationPack=="Mage","an unknown saved pack falls back to Mage")
 end
+do
+    -- Keybinds: fake input objects and setters; nothing here touches a real game.
+    local Enum={UserInputType={Keyboard="Keyboard",MouseButton1="MouseButton1"}}
+    local focused,mode=nil,"PC"
+    local UIS={InputBegan="InputBegan",GetFocusedTextBox=function() return focused end}
+    local toasts,refreshed,synced={},0,0
+    local cfg={Aim=true,MagicBullet=true,KillAura=false,ESP=true,XRay=false,Fly=false,Noclip=false,SpeedBoost=false,
+        JumpBoost=false,InfiniteJump=false,Invisibility=false,MageAnimations=true,
+        Keybinds={Fly="Q",Noclip="W",InfiniteJump="Q",ESP="H"}}
+    local State={Running=true,Config=cfg,MobileUI={MenuOpen=false,Refresh=function() refreshed+=1 end,
+        Toast=function(text) table.insert(toasts,text) end}}
+    function State.SetMagicBullet(enabled) cfg.MagicBullet=enabled end
+    function State.SetKillAura(enabled) if enabled then return false,"Waiting until you are murderer" end cfg.KillAura=false; return true end
+    function State.SetInvisibility(enabled) cfg.Invisibility=enabled end
+    function State.SetMageAnimations(enabled) cfg.MageAnimations=enabled end
+    function State.RevealRolesInChat() return false,"Available during a round" end
+    function State.TeleportToArea() return false,"Wait for your living character" end
+    function State.FixCamera() error("camera module missing") end
+    local connections={}
+    local C={State=State,UIS=UIS,Connect=function(signal,callback) connections[signal]=callback end,
+        SyncWeapons=function() synced+=1 end,RefreshAim=function() end,UpdateVisuals=function() end,
+        InputMode=function() return mode end}
+    -- INSERT_KEYBINDS
+    installKeybinds(C)
+    local keys=State.Keybinds
+    local function press(name,processed) return keys.Press({UserInputType="Keyboard",KeyCode={Name=name}},processed) end
+    check(connections.InputBegan==keys.Press,"keybinds listen to keyboard input")
+    check(cfg.Keybinds.Fly=="Q" and cfg.Keybinds.ESP=="H","saved keybinds are kept")
+    check(cfg.Keybinds.Noclip=="None","a saved reserved key is dropped")
+    check(cfg.Keybinds.InfiniteJump=="None" and cfg.Keybinds.XRay=="X","a saved duplicate key stays with the earlier action")
+    check(cfg.Keybinds.Aim=="F6" and cfg.Keybinds.KillAura=="K" and cfg.Keybinds.RevealRoles=="None","missing keybinds use their defaults")
+    check(press("Q")=="Fly on" and cfg.Fly and toasts[#toasts]=="Fly on" and refreshed==1,"a keybind toggles its feature and confirms it")
+    check(press("Q")=="Fly off" and not cfg.Fly,"pressing again switches it off")
+    check(press("F6")=="Aim assist off" and not cfg.Aim and synced==1,"aim assist keeps its F6 default")
+    check(press("Q",true)==nil and not cfg.Fly,"keys the game already handled are ignored")
+    focused={}
+    check(press("Q")==nil,"keys are ignored while typing")
+    focused=nil; State.MobileUI.MenuOpen=true
+    check(press("Q")==nil,"keys are ignored while the menu is open")
+    State.MobileUI.MenuOpen=false; mode="Mobile"
+    check(press("Q")==nil,"keybinds are PC only")
+    mode="PC"
+    check(keys.Press({UserInputType="MouseButton1",KeyCode={Name="Unknown"}})==nil,"mouse clicks never trigger keybinds")
+    local ok,message=State.SetKeybind("Noclip","W")
+    check(not ok and message=="W is reserved","movement keys cannot be bound")
+    ok,message=State.SetKeybind("Noclip","MouseLeftButton")
+    check(not ok and cfg.Keybinds.Noclip=="None","mouse buttons cannot be bound")
+    ok,message=State.SetKeybind("Noclip","Q")
+    check(ok and message=="Q moved from Fly to Noclip" and cfg.Keybinds.Fly=="None" and cfg.Keybinds.Noclip=="Q",
+        "binding a used key moves it to the new action")
+    ok,message=State.SetKeybind("Noclip","Backspace")
+    check(ok and message=="Noclip unbound" and cfg.Keybinds.Noclip=="None","Backspace clears a keybind")
+    check(press("K")=="Waiting until you are murderer" and not cfg.KillAura,"a refused action shows why")
+    State.SetKeybind("RevealRoles","R")
+    check(press("R")=="Available during a round","reveal roles reports its result")
+    check(press("F10"):find("Repair camera failed",1,true)==1,"an action error is reported instead of breaking input")
+    State.ResetKeybinds()
+    check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None","reset restores default keys")
+end
 print(string.format("%d release assertions passed",passed))

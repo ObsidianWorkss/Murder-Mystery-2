@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-rc.10 — 2026-10-17
+
+### PC keybinds
+
+- Settings → **Keybinds** card with 16 rebindable actions: aim assist, gun aim, kill aura, player ESP, X-ray, fly, noclip, speed boost, jump boost, infinite jump, invisibility, animation pack, reveal roles, teleport to map, teleport to lobby and camera repair.
+- Defaults: F6 aim assist, F7 gun aim, F8 invisibility, F10 camera repair (unchanged), plus F fly, N noclip, G speed, J infinite jump, K kill aura, V ESP and X X-ray. Reveal roles, teleports, jump boost and the animation pack start unbound.
+- Keys never fire while typing (chat included), with the menu open, or in the mobile layout; the card is hidden on mobile.
+- Reserved keys (movement, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11, F12) and mouse buttons cannot be bound. A key already in use moves to the new action; Backspace clears a bind; Reset keybinds restores the defaults.
+- Each press shows one short confirmation such as "Fly on", or the reason it could not act.
+- The old fixed F9 animation toggle is removed because F9 also opens Roblox's developer console.
+
 ## 1.0.0-rc.9 — 2026-10-17
 
 ### Animations

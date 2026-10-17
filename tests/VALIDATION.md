@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.10
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 96 release assertions pass (154 total).
+- 21 new keybind assertions cover saved, reserved and duplicate keys, defaults, toggling with confirmation, ignoring handled input, typing, an open menu, mobile and mouse clicks, rejecting reserved keys and mouse buttons, moving a duplicate, clearing with Backspace, refused and failing actions, and reset.
+- Keybinds have not been pressed in a live server.
+
 ## Release candidate 1.0.0-rc.9
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 75 release assertions pass (133 total).

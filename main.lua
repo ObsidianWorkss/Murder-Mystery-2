@@ -17695,7 +17695,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
-    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.9"
+State.Version = "1.0.0-rc.10"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21009,23 +21009,6 @@ connect(UIS.InputChanged, function(input)
         panel.Position = frameStart + UDim2.fromOffset(delta.X, delta.Y)
     end
 end)
-connect(UIS.InputBegan, function(input, processed)
-    -- The mobile floating icon controls the WindUI window.
-    if not processed and input.KeyCode == Enum.KeyCode.F6 then
-        State.Config.Aim = not State.Config.Aim
-        refreshButtons.Aim()
-        syncWeapons()
-    end
-    if not processed and not UIS:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.F7 then
-        State.SetMagicBullet(not State.Config.MagicBullet)
-    end
-    if not processed and not UIS:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.F8 then
-        State.SetInvisibility(not State.Config.Invisibility)
-    end
-    if not processed and not UIS:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.F10 then
-        State.FixCamera()
-    end
-end)
 
 do
     -- Floating idle is a Roblox R15 animation. Bend's asset ID was identified
@@ -21377,9 +21360,6 @@ do
     connect(UIS.InputBegan, function(key, processed)
         if processed then return end
         if key.KeyCode == Enum.KeyCode.Insert then window.Visible = false end
-        if key.KeyCode == Enum.KeyCode.F9 then
-            State.SetMageAnimations(not State.Config.MageAnimations)
-        end
     end)
     local persistenceElapsed = 0
     connect(RunService.Heartbeat, function(dt)
@@ -24505,6 +24485,101 @@ end
 
 
 do
+-- PC keybinds. A key only acts while you play: never while typing (chat included), with the menu open,
+-- or in the mobile layout. Keys the game or this script already use cannot be bound.
+local installKeybinds=function(C)
+    local State,UIS=C.State,C.UIS
+    local cfg=State.Config
+    local reserved={}
+    for _,name in ipairs({"W","A","S","D","Space","LeftShift","RightShift","LeftControl","End","E","Slash","Tab","Escape",
+        "Return","Backspace","Delete","Backquote","I","O","Up","Down","Left","Right","F9","F11","F12","Unknown",
+        "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton"}) do reserved[name]=true end
+    local function flip(key) cfg[key]=not cfg[key]; return cfg[key] end
+    local actions={
+        {Id="Aim",Title="Aim assist",Default="F6",Run=function() flip("Aim"); C.RefreshAim(); C.SyncWeapons(); return cfg.Aim end},
+        {Id="MagicBullet",Title="Gun aim",Default="F7",Run=function() State.SetMagicBullet(not cfg.MagicBullet); return cfg.MagicBullet end},
+        {Id="KillAura",Title="Kill aura",Default="K",Run=function()
+            local ok,message=State.SetKillAura(not cfg.KillAura)
+            if ok==false then return nil,tostring(message) end
+            return cfg.KillAura end},
+        {Id="ESP",Title="Player ESP",Default="V",Run=function() flip("ESP"); C.UpdateVisuals(); return cfg.ESP end},
+        {Id="XRay",Title="X-ray",Default="X",Run=function() return flip("XRay") end},
+        {Id="Fly",Title="Fly",Default="F",Run=function() return flip("Fly") end},
+        {Id="Noclip",Title="Noclip",Default="N",Run=function() return flip("Noclip") end},
+        {Id="SpeedBoost",Title="Speed boost",Default="G",Run=function() return flip("SpeedBoost") end},
+        {Id="JumpBoost",Title="Jump boost",Default="None",Run=function() return flip("JumpBoost") end},
+        {Id="InfiniteJump",Title="Infinite jump",Default="J",Run=function() return flip("InfiniteJump") end},
+        {Id="Invisibility",Title="Invisibility",Default="F8",Run=function() State.SetInvisibility(not cfg.Invisibility); return cfg.Invisibility end},
+        {Id="AnimationPack",Title="Animation pack",Default="None",Run=function() State.SetMageAnimations(not cfg.MageAnimations); return cfg.MageAnimations end},
+        {Id="RevealRoles",Title="Reveal roles in chat",Default="None",Run=function()
+            local ok,message=State.RevealRolesInChat()
+            return nil,ok and "Roles sent" or tostring(message) end},
+        {Id="TeleportMap",Title="Teleport to map",Default="None",Run=function() local ok,message=State.TeleportToArea("Map"); return nil,ok and "Teleported to map" or tostring(message) end},
+        {Id="TeleportLobby",Title="Teleport to lobby",Default="None",Run=function() local ok,message=State.TeleportToArea("Lobby"); return nil,ok and "Teleported to lobby" or tostring(message) end},
+        {Id="RepairCamera",Title="Repair camera",Default="F10",Run=function() local ok,message=State.FixCamera(); return nil,ok and "Camera repaired" or tostring(message) end},
+    }
+    local byId={}
+    for _,action in ipairs(actions) do byId[action.Id]=action end
+    -- Saved binds survive reloads; anything missing, reserved or duplicated falls back cleanly.
+    local saved=type(cfg.Keybinds)=="table" and cfg.Keybinds or {}
+    cfg.Keybinds={}
+    local taken={}
+    for _,action in ipairs(actions) do
+        local key=type(saved[action.Id])=="string" and saved[action.Id] or action.Default
+        if key~="None" and (reserved[key] or taken[key]) then key="None" end
+        cfg.Keybinds[action.Id]=key
+        if key~="None" then taken[key]=action.Id end
+    end
+    local keys={Actions=actions,Reserved=reserved}
+    State.Keybinds=keys
+    function State.SetKeybind(id,key)
+        local action=byId[id]
+        if not action then return false,"Unknown keybind" end
+        if key==nil or key=="" or key=="Backspace" or key=="Delete" then key="None" end
+        if key~="None" and reserved[key] then return false,key.." is reserved" end
+        local message=action.Title..(key=="None" and " unbound" or ": "..key)
+        if key~="None" then
+            for otherId,otherKey in pairs(cfg.Keybinds) do
+                if otherId~=id and otherKey==key then
+                    cfg.Keybinds[otherId]="None"
+                    message=key.." moved from "..byId[otherId].Title.." to "..action.Title
+                end
+            end
+        end
+        cfg.Keybinds[id]=key
+        return true,message
+    end
+    function State.ResetKeybinds()
+        for _,action in ipairs(actions) do cfg.Keybinds[action.Id]=action.Default end
+        return true,"Keybinds reset"
+    end
+    function keys.Press(input,processed)
+        if processed or not State.Running or input.UserInputType~=Enum.UserInputType.Keyboard then return nil end
+        if C.InputMode()~="PC" or UIS:GetFocusedTextBox() or (State.MobileUI and State.MobileUI.MenuOpen) then return nil end
+        local name=input.KeyCode.Name
+        for _,action in ipairs(actions) do
+            if cfg.Keybinds[action.Id]==name then
+                local ok,on,message=pcall(action.Run)
+                local text=not ok and (action.Title.." failed: "..tostring(on))
+                    or message or (action.Title..(on and " on" or " off"))
+                if State.MobileUI and State.MobileUI.Refresh then State.MobileUI.Refresh() end
+                if State.MobileUI and State.MobileUI.Toast then State.MobileUI.Toast(text) end
+                return text
+            end
+        end
+        return nil
+    end
+    C.Connect(UIS.InputBegan,keys.Press)
+end
+
+installKeybinds({State=State,UIS=UIS,Connect=connect,SyncWeapons=syncWeapons,
+    RefreshAim=function() if refreshButtons.Aim then refreshButtons.Aim() end end,
+    UpdateVisuals=function() updateESP(); updateThreat(); updateGunESP() end,
+    InputMode=function() return detectInputMode(UIS) end})
+end
+
+
+do
 -- Button only: posts the murderer and sheriff of the current round to chat. Never names you,
 -- skips protected players, and waits a few seconds between messages.
 local installRoleReveal=function(C)
@@ -24715,6 +24790,7 @@ local createMobileUI = function(C)
     local chatSection=page("Chat",playersPage,"Chat","message-circle")
     local settingsPage=tab("Settings","settings")
     local settings=page("Settings",settingsPage,"General","settings",true)
+    local keybindsCard=page("Keybinds",settingsPage,"Keybinds","keyboard")
     local appearance=page("Appearance",settingsPage,"Appearance","palette")
     function mobile.OpenPage(key)
         local target=mobile.Pages[key]
@@ -24865,6 +24941,27 @@ local createMobileUI = function(C)
             local n=tonumber(value)
             if n and State.Running then State.Config.XRayAmount=math.clamp(math.floor(n+.5),20,90) end
         end})
+    end
+    if State.Keybinds then
+        -- WindUI draws and captures the keys; the keybind module does the acting, so chat typing never fires them.
+        local blocked={}
+        for name in pairs(State.Keybinds.Reserved) do
+            if name~="Backspace" and name~="Delete" and Enum.KeyCode[name] then table.insert(blocked,name) end
+        end
+        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key, then press a new one. Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
+        mobile.KeybindElements,mobile.KeybindShown={},{}
+        for _,action in ipairs(State.Keybinds.Actions) do
+            local key=State.Config.Keybinds[action.Id]
+            mobile.KeybindElements[action.Id]=keybindsCard:Keybind({Title=action.Title,Value=key,Blacklist=blocked,Callback=function() end})
+            mobile.KeybindShown[action.Id]=key
+        end
+        keybindsCard:Button({Title="Reset keybinds",Callback=function()
+            suppressInput()
+            local _,message=State.ResetKeybinds()
+            if mobile.Toast then mobile.Toast(message) end
+        end})
+        mobile.KeybindCard=mobile.Pages.Keybinds.Section.ElementFrame
+        mobile.KeybindCard.Visible=mobile.Mode=="PC"
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
@@ -25383,6 +25480,39 @@ local createMobileUI = function(C)
         padding.Parent = notice
     end
     mobile.StatusLabel = notice
+    -- One short confirmation for key presses; a newer one replaces it instead of stacking.
+    local toast = Instance.new("TextLabel")
+    toast.Name = "KeybindToast"
+    toast.AnchorPoint = Vector2.new(0.5, 1)
+    toast.Position = UDim2.new(0.5, 0, 1, -96)
+    toast.Size = UDim2.fromOffset(0, 34)
+    toast.AutomaticSize = Enum.AutomaticSize.X
+    toast.BackgroundColor3 = look.Surface
+    toast.BackgroundTransparency = 0.06
+    toast.TextColor3 = look.Text
+    toast.TextSize = 13
+    toast.FontFace = look.Medium
+    toast.Visible = false
+    toast.ZIndex = 20
+    toast.Parent = canvas
+    Instance.new("UICorner", toast).CornerRadius = UDim.new(0, 12)
+    hairline(toast)
+    do
+        local padding = Instance.new("UIPadding")
+        padding.PaddingLeft, padding.PaddingRight = UDim.new(0, 16), UDim.new(0, 16)
+        padding.Parent = toast
+    end
+    local toastToken = 0
+    function mobile.Toast(text)
+        if mobile.Destroyed then return end
+        toastToken += 1
+        local token = toastToken
+        toast.Text = tostring(text)
+        toast.Visible = true
+        task.delay(1.6, function()
+            if toastToken == token and not mobile.Destroyed then toast.Visible = false end
+        end)
+    end
     -- Status card: role chip and weapon, one primary line, and shot feedback when not compact.
     -- The whole card is the drag handle, so it carries no "drag" label.
     local combatHUD,hudChip,hudRole,hudWeapon,hudPrimary,hudDetail,hudDot,hudResult
@@ -25513,6 +25643,7 @@ local createMobileUI = function(C)
         mobile.Mode = mode
         State.InputMode = mode
         icon.Visible = mode == "Mobile"
+        if mobile.KeybindCard then mobile.KeybindCard.Visible = mode == "PC" end
         if emergencyButton and mode~="Mobile" then emergencyButton.Visible=false end
         pad.Visible = mode == "Mobile" and not mobile.MenuOpen and C.EquippedWeapon() ~= nil
         suppressInput()
@@ -25610,6 +25741,23 @@ local createMobileUI = function(C)
             end
             updateDescription(mobile.AnimationStatus,"Animation",State.Config.PoseEnabled and State.Pose and State.Pose.Status
                 or (State.Mage and State.Mage.Status) or "Default animations")
+        end
+        if mobile.KeybindElements then
+            -- A key picked in the menu is validated here; reserved keys revert and duplicates move.
+            for id,element in pairs(mobile.KeybindElements) do
+                if not element.Picking and element.Value~=mobile.KeybindShown[id] then
+                    local ok,message=State.SetKeybind(id,element.Value)
+                    mobile.Toast(message)
+                    if not ok then mobile.KeybindShown[id]=nil end
+                end
+            end
+            for id,element in pairs(mobile.KeybindElements) do
+                local key=State.Config.Keybinds[id]
+                if not element.Picking and (element.Value~=key or mobile.KeybindShown[id]~=key) then
+                    element:Set(key)
+                    mobile.KeybindShown[id]=key
+                end
+            end
         end
         if State.KillAura and mobile.KillAuraStatus and mobile.KillAuraStatus.ParagraphFrame and mobile.LastKillAuraStatus~=State.KillAura.Status then
             mobile.KillAuraStatus.ParagraphFrame:SetDesc(State.KillAura.Status)
