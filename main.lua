@@ -17699,7 +17699,7 @@ local State = {
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
-        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true},
+        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
         GunReplies = 0, GunTargetHits = 0, GunMisses = 0, GunUnconfirmed = 0,
@@ -17731,7 +17731,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-17-NativeKnifeCooldown"
+State.Build = "Universal-WindUI-2026-10-17-ConservativeGun"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -18810,9 +18810,23 @@ local function gunTimingCoverage(origin, point, translations, params)
     for _, shift in ipairs(translations) do
         if sampleRayHitsBody(origin - shift, point - shift, params) then passed += 1 end
     end
-    -- The nominal ray was already verified. Keep firing immediately, but rank
-    -- interior points above fragile edges when plausible timing differs.
+    -- The nominal ray was already verified. Conservative mode requires every
+    -- additional sampled time to intersect; this is geometry, not a hit probability.
+    if State.Config.ConservativeGun and passed < #translations then return 0, passed end
     return (1 + passed) / (1 + #translations), passed
+end
+function State.GunTimingShifts(positionAt, lead, position)
+    local window = math.clamp(lead * 0.25, 0.012, 0.035)
+    if State.Config.ConservativeGun then window = math.max(window, 0.04) end
+    local shifts = {positionAt(math.max(0, lead - window)) - position,
+        positionAt(math.min(0.2, lead + window)) - position, Vector3.zero}
+    if State.Config.ConservativeGun then
+        -- Include intermediate and later arrival hypotheses without claiming
+        -- response round-trip time is a measurement of one-way shot latency.
+        table.insert(shifts, positionAt(lead * 0.5) - position)
+        table.insert(shifts, positionAt(math.min(0.2, lead * 2 + 0.02)) - position)
+    end
+    return shifts
 end
 local function exposedSolution(char, root, kind, origin, item, camera, bodySamples)
     if not camera and kind ~= "Gun" then return nil end
@@ -18847,10 +18861,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                             if not predictionChecked then
                                 predicted, lead, airborne, source, positionAt, knifeSpeed = predict(part, root, origin, kind, item, info.Frame.Position, bodySamples._GunProfile)
                                 if kind == "Gun" and predicted and positionAt then
-                                    local window = math.clamp(lead * 0.25, 0.012, 0.035)
-                                    timingShifts = {positionAt(math.max(0, lead - window)) - info.Frame.Position,
-                                        positionAt(math.min(0.2, lead + window)) - info.Frame.Position,
-                                        Vector3.zero}
+                                    timingShifts = State.GunTimingShifts(positionAt, lead, info.Frame.Position)
                                 end
                                 predictionChecked = true
                             end
@@ -19675,7 +19686,12 @@ local function sendGun(record, preferred, strict)
         if aimError then return skip("Shot cancelled: aiming failed: "..aimError) end
     end
     if not targetFrame or typeof(targetFrame)~="CFrame" or not finite(targetFrame.Position) then
-        return skip("Shot skipped: no clear finite target")
+        return skip(State.Config.ConservativeGun and "Shot skipped: no clear target passes timing checks; reposition and fire again"
+            or "Shot skipped: no clear finite target")
+    end
+    if State.Config.ConservativeGun and (not solution or solution.TimingCoverage~=1
+        or not solution.TimingPassed or solution.TimingPassed<5) then
+        return skip("Shot skipped: uncertain target timing; reposition and fire again")
     end
     local targetPlayer=targetName and Players:FindFirstChild(targetName)
     local targetCharacter=solution and solution.Character or targetPlayer and targetPlayer.Character
@@ -24257,6 +24273,7 @@ local createMobileUI = function(C)
     mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Reading your current role and weapon…"})
     option(combat,"Aim assist","Aim","Master switch for gun aim, knife aim and automatic stabs.")
     option(combat, "Gun aim", "MagicBullet", "Aim at the known murderer when you fire.")
+    option(combat, "Conservative gun shots", "ConservativeGun", "Require every sampled timing check to intersect the target. Skips uncertain shots; server hits are not guaranteed.")
     option(knife, "Knife throw prediction", "KnifeAim")
     option(knife, "All-direction knife aim", "KnifeAllDirections", "Also acquire clear targets outside the camera view; visible targets take priority.")
     option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Skip assisted throws without a clear target and keep the charged target through release.")

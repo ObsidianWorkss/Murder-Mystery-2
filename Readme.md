@@ -18,6 +18,7 @@ Requires a compatible Roblox client scripting environment with `loadstring` and 
 | --- | --- |
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
 | Gun aim | Redirects a fired shot toward a clear body point on the known murderer, including targets outside the camera view. |
+| Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
 | Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
@@ -57,6 +58,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 ## Troubleshooting
 
 - **No clear target:** confirm you are in an active round, equip the weapon, and move to an unobstructed position. Gun aim requires an identified murderer.
+- **Timing checks skip a shot:** reposition or wait for steadier movement, then click again. Conservative mode checks a wider timing range and may reject shots that the previous mode would attempt. Skipped clicks are not queued for automatic firing.
 - **Knife won't throw:** check cooldown and clear-target protection. A cancelled charge releases its local cooldown; press throw again after repositioning.
 - **Stab misses:** the opponent must be nearby and unobstructed. Server validation can still reject contact attempts.
 - **Controls stop responding:** close the menu and any focused text box. Try camera repair or unload and reload.
@@ -64,6 +66,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 
 ## Latest changes
 
+- Added conservative gun shots: wider timing samples, rejection of partial coverage, and feedback explaining skipped shots. This filters uncertain aim solutions; it does not guarantee server hits.
 - Matched manual stabs to the live native knife controller's post-throw cooldown (`2 * ThrowSpeed`), with feedback while waiting.
 - Added all-direction knife acquisition and explicit clear-target protection.
 - Added nearby-target assistance for clicked stabs, with normal cooldown and exclusion checks.

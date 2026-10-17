@@ -11,6 +11,7 @@ root = Path(__file__).resolve().parent.parent
 source = (root / "main.lua").read_text(encoding="utf-8")
 template = (root / "tests" / "combat.luau").read_text(encoding="utf-8")
 sections = {
+    "TIMING": ("local function gunTimingCoverage(", "local function exposedSolution("),
     "STAB": ("function State.SelectStabAssistTarget()", "local function knifeFeedback(message)"),
     "THROW": ("local function knifeFeedback(message)", "local function takeOver(item)"),
     "GUN": ("local function sendGun(record, preferred, strict)", "local installAuraTouch=function(C)"),

@@ -14,6 +14,33 @@ local now=10
 local os={clock=function() return now end}
 
 do
+    local State={Config={ConservativeGun=true}}
+    local Vector3={zero=vec(0)}
+    local blockedX=nil
+    local function sampleRayHitsBody(origin) return origin.X~=blockedX end
+    -- INSERT_TIMING
+    local shifts=State.GunTimingShifts(function(t) return vec(t*100) end,.04,vec(0))
+    check(#shifts==5 and math.abs(shifts[2].X-8)<.00001 and math.abs(shifts[5].X-10)<.00001,
+        "conservative mode samples a wider bounded timing range")
+    local coverage,passes=gunTimingCoverage(vec(0),vec(10),shifts,{})
+    check(coverage==1 and passes==5,"conservative mode accepts all five intersecting timing samples")
+    blockedX=-shifts[5].X
+    coverage,passes=gunTimingCoverage(vec(0),vec(10),shifts,{})
+    check(coverage==0 and passes==4,"one failed timing hypothesis rejects conservative aim point")
+    State.Config.ConservativeGun=false
+    coverage,passes=gunTimingCoverage(vec(0),vec(10),shifts,{})
+    check(coverage>0 and coverage<1 and passes==4,"standard mode retains partial coverage ranking")
+    check(#State.GunTimingShifts(function(t) return vec(t) end,.04,vec(0))==3,
+        "standard mode retains the original three timing samples")
+    State.Config.ConservativeGun=true; blockedX=nil
+    shifts=State.GunTimingShifts(function() return vec(0) end,0,vec(0))
+    check(gunTimingCoverage(vec(0),vec(10),shifts,{})==1,"stationary targets remain eligible")
+    local latest=0
+    State.GunTimingShifts(function(t) latest=math.max(latest,t); return vec(t) end,.15,vec(0))
+    check(latest<=.2,"high-ping timing hypotheses remain bounded")
+end
+
+do
     local State={Config={StabAssist=true,KnifeAim=true,RequireClearKnifeTarget=true},
         Stats={StabRequests=0,SkippedKnifeThrows=0,KnifeRequests=0},IsPlayerExcluded=function(p) return p.Excluded end}
     local function character(x)
@@ -173,11 +200,12 @@ do
     State.ExcludedPlayerInShotPath=function() return false end
     local payloadOrigin,predictionOrigin
     local calls,move=0,0
+    local coverage,passes=1,5
     local function aimPoint(_,_,_,origin)
         calls+=1; predictionOrigin=origin
         attachment.WorldPosition=vec(attachment.WorldPosition.X+move)
         attachment.WorldCFrame=frame(attachment.WorldPosition.X)
-        return frame(10),target.Name,{Player=target,Character=target.Character}
+        return frame(10),target.Name,{Player=target,Character=target.Character,TimingCoverage=coverage,TimingPassed=passes}
     end
     local remote={IsA=function(_,kind) return kind=="RemoteEvent" end,
         FireServer=function(_,origin) payloadOrigin=origin.Position end}
@@ -193,5 +221,12 @@ do
     move=0; target.Excluded=true
     State.IsPlayerExcluded=function(p) return p.Excluded end
     check(not sendGun(record()),"gun still refuses excluded targets")
+    target.Excluded=false; State.Config.ConservativeGun=true; coverage=.8
+    payloadOrigin=nil
+    check(not sendGun(record()) and payloadOrigin==nil,"final firing gate rejects partial timing coverage")
+    coverage=1; passes=3
+    check(not sendGun(record()),"final firing gate rejects incomplete conservative sampling")
+    passes=5
+    check(sendGun(record()),"fully sampled conservative gun solution sends")
 end
 print(string.format("%d combat assertions passed",passed))
