@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-rc.18 — 2026-10-17
+
+### Crosshair triggerbot
+
+- Reintroduces independent gun and knife triggerbots with fresh raycasts and a 0.1-second dwell on the same living character. No cached mouse target or nearest-player fallback. Gun requests use the strict preferred target; knives stay within 6.5 studs regardless of aura settings.
+- Gun requests use a conservative 3-second local interval, including manual assisted shots, the tool's enabled state, and outstanding feedback. Knife requests respect stab and throw cooldowns and never cancel a charged throw.
+- Both modes start off on every load and leave other settings unchanged. Both keys start unbound in Settings → Combat keys. Menus, chat, loss of focus, invisibility, fling, kill aura, and selected-player automatic attacks pause the triggerbot; Emergency stop and unload stop it.
+- Matches the current WeaponService cursor and mouse-lock coordinates. Mobile requires mouse lock. Transparency traversal is bounded to eight raycasts; the active scan runs at most 30 times per second, failed predictions at most four times per second, and disabled triggers do no raycasts.
+- Status cards report the blocking reason and successful request counts. Rejected gun/stab attempts no longer count as sent requests. Server acceptance, hits, and kills remain unguaranteed.
+- Adds 75 triggerbot regression assertions and three keybind assertions. Existing manual gun prediction and knife behavior are unchanged.
+
 ## 1.0.0-rc.17 — 2026-10-17
 
 ### Removed

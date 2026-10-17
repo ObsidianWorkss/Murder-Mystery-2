@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.17 · Release candidate · PC + mobile**
+**v1.0.0-rc.18 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -27,6 +27,8 @@ For clearer startup errors, execute the included [`loader.lua`](loader.lua) file
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
 | Gun aim | Redirects a fired shot toward a clear body point on the known murderer, including targets outside the camera view. |
 | Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
+| Gun triggerbot | Automatically attempts a shot only when your crosshair stays on the known murderer's body. Requires Aim assist and Gun aim. Off by default. |
+| Knife triggerbot | Automatically attempts a stab at the clear opponent under your crosshair within 6.5 studs, while you are murderer. Independent of gun triggerbot; off by default. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
 | Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
@@ -39,6 +41,16 @@ Clicking with a knife stabs; it does not automatically throw. Turn off **Knife t
 Assistance does not move the camera or cursor. Gun shots retain wall, player-path, and exclusion checks. Nearby stab assistance respects range, exclusions, and line of sight. Target death, character replacement, weapon changes, or lost visibility can cancel a charged throw.
 
 **Hits and kills are not guaranteed.** The server decides damage, range, cooldowns, and whether an attack is accepted. Prediction cannot know future movement or eliminate network delay. A sent attack or reported ray hit is not proof of a kill.
+
+### Using the triggerbot
+
+1. Equip your weapon. Enable **Sheriff → Gun Aim → Gun triggerbot** or **Murderer → Knife Aim → Knife triggerbot**. Keep **Aim assist** on; the gun also needs **Gun aim**.
+2. Close the menu and aim at an opponent's body. The gun only accepts the known murderer. Keep the crosshair on the same opponent for at least 0.1 seconds. On mobile, enable the game's mouse lock and use its center crosshair.
+3. Read **Triggerbot status** in either aim card if nothing fires. It explains missing settings, cooldowns, blocked paths, or rejected shot predictions. Assign optional keys in **Settings → Combat keys**; both start unbound.
+
+The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. Resuming requires a fresh crosshair acquisition; missed manual clicks are never queued.
+
+Gun requests have a conservative **3-second minimum interval**, also measured from manual assisted shots, and wait for the tool to be enabled. Knife requests respect the existing stab and throw cooldowns; extended aura range does not extend triggerbot reach. The gun keeps your existing prediction, timing, wall, player-path, and exclusion checks. A rejected prediction may be retried while you keep aiming, but it does not count as a sent shot. Request counters are not hit or kill counters.
 
 ## Controls
 
@@ -88,6 +100,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 
 - **No clear target:** confirm you are in an active round, equip the weapon, and move to an unobstructed position. Gun aim requires an identified murderer.
 - **Timing checks skip a shot:** reposition or wait for steadier movement, then click again. Conservative mode checks a wider timing range and may reject shots that the previous mode would attempt. Skipped clicks are not queued for automatic firing.
+- **Triggerbot does nothing:** check its status card, close the menu, equip the weapon, and aim at the opponent's body. Enable Aim assist and, for guns, Gun aim. Mobile needs the game's mouse lock. The triggerbot resets to off after reloading the script.
 - **Knife won't throw:** check cooldown and clear-target protection. A cancelled charge releases its local cooldown; press throw again after repositioning.
 - **Stab misses:** the opponent must be nearby and unobstructed. Server validation can still reject contact attempts.
 - **Controls stop responding:** close the menu and any focused text box. Try camera repair or unload and reload.
@@ -111,7 +124,7 @@ luau-compile --null main.lua loader.lua
 python tools/package.py --output dist
 ```
 
-The tests extract current functions from `main.lua` and exercise combat, loader failure handling, and support-report privacy with mocked client state. They do not verify server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
+The tests extract current functions from `main.lua` and exercise combat, triggerbot acquisition and cooldowns, emergency stop, loader failure handling, and support-report privacy with mocked client state. They do not verify server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
 
 Packaging uses an explicit file list, verifies the ZIP against its per-file `MANIFEST.json`, and writes `SHA256SUMS.txt` alongside the archive. Local key files and repository metadata are not packaged.
 

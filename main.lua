@@ -17708,7 +17708,8 @@ local State = {
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
-        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true},
+        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true,
+        Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
         GunReplies = 0, GunTargetHits = 0, GunMisses = 0, GunUnconfirmed = 0,
@@ -17741,7 +17742,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.17"
+State.Version = "1.0.0-rc.18"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17753,7 +17754,7 @@ function State.GetSupportSnapshot()
     end
     local flags = {}
     for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "KnifeAim", "KnifeAllDirections",
-        "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura",
+        "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura", "Triggerbot", "KnifeTriggerbot",
         "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly", "XRay"}) do
         flags[name] = State.Config[name] == true
     end
@@ -21602,6 +21603,7 @@ function State.Destroy()
     -- Only now can unload no longer be refused, so a refused unload keeps movement and X-ray as they were.
     if State.StopMovement then State.StopMovement() end
     if State.StopXRay then State.StopXRay() end
+    if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
     if not State.Running then return end
     State.Running = false
     if State.StopScreenESP then State.StopScreenESP() end
@@ -23347,6 +23349,7 @@ local installEmergencyStop = function(C)
             if ok==false then error(message or "Aura cleanup failed") end
         end end)
         run("auto attack",function() if State.StopAutoAttack then State.StopAutoAttack("Emergency stop") end end)
+        run("triggerbot",function() if State.StopTriggerbot then State.StopTriggerbot("Emergency stop") end end)
         -- End dodge before fling return so a dodge restore cannot replace that return.
         State.Config.AutoKnifeDodge = false
         run("dodge",function() if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end end)
@@ -24526,8 +24529,198 @@ end
 
 
 do
--- PC keybinds. A key only acts while you play: never while typing (chat included), with the menu open,
--- or in the mobile layout. Keys the game or this script already use cannot be bound.
+-- Only the current crosshair hit can arm an attack. No saved mouse.Target, nearest-player
+-- fallback, delayed shots or changes to the user's other combat settings.
+local installTriggerbot=function(C)
+    local State,player,UIS,world=C.State,C.Player,C.UIS,C.World
+    local clock=C.Clock or os.clock
+    local bot={Active=false,Status="Off",Shots=0,Stabs=0,LastShot=-math.huge}
+    State.Triggerbot=bot
+    State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false -- explicit opt-in after every reload
+    local focused=true
+    local nextScan,nextAttempt=0,0
+    local candidate,candidateCharacter,candidateWeapon,candidateOwn,since,lastSeen
+    local params=RaycastParams.new()
+    params.FilterType=Enum.RaycastFilterType.Exclude
+    params.IgnoreWater=true
+    local function reset(message)
+        if message:sub(1,6)=="Paused" then
+            if bot.Status:sub(1,6)~="Paused" then bot.BeforePause=bot.Status end
+        else bot.BeforePause=nil end
+        candidate,candidateCharacter,candidateWeapon,candidateOwn,since,lastSeen=nil,nil,nil,nil,nil,nil
+        bot.Active=false
+        bot.Status=message
+    end
+    function State.SetTriggerbot(enabled)
+        State.Config.Triggerbot=enabled==true
+        reset(enabled and "Waiting for crosshair target" or "Gun triggerbot off")
+        return true
+    end
+    function State.SetKnifeTriggerbot(enabled)
+        State.Config.KnifeTriggerbot=enabled==true
+        reset(enabled and "Waiting for crosshair target" or "Knife triggerbot off")
+        return true
+    end
+    function State.StopTriggerbot(message)
+        State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false
+        reset(message or "Off")
+        return true
+    end
+    local function aimHit()
+        local camera=world.CurrentCamera
+        if not camera then return nil,nil,"Waiting for camera" end
+        local locked=C.MouseLocked()
+        if C.InputMode()=="Mobile" and not locked then return nil,nil,"Enable mouse lock for touch triggerbot" end
+        -- Matches MM2 WeaponService: GetMouseLocation uses viewport coordinates;
+        -- the game's mouse-lock crosshair uses the center of the viewport.
+        local point=locked and camera.ViewportSize/2 or UIS:GetMouseLocation()
+        local size=camera.ViewportSize
+        if point.X<0 or point.Y<0 or point.X>=size.X or point.Y>=size.Y then return nil end
+        local ray=camera:ViewportPointToRay(point.X,point.Y)
+        local ignored={player.Character,camera}
+        for _,part in ipairs(C.GetPassthrough()) do table.insert(ignored,part) end
+        local range=tonumber(State.Config.MaxRange) or 1000
+        if range~=range then range=1000 end
+        range=math.clamp(range,1,1000)
+        -- Bounded transparency traversal, unlike the native unbounded loop. Visible
+        -- walls and other players still block the crosshair; no full roster scan.
+        for _=1,8 do
+            params.FilterDescendantsInstances=ignored
+            local hit=world:Raycast(ray.Origin,ray.Direction*range,params)
+            local part=hit and hit.Instance
+            if not part then return nil end
+            local ancestor=part.Parent
+            while ancestor and ancestor~=world do
+                if ancestor:IsA("Model") then
+                    local target=C.Players:GetPlayerFromCharacter(ancestor)
+                    if target then
+                        -- Hats and carried tools are not body hits. Do not trace through
+                        -- another avatar's accessory to attack somebody behind them.
+                        if part.Parent==ancestor and (C.BodyParts[part.Name] or part.Name=="HumanoidRootPart") then
+                            return target,part
+                        end
+                        return nil
+                    end
+                end
+                ancestor=ancestor.Parent
+            end
+            if not part:IsA("BasePart") or part.Transparency~=1 then return nil end
+            table.insert(ignored,part)
+        end
+        return nil,nil,"Crosshair path is too obstructed"
+    end
+    function bot.Step()
+        if not State.Running or not (State.Config.Triggerbot or State.Config.KnifeTriggerbot) then
+            if bot.Active or candidate then reset("Off") end
+            return
+        end
+        local now=clock()
+        if now<nextScan then return end
+        nextScan=now+1/30 -- no catch-up bursts after a slow frame
+        if not focused or C.InputBlocked() then reset("Paused: menu, chat or window focus"); return end
+        if not State.Config.Aim then reset("Turn on Aim assist"); return end
+        if (State.Invis and (State.Invis.Active or State.Invis.Busy))
+            or (State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy))
+            or (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) then
+            reset("Paused: another player action is active"); return
+        end
+        if (State.PlayerActions and State.PlayerActions.Enabled) or (State.KillAura and State.KillAura.Enabled) then
+            reset("Paused: another automatic attack is active"); return
+        end
+        if not C.Alive(player) then reset("Waiting for an active round"); return end
+        local item,kind=C.Equipped()
+        local record=item and State.WeaponHandlers[item]
+        if not record or not record.Active or item.Parent~=player.Character or not C.Ready(record) then
+            reset("Equip a ready weapon"); return
+        end
+        if kind=="Gun" then
+            if not State.Config.Triggerbot then reset("Gun triggerbot off"); return end
+            if not State.Config.MagicBullet then reset("Turn on Gun aim"); return end
+            if C.Role(player)~="Sheriff" and C.Role(player)~="Hero" then reset("Waiting for sheriff or hero"); return end
+            -- A conservative local interval, plus the real tool state and unresolved
+            -- requests. Include manual shots and retain this gate across toggle changes.
+            if not item.Enabled or record.GunSending or now-math.max(record.LastGun or -math.huge,bot.LastShot)<3 then
+                reset("Waiting for gun cooldown"); return
+            end
+            for _,pending in ipairs(State.PendingGun or {}) do
+                if pending.Item==item and now-pending.SentAt<3 then reset("Waiting for shot feedback"); return end
+            end
+        elseif kind=="Knife" then
+            if not State.Config.KnifeTriggerbot then reset("Knife triggerbot off"); return end
+            if C.Role(player)~="Murderer" then reset("Waiting for murderer"); return end
+            if record.Charging or not item.Enabled or now-(record.LastStab or -math.huge)<.85 then
+                reset("Waiting for knife cooldown"); return
+            end
+            local speed=item:GetAttribute("ThrowSpeed")
+            speed=type(speed)=="number" and speed==speed and speed>0 and speed<math.huge and speed or 1
+            if now-(record.LastThrow or -math.huge)<2*speed then reset("Waiting for thrown knife"); return end
+        else reset("Equip a gun or knife"); return end
+        local target,part,reason=aimHit()
+        if not target or target==player or not C.Alive(target) or State.IsPlayerExcluded(target) then
+            reset(reason or "Aim at a clear opponent's body"); return
+        end
+        local role=C.Role(target)
+        if (kind=="Gun" and role~="Murderer") or (kind=="Knife" and role=="Murderer") then
+            reset(kind=="Gun" and "Aim at the murderer" or "Aim at an opponent"); return
+        end
+        local character=target.Character
+        if not character or part.Parent~=character then reset("Target changed"); return end
+        if kind=="Knife" then
+            local ownRoot=player.Character:FindFirstChild("HumanoidRootPart")
+            local targetRoot=character:FindFirstChild("HumanoidRootPart")
+            if not ownRoot or not targetRoot or (targetRoot.Position-ownRoot.Position).Magnitude>6.5
+                or not C.ClearPath(ownRoot.Position,part.Position,character) then
+                reset("Move within 6.5 studs with a clear knife path"); return
+            end
+        end
+        bot.Active=true
+        if target~=candidate or character~=candidateCharacter or item~=candidateWeapon
+            or player.Character~=candidateOwn or not lastSeen or now-lastSeen>.2 then
+            candidate,candidateCharacter,candidateWeapon,candidateOwn,since=target,character,item,player.Character,now
+        end
+        lastSeen=now
+        if now-since<.1 then bot.Status="Steady crosshair on target"; return end
+        if now<nextAttempt then return end
+        nextAttempt=now+.25 -- failed prediction is retried at most four times a second
+        local sent
+        if kind=="Gun" then
+            sent=C.SendGun(record,target,true) -- never substitute another murderer
+            if sent==true then bot.Shots+=1; bot.LastShot=now end
+        else
+            sent=C.StabKnife(record,target)
+            if sent==true then
+                bot.Stabs+=1
+                C.ReportContact(record,part,"Triggerbot")
+            end
+        end
+        if sent==true then reset(kind=="Gun" and "Shot sent; outcome is server-controlled" or "Stab sent; outcome is server-controlled")
+        else bot.Status=kind=="Gun" and State.LastGunFeedback and State.LastGunFeedback.Message or "Waiting for a valid attack" end
+    end
+    C.Connect(UIS.WindowFocusReleased,function()
+        focused=false
+        reset((State.Config.Triggerbot or State.Config.KnifeTriggerbot) and "Paused: window unfocused" or "Off")
+    end)
+    C.Connect(UIS.WindowFocused,function()
+        focused=true
+        reset((State.Config.Triggerbot or State.Config.KnifeTriggerbot) and "Waiting for crosshair target" or "Off")
+    end)
+    C.Connect(C.Heartbeat,function()
+        local ok,message=pcall(bot.Step)
+        if not ok then State.StopTriggerbot("Triggerbot stopped: "..tostring(message)) end
+    end)
+end
+
+installTriggerbot({State=State,Player=player,Players=Players,UIS=UIS,World=workspace,Heartbeat=RunService.Heartbeat,
+    Connect=connect,Equipped=equippedWeapon,Alive=alive,Ready=ready,Role=roleFor,BodyParts=bodyPartSet,
+    ClearPath=clearPath,SendGun=sendGun,StabKnife=stabKnife,ReportContact=reportStabContact,
+    InputMode=function() return detectInputMode(UIS) end,
+    MouseLocked=function() return weapon and weapon:IsMouseLockEnabled() and UIS.PreferredInput~=Enum.PreferredInput.Gamepad end,
+    GetPassthrough=function() return CollectionService:GetTagged("WeaponPassthrough") end,
+    InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end})
+end
+
+do
+-- PC keybinds only act outside menus and text input; gameplay keys stay reserved.
 local installKeybinds=function(C)
     local State,UIS=C.State,C.UIS
     local cfg=State.Config
@@ -24580,6 +24773,7 @@ local installKeybinds=function(C)
     for _,entry in ipairs({
         {"Combat","ConservativeGun","Conservative gun shots"},{"Combat","TargetContinuity","Stable target choice"},
         {"Combat","KnifeAim","Knife throw prediction"},
+        {"Combat","Triggerbot","Gun triggerbot"},{"Combat","KnifeTriggerbot","Knife triggerbot"},
         {"Combat","KnifeAllDirections","All-direction knife aim"},{"Combat","RequireClearKnifeTarget","Require clear throw target"},
         {"Combat","StabAssist","Clicked stab assist"},{"Combat","StabSweep","Stab sweep"},
         {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
@@ -24939,6 +25133,8 @@ local createMobileUI = function(C)
         -- Setters that refuse return false and a reason; the toast shows that reason.
         local accepted,reason=true,nil
         if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
+        elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
+        elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
         elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
         elseif key == "AuraExtendedReach" then accepted,reason=State.SetAuraExtendedReach(enabled)
         elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
@@ -24974,6 +25170,10 @@ local createMobileUI = function(C)
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
+    option(combat,"Gun triggerbot","Triggerbot","Auto-fire at the murderer under your crosshair. Requires Aim assist and Gun aim. Off on reload.")
+    mobile.TriggerbotStatus=combat:Paragraph({Title="Triggerbot status",Desc="Off"})
+    option(knife,"Knife triggerbot","KnifeTriggerbot","Auto-stab a clear opponent under your crosshair within 6.5 studs. Off on reload.")
+    mobile.KnifeTriggerbotStatus=knife:Paragraph({Title="Triggerbot status",Desc="Off"})
     option(knife, "Knife throw prediction", "KnifeAim", "Leads throws to where players will be.")
     option(knife, "All-direction knife aim", "KnifeAllDirections", "Also target players off screen.")
     option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
@@ -25381,6 +25581,13 @@ local createMobileUI = function(C)
         local function flag(value) return value and "on" or "off" end
         session..="\nGun aim "..flag(State.Config.MagicBullet).."  ·  ESP "..flag(State.Config.ESP).."  ·  Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
+        if State.Triggerbot then
+            local bot=State.Triggerbot
+            local detail=bot.Status..("\n%d gun requests · %d stab requests (not confirmed kills)"):format(bot.Shots,bot.Stabs)
+            if bot.BeforePause then detail..="\nBefore pause: "..bot.BeforePause end
+            updateDescription(mobile.TriggerbotStatus,"GunTriggerbot",detail)
+            updateDescription(mobile.KnifeTriggerbotStatus,"KnifeTriggerbot",detail)
+        end
         local binds=State.Config.Keybinds or {}
         updateDescription(mobile.ControlsCard,"Controls",("PC  %s menu  ·  Click fire or stab  ·  E or right-click throw  ·  %s stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying")
             :format(keyLabel(binds.Menu or "RightShift"),keyLabel(binds.Stop or "End")))
@@ -25904,6 +26111,7 @@ local createMobileUI = function(C)
             end
             emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
                 and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge
+                    or State.Config.Triggerbot or State.Config.KnifeTriggerbot
                     or State.Config.Fly or State.Config.Noclip or State.Config.SpeedBoost or State.Config.JumpBoost or State.Config.InfiniteJump) or false
         end
         if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end

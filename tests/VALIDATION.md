@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.18
+
+- Luau 0.739 compiles `main.lua` and `loader.lua`. The extracted-source suites pass 58 combat, 114 release, and 75 triggerbot assertions (247 total).
+- Trigger coverage includes continuous acquisition, target respawn, target loss, slow frames, role/protection/death checks, cursor and mouse-lock coordinates, obstruction handling, bounded transparency traversal, manual-shot and weapon cooldowns, failed-send counters, retry throttling, independent toggles, competing attacks, menu/input/focus pauses, callback errors, and the actual emergency-stop installer.
+- Read the connected client's current `GunClient` and `ReplicatedStorage.ClientServices.WeaponService` to verify request shape and cursor/mouse-lock behavior. The 3-second gun interval is a conservative local policy, not a measured guarantee of server readiness. Cursor coordinates also follow [Roblox's raycasting tutorial](https://create.roblox.com/docs/tutorials/use-case-tutorials/scripting/intermediate-scripting/hit-detection-with-lasers).
+- Live smoke check: loaded rc.18 on a new MM2 connection (place version 1456, Windows PC, executor connected through MCP). Running state, both status cards, independent menu setters, unbound keys, unchanged master aim, and both modes off were verified. No triggerbot attack requests were sent during the smoke check. Actual combat and mobile operation remain unverified; mock passes do not establish a hit rate or server damage.
+
 ## Release candidate 1.0.0-rc.17
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 111 release assertions pass (169 total). The 18 triggerbot assertions were removed with the feature.

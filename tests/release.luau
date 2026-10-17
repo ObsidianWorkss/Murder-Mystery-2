@@ -411,6 +411,13 @@ do
         "a toggle key goes through the same path as its menu toggle")
     State.SetKeybind("AutoPickup","Y")
     check(press("Y")=="Your executor lacks firetouchinterest" and tones[#tones]=="warn","a toggle key shows its menu toggle's refusal")
+    check(cfg.Keybinds.Triggerbot=="None" and cfg.Keybinds.KnifeTriggerbot=="None","both trigger keys start unbound")
+    State.SetKeybind("Triggerbot","T")
+    check(press("T")=="Gun triggerbot on" and options[#options]=="Triggerbot=true" and not cfg.Aim,
+        "gun trigger key uses its menu setter without enabling master aim")
+    State.SetKeybind("KnifeTriggerbot","B")
+    check(press("B")=="Knife triggerbot on" and options[#options]=="KnifeTriggerbot=true",
+        "knife trigger key uses its independent menu setter")
     State.MobileUI.SetOption=nil
     State.ResetKeybinds()
     check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None" and cfg.Keybinds.Menu=="RightShift",
