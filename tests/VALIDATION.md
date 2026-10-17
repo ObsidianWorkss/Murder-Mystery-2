@@ -1,5 +1,12 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.32
+
+- Luau 0.739 compiles both scripts; 83 combat, 185 release, 58 triggerbot, 145 aura and 32 equip assertions pass (503 total). The equip suite extracts the shipped recovery controller.
+- Tests cover one delayed recovery, enabled/disabled firing state, native equip before/after the observer, holster in both callback orders, rapid double toggles, intermediate parent changes, processed/native versus consumed input, menu/chat/native-context guards, multiple/no tools, touch mode, pending respawn/death/focus/handle/unload cancellation, unrelated keys, failures, snapshot privacy and re-enabling.
+- Read-only live investigation: no 1 binding from this script/CAS, no focused text or open menus; MM2 CoreGui Backpack disabled. Its custom BackpackContext.Item1 is enabled with a One binding. Native BackpackScript uses a cached slot array and toggles via EquipTool/UnequipTools. No owned weapon was present during the probes, so the failed press was not reproduced or assigned a definite cause.
+- Live rc.32 startup verified running state, recovery enabled, equip status control, empty press/recovery counts, 1 still reserved and equip diagnostics in the support snapshot. The exact reported intermittent failure and recovery during an active weapon round remain unverified.
+
 ## Release candidate 1.0.0-rc.31
 
 - Luau 0.739 compiles both scripts; 83 combat, 185 release, 58 triggerbot and 145 aura assertions pass (471 total).

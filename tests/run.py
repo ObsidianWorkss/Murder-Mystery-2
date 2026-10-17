@@ -94,3 +94,12 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         raise RuntimeError("Unexpanded aura-test source marker")
     harness.write_text(aura, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    equip = (root / "tests" / "equip.luau").read_text(encoding="utf-8")
+    start = source.index("local installWeaponEquipRecovery=function(C)")
+    end = source.index("installWeaponEquipRecovery({", start)
+    equip = equip.replace("-- INSERT_EQUIP", source[start:end])
+    if "-- INSERT_" in equip:
+        raise RuntimeError("Unexpanded equip-test source marker")
+    harness.write_text(equip, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

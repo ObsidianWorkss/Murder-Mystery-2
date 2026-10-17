@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.32 — 2026-10-18
+
+- Added guarded recovery for missed native slot-1 weapon equips, on by default with a saved General setting. It observes input without binding/consuming 1, waits 120 ms, and makes at most one normal EquipTool call if the same single owned weapon stayed in the backpack without an equip-state change.
+- Preserves native holstering and successful equips regardless of callback order. Rapid toggles, consumed input without native action, menus, chat, focus loss, respawn/tool replacement, ambiguous weapons, missing handles, disabled native context and unload cancel recovery. Disabled firing state alone does not prevent equipping.
+- Added Weapon equip status and support-report diagnostics for key presses, native input observations, local recoveries, skips and failures. The exact intermittent failure remains unconfirmed; inspection found MM2 uses a custom hotbar while the normal Roblox backpack UI is disabled.
+
 ## 1.0.0-rc.31 — 2026-10-18
 
 - Kill all finishes exhausted retry budgets after a bounded feedback grace instead of waiting out the full 30 seconds. Ranged mode includes charge and estimated flight time. Stalled frames count their full active time.

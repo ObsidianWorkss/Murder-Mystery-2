@@ -17709,7 +17709,7 @@ local State = {
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
-        KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced",
+        KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true,
         Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
@@ -17842,7 +17842,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.31"
+State.Version = "1.0.0-rc.32"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17874,7 +17874,8 @@ function State.GetSupportSnapshot()
         Capabilities={Clipboard=type(setclipboard)=="function" or type(toclipboard)=="function",
             Touch=type(firetouchinterest)=="function",FileRead=type(readfile)=="function" and type(isfile)=="function",
             FileWrite=type(writefile)=="function" and type(makefolder)=="function" and type(isfolder)=="function"},
-        Settings=flags,Stats=stats,Performance=performance}
+        Settings=flags,Stats=stats,Performance=performance,
+        WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil}
 end
 function State.GetSupportReport()
     return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
@@ -20417,6 +20418,113 @@ local function syncWeapons()
             or "No clear target"
     end
 end
+do
+local installWeaponEquipRecovery=function(C)
+    local State=C.State
+    local clock=C.Clock or os.clock
+    local report={Presses=0,Recoveries=0,Skipped=0,Failures=0,NativeSignals=0,Status="Waiting for slot 1 input"}
+    State.WeaponEquipRecovery=report
+    if not State.Config.WeaponEquipRecovery then report.Status="Off" end
+    local focused=true
+    local stable,watched,watch,action,actionWatch,revision,nativeAt,token=nil,nil,nil,nil,nil,0,-math.huge,0
+    local function clear()
+        token+=1; stable=nil
+        if watch then watch:Disconnect(); watch=nil end
+        if actionWatch then actionWatch:Disconnect(); actionWatch=nil end
+        watched,action=nil,nil
+    end
+    function State.StopWeaponEquipRecovery() clear(); report.Status="Stopped" end
+    function State.SetWeaponEquipRecovery(enabled)
+        State.Config.WeaponEquipRecovery=enabled==true
+        clear(); report.Status=enabled and "Waiting for slot 1 input" or "Off"
+        return true
+    end
+    function State.GetWeaponEquipSnapshot()
+        return {Enabled=State.Config.WeaponEquipRecovery==true,Presses=report.Presses,Recoveries=report.Recoveries,
+            Skipped=report.Skipped,Failures=report.Failures,Status=report.Status,NativeSignals=report.NativeSignals,
+            LastProcessed=report.LastProcessed,NativeObserved=report.LastNativeSignal,NativeAllowed=report.LastNativeAllowed,LastWhere=report.LastWhere}
+    end
+    C.Connect(C.Heartbeat,function()
+        if not State.Running or not State.Config.WeaponEquipRecovery or not C.IsPC() or not focused then
+            if watched or action then clear() end
+            return
+        end
+        local state=C.Read()
+        if state.Action~=action then
+            if actionWatch then actionWatch:Disconnect(); actionWatch=nil end
+            action=state.Action; nativeAt=-math.huge
+            if action then actionWatch=C.Watch(action.Pressed,function() nativeAt=clock(); report.NativeSignals+=1 end) end
+        end
+        if state.Tool~=watched then
+            if watch then watch:Disconnect(); watch=nil end
+            watched=state.Tool; revision+=1
+            if watched then watch=C.Watch(watched:GetPropertyChangedSignal("Parent"),function() revision+=1 end) end
+        end
+        stable={Tool=state.Tool,Character=state.Character,Backpack=state.Backpack,Parent=state.Tool and state.Tool.Parent,Revision=revision}
+    end)
+    C.Connect(C.Input,function(input,processed)
+        if input.KeyCode~=C.One or input.UserInputType~=C.Keyboard or not State.Running or not State.Config.WeaponEquipRecovery or not C.IsPC() then return end
+        token+=1; local request=token
+        report.Presses+=1; report.LastProcessed=processed==true; report.LastNativeSignal=nil
+        local state=C.Read()
+        report.LastNativeAllowed=state.NativeAllowed==true
+        report.LastWhere=state.Tool and (state.Tool.Parent==state.Character and "Character" or "Backpack") or "Unavailable"
+        local function skip(message) report.Skipped+=1; report.Status=message end
+        if not focused or C.Blocked() then skip("Paused for menu, chat or player action"); return end
+        if not state.NativeAllowed then skip("Native slot 1 action unavailable"); return end
+        if not state.Tool then skip(state.Ambiguous and "Multiple weapons: native slot selection preserved" or "No owned slot 1 weapon"); return end
+        local item,char,bag=state.Tool,state.Character,state.Backpack
+        if not stable or stable.Tool~=item or stable.Character~=char or stable.Backpack~=bag then skip("Waiting for a stable weapon / character"); return end
+        if revision~=stable.Revision or item.Parent~=stable.Parent then skip("Native hotbar changed equip state"); return end
+        if stable.Parent~=bag then skip("Native unequip toggle preserved"); return end
+        local observedRevision=revision
+        local at=clock()
+        report.Status="Checking native slot 1 equip"
+        C.Schedule(.12,function()
+            if request~=token or not State.Running or not State.Config.WeaponEquipRecovery or not focused then return end
+            local current=C.Read()
+            report.LastNativeSignal=nativeAt>=at-.02
+            if current.Character~=char or current.Backpack~=bag or current.Tool~=item then skip("Weapon or character changed"); return end
+            if item.Parent==char then report.Status="Native equip succeeded"; return end
+            if revision~=observedRevision then skip("Native equip state changed; no retry needed"); return end
+            if processed and not report.LastNativeSignal then skip("Input consumed outside the native hotbar"); return end
+            if C.Blocked() or not current.NativeAllowed then skip("Equip cancelled: input unavailable"); return end
+            if item.Parent~=bag or not current.Humanoid or current.Humanoid.Health<=0 then skip("Equip cancelled: character unavailable"); return end
+            if item.RequiresHandle and not item:FindFirstChild("Handle") then skip("Weapon handle is loading"); return end
+            local ok,why=pcall(C.Equip,current.Humanoid,item)
+            if ok and item.Parent==char then report.Recoveries+=1; report.Status="Slot 1 equip recovered locally"
+            else report.Failures+=1; report.Status="Equip recovery failed"; report.LastError=not ok and tostring(why) or nil end
+        end)
+    end)
+    if C.FocusLost then C.Connect(C.FocusLost,function() focused=false; clear(); report.Status="Paused: window unfocused" end) end
+    if C.FocusGained then C.Connect(C.FocusGained,function() focused=true end) end
+end
+installWeaponEquipRecovery({State=State,Heartbeat=RunService.Heartbeat,Input=UIS.InputBegan,One=Enum.KeyCode.One,Keyboard=Enum.UserInputType.Keyboard,
+    FocusLost=UIS.WindowFocusReleased,FocusGained=UIS.WindowFocused,
+    Connect=connect,Watch=function(signal,callback) return signal:Connect(callback) end,Schedule=task.delay,
+    IsPC=function() return detectInputMode(UIS)=="PC" end,
+    Blocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil or State.Invis.Busy
+        or State.ExperimentalInvis and State.ExperimentalInvis.Busy end,
+    Equip=function(hum,item) hum:EquipTool(item) end,
+    Read=function()
+        local char=player.Character
+        local bag=player:FindFirstChild("Backpack")
+        local pg=player:FindFirstChild("PlayerGui")
+        local root=pg and pg:FindFirstChild("InputContext")
+        local context=root and root:FindFirstChild("BackpackContext")
+        local action=context and context:FindFirstChild("Item1")
+        local selected,count=nil,0
+        for _,container in ipairs({char or false,bag or false}) do
+            if container then
+                for _,item in ipairs(container:GetChildren()) do
+                    if item:IsA("Tool") and (item.Name=="Knife" or item.Name=="Gun") and item:HasTag("Weapon") then selected=item; count+=1 end
+                end
+            end
+        end
+        return {Character=char,Backpack=bag,Humanoid=char and char:FindFirstChildOfClass("Humanoid"),Tool=count==1 and selected or nil,
+            Ambiguous=count>1,Action=action,NativeAllowed=root and root.Enabled and context and context.Enabled and action and action.Enabled or false}
+    end})
+end
 function State.SetMagicBullet(enabled)
     State.Config.MagicBullet = enabled == true
     if State.Config.MagicBullet then State.Config.Aim = true end
@@ -21731,6 +21839,7 @@ function State.Destroy()
     if State.StopXRay then State.StopXRay() end
     if State.StopAntiFling then State.StopAntiFling() end
     if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
+    if State.StopWeaponEquipRecovery then State.StopWeaponEquipRecovery() end
     if not State.Running then return end
     State.Running = false
     if State.StopScreenESP then State.StopScreenESP() end
@@ -25776,6 +25885,7 @@ local createMobileUI = function(C)
         -- Setters that refuse return false and a reason; the toast shows that reason.
         local accepted,reason=true,nil
         if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
+        elseif key == "WeaponEquipRecovery" then accepted,reason=State.SetWeaponEquipRecovery(enabled)
         elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
         elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
         elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
@@ -26052,6 +26162,8 @@ local createMobileUI = function(C)
         end})
     if themes[State.Config.MenuTheme] and State.Config.MenuTheme~="Midnight" then mobile.ApplyTheme(State.Config.MenuTheme,true) end
     settings:Button({Title = "Equip gun / knife", Callback = function() C.EquipWeapon() end})
+    option(settings,"Slot 1 equip recovery","WeaponEquipRecovery","Retries a missed native equip once; preserves normal unequip toggles and input guards.")
+    mobile.EquipStatus=settings:Paragraph({Title="Weapon equip status",Desc=State.WeaponEquipRecovery.Status})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
     if State.Settings then
         mobile.SettingsStatus=settings:Paragraph({Title="Saved settings",Desc=State.Settings.Status})
@@ -26294,6 +26406,10 @@ local createMobileUI = function(C)
         session..="\nGun aim "..flag(State.Config.MagicBullet).."  ·  ESP "..flag(State.Config.ESP).."  ·  Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
         if mobile.SettingsStatus and State.Settings then updateDescription(mobile.SettingsStatus,"Settings",State.Settings.Status) end
+        if mobile.EquipStatus and State.WeaponEquipRecovery then
+            local equip=State.GetWeaponEquipSnapshot()
+            updateDescription(mobile.EquipStatus,"Equip",equip.Status..("\n%d slot 1 presses · %d local recoveries · %d skipped · %d failed"):format(equip.Presses,equip.Recoveries,equip.Skipped,equip.Failures))
+        end
         if State.Triggerbot then
             local bot=State.Triggerbot
             local detail=bot.Status..("\n%d aim checks · %d gun requests · %d stab requests (not confirmed kills)"):format(bot.AimChecks,bot.Shots,bot.Stabs)

@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.31 · Release candidate · PC + mobile**
+**v1.0.0-rc.32 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -87,11 +87,20 @@ Contact reports for a locked target use a direct player lookup rather than fetch
 
 **Balanced** restores these visual settings to their defaults. Mode, target priority and performance preset are saved between runs. Selected player identity is session-only. Performance gains depend on the client and enabled features; no frame-rate improvement is guaranteed.
 
+### Weapon equip recovery
+
+MM2 uses its own hotbar for **1**; the script keeps that key reserved and does not replace the native equip/holster action. **Settings → General → Slot 1 equip recovery**, on by default, observes the key and gives the native handler 120 ms to equip. It retries once only if one owned, tagged knife or gun stayed in the backpack without a parent-state transition. It uses `Humanoid:EquipTool` and does not grant weapons.
+
+Normal equips and holsters, rapid toggles, consumed UI input, menus, chat, focus loss, multiple weapons, missing handles, character/tool replacement and unload prevent or cancel recovery. Processed input requires an observed native slot action. Weapon firing cooldown does not incorrectly prevent equipping. The preference is saved.
+
+**Weapon equip status**, next to the setting, retains the outcome and press/recovery/skip/failure counts. **Copy support report** includes these counters, native-action/input observations and the last weapon location without raw errors or player identities. If 1 fails again, use that status to distinguish a missing owned tool, inactive hotbar, consumed input or failed local equip. The reported intermittent failure has not yet been reproduced during an active weapon round.
+
 ## Controls
 
 | Action | PC | Mobile |
 | --- | --- | --- |
 | Open / close menu | Right Shift (rebindable) | Draggable MM2 button |
+| Equip / holster weapon | 1 (native MM2 slot 1) | Native weapon icon |
 | Fire gun / stab | Left click | Fire / Stab |
 | Throw knife | E or right click | Throw |
 | Stop active actions / return | End (rebindable) | Stop |
@@ -144,6 +153,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 - **Knife won't throw:** check cooldown and clear-target protection. A cancelled charge releases its local cooldown; press throw again after repositioning.
 - **Stab misses:** the opponent must be nearby and unobstructed. Server validation can still reject contact attempts.
 - **Aura does nothing:** enable Kill aura with K outside the menu, confirm your role is murderer, and check its status. Aura range changes the active radius; increasing it does not force distant damage. Teleports and stop controls can switch aura off; normal respawns now keep it enabled.
+- **1 does not equip:** check Settings → General → Weapon equip status. The native hotbar may not have delivered the equip, the tool may be unavailable, or an input/character transition may have cancelled it. The recovery only retries unchanged backpack weapons; normal holstering remains native.
 - **Controls stop responding:** close the menu and any focused text box. Try camera repair or unload and reload.
 - **Optional feature unavailable:** check the feature's status in the menu; required executor functionality may be missing.
 
@@ -165,7 +175,7 @@ luau-compile --null main.lua loader.lua
 python tools/package.py --output dist
 ```
 
-The tests extract current functions from `main.lua` and exercise combat, triggerbot acquisition and cooldowns, emergency stop, loader failure handling, and support-report privacy with mocked client state. They do not verify server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
+The tests extract current functions from `main.lua` and exercise combat, slot-1 equip recovery, triggerbot acquisition and cooldowns, emergency stop, loader failure handling, and support-report privacy with mocked client state. They do not verify server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
 
 Packaging uses an explicit file list, verifies the ZIP against its per-file `MANIFEST.json`, and writes `SHA256SUMS.txt` alongside the archive. Local key files and repository metadata are not packaged.
 
