@@ -493,4 +493,46 @@ do
     State.Config.XRay=true; State.XRay.Step()
     check(pcall(State.StopXRay) and wall.LocalTransparencyModifier==0,"unload restores the map after a refused part")
 end
+do
+    -- Two copies of X-ray on one map (what a duplicate script instance does): turning X-ray off must clear it.
+    local function node(class,name,parent)
+        local n={ClassName=class,Name=name,Parent=parent,Children={},Transparency=0,LocalTransparencyModifier=0,Attributes={}}
+        function n:IsA(kind) return self.ClassName==kind or (kind=="BasePart" and self.ClassName=="Part") end
+        function n:FindFirstChildOfClass() return nil end
+        function n:GetAttribute(key) return self.Attributes[key] end
+        function n:SetAttribute(key,value) self.Attributes[key]=value end
+        if parent then table.insert(parent.Children,n) end
+        return n
+    end
+    local world=node("Workspace","Workspace",nil)
+    function world:GetDescendants()
+        local list={}
+        local function walk(n) for _,child in ipairs(n.Children) do table.insert(list,child); walk(child) end end
+        walk(self)
+        return list
+    end
+    world.DescendantAdded="DescendantAdded"
+    local map=node("Model","Lobby",world)
+    local wall,rock=node("Part","Wall",map),node("Part","Rock",map)
+    local function copy()
+        local State={Running=true,Config={XRay=true,XRayAmount=60}}
+        local C={State=State,Workspace=world,Clock=function() return 0 end,RunService={Heartbeat="Heartbeat"},Connect=function() end}
+        -- INSERT_XRAY
+        installXRay(C)
+        return State
+    end
+    local first=copy(); first.XRay.Step()
+    local second=copy(); second.XRay.Step()
+    check(wall.LocalTransparencyModifier==.6 and wall.Attributes.MM2XRayBefore==0,"a second copy keeps the true original value")
+    second.Config.XRay=false; second.XRay.Step()
+    check(wall.LocalTransparencyModifier==0 and rock.LocalTransparencyModifier==0 and wall.Attributes.MM2XRayBefore==nil,
+        "switching X-ray off clears the map even while another copy has it on")
+    first.Config.XRay=false; first.XRay.Step()
+    check(wall.LocalTransparencyModifier==0 and rock.LocalTransparencyModifier==0,"the other copy switching off keeps the map clear")
+    local crashed=copy(); crashed.XRay.Step()
+    check(rock.LocalTransparencyModifier==.6,"a copy that stops without cleanup leaves the map see-through")
+    copy()
+    check(rock.LocalTransparencyModifier==0 and wall.LocalTransparencyModifier==0 and rock.Attributes.MM2XRayBefore==nil,
+        "the next copy to start restores what a crashed copy left")
+end
 print(string.format("%d release assertions passed",passed))

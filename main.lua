@@ -17745,8 +17745,12 @@ if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
 if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.MaxLead = 8 end
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
+-- One copy at a time, even across executor environments: the newest start claims this marker, and an older
+-- copy that sees a newer claim unloads itself (main heartbeat). Two copies used to undo each other's toggles.
+State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
+player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.23"
+State.Version = "1.0.0-rc.24"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21646,6 +21650,7 @@ function State.Destroy()
     gui:Destroy()
     markerGui:Destroy()
     if env.MM2Assist == State then env.MM2Assist = nil end
+    if player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then player:SetAttribute("MM2UniversalInstance", nil) end
 end
 connect(unload.Activated, State.Destroy)
 function State.DebugSnapshot()
@@ -21743,6 +21748,14 @@ connect(RunService.Heartbeat, function(dt)
     end
     if elapsed < 0.2 then return end
     elapsed = 0
+    if player:GetAttribute("MM2UniversalInstance") ~= State.InstanceToken then
+        -- A newer copy took over: unload this one, retrying each second if unload is refused.
+        if os.clock() - (State.SupersededAt or -math.huge) >= 1 then
+            State.SupersededAt = os.clock()
+            task.spawn(State.Destroy)
+        end
+        return
+    end
     while State.PendingGun[1] and os.clock() - State.PendingGun[1].SentAt > 3 do
         local expired = table.remove(State.PendingGun, 1)
         State.Stats.GunUnconfirmed += 1
@@ -24579,6 +24592,11 @@ local installXRay=function(C)
     -- Shared helpers run under pcall without building a closure for every part.
     local function readModifier(part) return part.LocalTransparencyModifier end
     local function writeModifier(part,value) part.LocalTransparencyModifier=value; return part.LocalTransparencyModifier end
+    -- The original value is also kept on the part. Any copy of the script can then restore it, and a second
+    -- copy never records X-ray's own value as the original (which left maps stuck see-through).
+    local savedKey="MM2XRayBefore"
+    local function savedBefore(part) return part:GetAttribute(savedKey) end
+    local function setSaved(part,value) part:SetAttribute(savedKey,value) end
     local function restoreModifier(part,record)
         -- A value the game changed since our write is left alone.
         if part.Parent and math.abs(part.LocalTransparencyModifier-record.Applied)<1e-4 then
@@ -24589,6 +24607,8 @@ local installXRay=function(C)
     local function apply(part,value)
         local ok,before=pcall(readModifier,part)
         if not ok then return false end
+        local hasSaved,saved=pcall(savedBefore,part)
+        if hasSaved and type(saved)=="number" then before=saved else pcall(setSaved,part,before) end
         local written
         ok,written=pcall(writeModifier,part,value)
         if not ok then return false end
@@ -24602,12 +24622,28 @@ local installXRay=function(C)
         for _ in pairs(tracked) do count+=1 end
         return count
     end
+    -- Parts still carrying a saved original were left by another copy (or one that stopped without cleaning
+    -- up): put them back too, so switching X-ray off always clears the whole map.
+    local function restoreLeftovers()
+        local restored=0
+        for _,part in ipairs(world:GetDescendants()) do
+            local ok,saved=pcall(savedBefore,part)
+            if ok and type(saved)=="number" and not tracked[part] then
+                pcall(writeModifier,part,saved)
+                pcall(setSaved,part,nil)
+                restored+=1
+            end
+        end
+        return restored
+    end
     function State.StopXRay()
         local failed=0
         for part,record in pairs(tracked) do
             if not pcall(restoreModifier,part,record) then failed+=1 end
+            pcall(setSaved,part,nil)
         end
         table.clear(tracked); table.clear(queue)
+        xray.Leftovers=restoreLeftovers()
         queueIndex,applied,xray.Active=1,nil,false
         xray.LastError=failed>0 and (failed.." parts could not be restored") or nil
         return true
@@ -24648,6 +24684,7 @@ local installXRay=function(C)
     function xray.Added(object)
         if xray.Active and object:IsA("BasePart") then table.insert(queue,object) end
     end
+    restoreLeftovers()
     C.Connect(world.DescendantAdded,xray.Added)
     C.Connect(C.RunService.Heartbeat,xray.Step)
 end

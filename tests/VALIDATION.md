@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.24
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 80 combat, 127 release, 56 triggerbot and 76 aura assertions pass (339 total).
+- Live finding on rc.23: with X-ray off (setting off, inactive, 0 tracked parts), 1,985 of 4,306 map parts were still at 0.60 transparency, and every script screen existed twice, showing two running copies.
+- 5 new X-ray assertions run two copies on one fake map. The first fails on rc.23's code ("a second copy keeps the true original value") and all pass on rc.24.
+- The single-copy guard has not yet been exercised by a second executor environment live.
+
 ## Release candidate 1.0.0-rc.23
 
 - Luau 0.739 compiles both scripts; 80 combat, 122 release, 56 triggerbot and 76 aura assertions pass (334 total).

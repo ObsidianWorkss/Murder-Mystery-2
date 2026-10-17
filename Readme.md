@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.23 · Release candidate · PC + mobile**
+**v1.0.0-rc.24 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 

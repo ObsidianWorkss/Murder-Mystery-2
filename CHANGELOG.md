@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.24 — 2026-10-17
+
+### Fixes
+
+- Only one copy of the script runs at a time. A live game had two copies running (two menus, two status panels), and their toggles undid each other: X-ray and invisibility stayed on after switching them off. Every start now claims a shared marker on your player, and an older copy that sees a newer claim unloads itself, even when it runs in a different executor environment.
+- X-ray stores each part's original value on the part. A second copy no longer records X-ray's own 60% as the original, switching X-ray off clears parts changed by any copy, and the next start restores parts left by a copy that stopped without cleaning up.
+
 ## 1.0.0-rc.23 — 2026-10-17
 
 - Added **Kill all** and **Stop Kill all** to Murderer → Kill Aura, with optional unbound keys in Combat keys. The action makes one pass through eligible players within the configured aura radius, respecting cooldowns, protection and clear paths. It reports requests and skips without claiming kills. Existing aura state is restored when the pass ends; explicit stops and character/role changes cancel the queue.
