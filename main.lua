@@ -17696,7 +17696,7 @@ local State = {
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
-        MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
+        MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true},
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.8"
+State.Version = "1.0.0-rc.9"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21032,17 +21032,36 @@ do
     -- in illremember's Energize animation list; no third-party loader is run:
     -- https://github.com/retpirato/Roblox-Scripts/blob/master/fe_roblox_glitch_animations.lua
     local ContentProvider = game:GetService("ContentProvider")
-    local pose = {Token = 0, Status = "Poses OFF", Playing = false, OtherClientsVerified = false}
+    local pose = {Token = 0, Status = "Pose off", Playing = false, OtherClientsVerified = false}
     State.Pose = pose
-    -- Official Roblox catalog movement assets:
+    -- Official Roblox catalog animation packs. Every ID was checked as a Roblox-made animation:
     -- https://create.roblox.com/docs/animation/using#catalog-animations
-    local mageIds = {
-        idle = {707742142, 707855907, 885508740}, walk = {707897309}, run = {707861613},
-        jump = {707853694}, fall = {707829716}, climb = {707826056},
-        swim = {707876443}, swimidle = {707894699},
-    }
+    local animationPacks = {
+        Astronaut={idle={891621366, 891633237, 1047759695}, walk={891636393}, run={891636393}, jump={891627522}, fall={891617961}, climb={891609353}, swim={891639666}, swimidle={891663592}},
+        Bubbly={idle={910004836, 910009958, 1018536639}, walk={910034870}, run={910025107}, jump={910016857}, fall={910001910}, climb={909997997}, swim={910028158}, swimidle={910030921}},
+        Cartoony={idle={742637544, 742638445, 885477856}, walk={742640026}, run={742638842}, jump={742637942}, fall={742637151}, climb={742636889}, swim={742639220}, swimidle={742639812}},
+        Elder={idle={845397899, 845400520, 901160519}, walk={845403856}, run={845386501}, jump={845398858}, fall={845396048}, climb={845392038}, swim={845401742}, swimidle={845403127}},
+        Knight={idle={657595757, 657568135, 885499184}, walk={657552124}, run={657564596}, jump={658409194}, fall={657600338}, climb={658360781}, swim={657560551}, swimidle={657557095}},
+        Levitation={idle={616006778, 616008087, 886862142}, walk={616013216}, run={616010382}, jump={616008936}, fall={616005863}, climb={616003713}, swim={616011509}, swimidle={616012453}},
+        Mage={idle={707742142, 707855907, 885508740}, walk={707897309}, run={707861613}, jump={707853694}, fall={707829716}, climb={707826056}, swim={707876443}, swimidle={707894699}},
+        Ninja={idle={656117400, 656118341, 886742569}, walk={656121766}, run={656118852}, jump={656117878}, fall={656115606}, climb={656114359}, swim={656119721}, swimidle={656121397}},
+        Pirate={idle={750781874, 750782770, 885515365}, walk={750785693}, run={750783738}, jump={750782230}, fall={750780242}, climb={750779899}, swim={750784579}, swimidle={750785176}},
+        Robot={idle={616088211, 616089559, 885531463}, walk={616095330}, run={616091570}, jump={616090535}, fall={616087089}, climb={616086039}, swim={616092998}, swimidle={616094091}},
+        Rthro={idle={2510197257, 2510196951, 3711062489}, walk={2510202577}, run={2510198475}, jump={2510197830}, fall={2510195892}, climb={2510192778}, swim={2510199791}, swimidle={2510201162}},
+        Stylish={idle={616136790, 616138447, 886888594}, walk={616146177}, run={616140816}, jump={616139451}, fall={616134815}, climb={616133594}, swim={616143378}, swimidle={616144772}},
+        Superhero={idle={616111295, 616113536, 885535855}, walk={616122287}, run={616117076}, jump={616115533}, fall={616108001}, climb={616104706}, swim={616119360}, swimidle={616120861}},
+        Toy={idle={782841498, 782845736, 980952228}, walk={782843345}, run={782842708}, jump={782847020}, fall={782846423}, climb={782843869}, swim={782844582}, swimidle={782845186}},
+        Vampire={idle={1083445855, 1083450166, 1088037547}, walk={1083473930}, run={1083462077}, jump={1083455352}, fall={1083443587}, climb={1083439238}, swim={1083464683}, swimidle={1083467779}},
+        Werewolf={idle={1083195517, 1083214717, 1099492820}, walk={1083178339}, run={1083216690}, jump={1083218792}, fall={1083189019}, climb={1083182000}, swim={1083222527}, swimidle={1083225406}},
+        Zombie={idle={616158929, 616160636, 885545458}, walk={616168032}, run={616163682}, jump={616161997}, fall={616157476}, climb={616156119}, swim={616165109}, swimidle={616166655}},
+    } -- end animationPacks
+    local packNames = {}
+    for name in pairs(animationPacks) do table.insert(packNames, name) end
+    table.sort(packNames)
+    State.AnimationPackNames = packNames
+    if not animationPacks[State.Config.AnimationPack] then State.Config.AnimationPack = "Mage" end
     local mage = {Token = 0, Applied = false, Loading = false, LastAttempt = 0,
-        Status = "Mage OFF", OtherClientsVerified = false}
+        Status = "Default animations", OtherClientsVerified = false}
     State.Mage = mage
     local refreshToken = 0
     local pendingControllerStates = setmetatable({}, {__mode = "k"})
@@ -21090,16 +21109,26 @@ do
             if record.Animate.Parent == record.Character then record.Animate.Enabled = record.Enabled end
             pendingControllerStates[record.Animate] = nil
         end
-        mage.Status = "Mage OFF; original movement restored"
+        mage.Pack = nil
+        mage.Status = "Default animations"
     end
+    function State.SetAnimationPack(name)
+        if name == nil or name == "Default" then State.RestoreMage(); return true end
+        if not animationPacks[name] then mage.Status = "Unknown animation pack"; return false end
+        State.Config.AnimationPack = name
+        return State.SetMageAnimations(true)
+    end
+    -- Applies the chosen pack (Mage unless another was picked) to every movement slot at once.
     function State.SetMageAnimations(enabled)
         if not enabled then State.RestoreMage(); return true end
+        local packName = animationPacks[State.Config.AnimationPack] and State.Config.AnimationPack or "Mage"
+        local mageIds = animationPacks[packName]
         State.StopPose()
         State.RestoreMage(true)
         State.Config.MageAnimations = true
         local token = mage.Token
         mage.Loading, mage.LastAttempt = true, os.clock()
-        mage.Status = "Loading Mage movement..."
+        mage.Status = "Loading " .. packName .. " pack…"
         task.spawn(function()
             local char = player.Character
             local hum = char and char:WaitForChild("Humanoid", 5)
@@ -21116,7 +21145,7 @@ do
             if not hum or hum.Health <= 0 or not animator or not animate or not animate:IsA("LocalScript") then
                 finish("Waiting for character animation controller"); return
             end
-            if hum.RigType ~= Enum.HumanoidRigType.R15 then finish("Mage movement requires R15"); return end
+            if hum.RigType ~= Enum.HumanoidRigType.R15 then finish(packName .. " pack needs an R15 avatar"); return end
             local slots, assets, ready = {}, {}, {}
             for name, ids in pairs(mageIds) do
                 local folder = animate:FindFirstChild(name)
@@ -21151,7 +21180,7 @@ do
             if char:FindFirstChild("Animate") ~= animate or hum.Parent ~= char or animator.Parent ~= hum or hum.Health <= 0 then
                 finish("Waiting for character animation controller"); return
             end
-            if not available then finish("Mage animation assets unavailable here"); return end
+            if not available then finish(packName .. " animations are unavailable here"); return end
             local originalEnabled = animate.Enabled
             local pending = pendingControllerStates[animate]
             if pending then originalEnabled = pending.Enabled end
@@ -21176,7 +21205,7 @@ do
                 if name == "idle" and #slot.Animations < #ids then
                     for i = #slot.Animations + 1, #ids do
                         local animation = Instance.new("Animation")
-                        animation.Name = "MM2MageIdle" .. i
+                        animation.Name = "MM2PackIdle" .. i
                         animation.AnimationId = "rbxassetid://" .. ids[i]
                         record.Expected[animation] = animation.AnimationId
                         local weight = Instance.new("NumberValue")
@@ -21188,7 +21217,8 @@ do
             end
             restartLocomotion(record)
             mage.Applied = true
-            finish("Mage ON: idle, walk, run, jump, fall, climb, swim")
+            mage.Pack = packName
+            finish(packName .. " pack on")
         end)
         return true
     end
@@ -21201,13 +21231,13 @@ do
         if not hum or hum.Health <= 0 or hum.RigType ~= Enum.HumanoidRigType.R15
             or not animator or not animate or not animate:IsA("LocalScript") then return end
         local record = mage.Record
-        local needsApply = not mage.Applied or not record or record.Character ~= char
+        local needsApply = not mage.Applied or not record or record.Character ~= char or mage.Pack ~= State.Config.AnimationPack
             or record.Animate ~= animate or record.Animator ~= animator
         if not needsApply then
             for animation, id in pairs(record.Expected) do
                 if not animation:IsDescendantOf(animate) or animation.AnimationId ~= id then needsApply = true; break end
             end
-            for name in pairs(mageIds) do
+            for name in pairs(animationPacks.Mage) do
                 local folder = animate:FindFirstChild(name)
                 if not folder then needsApply = true; break end
                 for _, animation in folder:GetChildren() do
@@ -21225,7 +21255,7 @@ do
         if pose.Animation then pose.Animation:Destroy(); pose.Animation = nil end
         pose.Character = nil
         if not keepEnabled then State.Config.PoseEnabled = false end
-        pose.Status = "Poses OFF; normal animations restored"
+        pose.Status = "Pose off"
     end
     function State.SetPose(value)
         local input = tostring(value)
@@ -21276,7 +21306,7 @@ do
             if not played then State.StopPose(true); pose.Status = "Pose playback failed"; return end
             pose.Playing = true
             local name = assetId == 616006778 and "Floating" or (assetId == 696096087 and "Bend/glitch" or "Custom")
-            pose.Status = name .. " pose playing; other clients unverified"
+            pose.Status = name .. " pose playing"
         end)
         return true
     end
@@ -24853,14 +24883,28 @@ local createMobileUI = function(C)
     local invisOptions=movement
     option(invisOptions,"Knife while invisible","InvisibleKnife","Keep using your knife while invisible.")
     invisOptions:Paragraph({Title="Note",Desc="Spectators can still follow you. Coins may stop."})
-    option(animations, "Mage movement animations", "MageAnimations", "Reapplies after respawn.")
+    if State.SetAnimationPack then
+        local choices={"Default"}
+        for _,name in ipairs(State.AnimationPackNames or {}) do table.insert(choices,name) end
+        mobile.PackLabel=State.Config.MageAnimations and State.Config.AnimationPack or "Default"
+        mobile.PackPicker=animations:Dropdown({Title="Animation pack",Desc="Swaps idle, walk, run, jump, fall, climb and swim together.",
+            Values=choices,Value=mobile.PackLabel,Multi=false,Callback=function(choice)
+                if mobile.PackSyncing or not State.Running or type(choice)~="string" then return end
+                suppressInput()
+                mobile.PackLabel=choice
+                State.SetAnimationPack(choice)
+                refresh()
+            end})
+        mobile.AnimationStatus=animations:Paragraph({Title="Status",Desc=State.Mage and State.Mage.Status or "Default animations"})
+    end
     local poses=animations
+    poses:Paragraph({Title="Single poses",Desc="One looping animation in place of a pack."})
     poses:Button({Title = "Floating pose", Callback = function() State.SetPose(616006778); refresh() end})
     poses:Button({Title = "Bend pose", Callback = function() State.SetPose(696096087); refresh() end})
     local poseId = tostring(State.Config.PoseAssetId)
     poses:Input({Title = "Custom R15 animation ID", Value = poseId, Placeholder = "Animation asset ID", Callback = function(text) poseId = text end})
     poses:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
-    animations:Button({Title = "Restore animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
+    animations:Button({Title = "Restore default animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
     local help=home
     help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying"})
     appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
@@ -25557,6 +25601,16 @@ local createMobileUI = function(C)
             refresh()
         end
         if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
+        if mobile.PackPicker then
+            -- Keep the picker honest when a pose, F9 or a respawn changes the active pack.
+            local label=State.Config.MageAnimations and State.Config.AnimationPack or "Default"
+            if mobile.PackLabel~=label then
+                mobile.PackSyncing=true; mobile.PackPicker:Select(label); mobile.PackSyncing=false
+                mobile.PackLabel=label
+            end
+            updateDescription(mobile.AnimationStatus,"Animation",State.Config.PoseEnabled and State.Pose and State.Pose.Status
+                or (State.Mage and State.Mage.Status) or "Default animations")
+        end
         if State.KillAura and mobile.KillAuraStatus and mobile.KillAuraStatus.ParagraphFrame and mobile.LastKillAuraStatus~=State.KillAura.Status then
             mobile.KillAuraStatus.ParagraphFrame:SetDesc(State.KillAura.Status)
             mobile.LastKillAuraStatus=State.KillAura.Status

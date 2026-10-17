@@ -45,6 +45,9 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     start = source.index("local installXRay=function(C)")
     end = source.index("installXRay({", start)
     release = release.replace("-- INSERT_XRAY", source[start:end])
+    start = source.index("    local animationPacks = {")
+    end = source.index("\n", source.index('State.Config.AnimationPack = "Mage" end', start))
+    release = release.replace("-- INSERT_PACKS", source[start:end])
     if "-- INSERT_" in release or "-- INSERT_" in template:
         raise RuntimeError("Unexpanded regression-test source marker")
     harness.write_text(release, encoding="utf-8")

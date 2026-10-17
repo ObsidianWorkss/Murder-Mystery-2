@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.9
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 75 release assertions pass (133 total).
+- 7 new pack assertions check 17 packs in order, three idles and eight movement slots per pack, no ID shared between packs, the Mage IDs unchanged, catalog IDs for popular packs, and the saved-pack fallback.
+- All 169 pack IDs were checked with `economy.roblox.com/v2/assets/{id}/details`: asset type 24 (Animation), creator Roblox, names matching their slot.
+- Packs have not been applied in a live server.
+
 ## Release candidate 1.0.0-rc.8
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 68 release assertions pass (126 total).

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.9 — 2026-10-17
+
+### Animations
+
+- **Animation pack** picker with 17 Roblox catalog packs: Astronaut, Bubbly, Cartoony, Elder, Knight, Levitation, Mage, Ninja, Pirate, Robot, Rthro, Stylish, Superhero, Toy, Vampire, Werewolf and Zombie. Choosing one swaps the whole movement set at once: three idles, walk, run, jump, fall, climb, swim and swim idle.
+- Every pack ID comes from the Roblox Creator Hub catalog-animation table and was checked against the Roblox asset API as a Roblox-made animation (169 IDs, 0 failures).
+- The pack you pick is saved, reapplied after respawn, and replaced cleanly when you pick another; Default restores your avatar's own animations.
+- Single looping poses (Floating, Bend, custom ID) stay below the picker, labeled as single poses.
+
 ## 1.0.0-rc.8 — 2026-10-17
 
 ### New

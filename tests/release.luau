@@ -289,4 +289,36 @@ do
     State.StopXRay()
     check(wall.LocalTransparencyModifier==0 and tinted.LocalTransparencyModifier==.2,"unload restores the map")
 end
+do
+    -- Animation packs: the shipped table covers every movement slot of every pack.
+    local State={Config={AnimationPack="Ninja"}}
+    -- INSERT_PACKS
+    local slots={"idle","walk","run","jump","fall","climb","swim","swimidle"}
+    check(#packNames==17 and packNames[1]=="Astronaut" and packNames[17]=="Zombie","seventeen packs are listed in order")
+    local complete,owners,shared=true,{},0
+    for _,name in ipairs(packNames) do
+        local pack=animationPacks[name]
+        if #pack.idle~=3 then complete=false end
+        for _,slot in ipairs(slots) do
+            local ids=pack[slot]
+            if type(ids)~="table" or #ids==0 then complete=false end
+            for _,id in ipairs(ids or {}) do
+                if type(id)~="number" or id<1 or id%1~=0 then complete=false end
+                if owners[id] and owners[id]~=name then shared+=1 end
+                owners[id]=name
+            end
+        end
+    end
+    check(complete,"every pack has three idles and all eight movement slots")
+    check(shared==0,"no animation ID is shared between packs")
+    local mage=animationPacks.Mage
+    check(mage.idle[1]==707742142 and mage.idle[2]==707855907 and mage.idle[3]==885508740 and mage.walk[1]==707897309
+        and mage.run[1]==707861613 and mage.jump[1]==707853694 and mage.fall[1]==707829716 and mage.climb[1]==707826056
+        and mage.swim[1]==707876443 and mage.swimidle[1]==707894699,"the Mage pack keeps its original IDs")
+    check(animationPacks.Levitation.idle[1]==616006778 and animationPacks.Ninja.run[1]==656118852,"popular packs carry their catalog IDs")
+    check(State.Config.AnimationPack=="Ninja","a valid saved pack is kept")
+    State.Config.AnimationPack="Missing"
+    -- INSERT_PACKS
+    check(State.Config.AnimationPack=="Mage","an unknown saved pack falls back to Mage")
+end
 print(string.format("%d release assertions passed",passed))
