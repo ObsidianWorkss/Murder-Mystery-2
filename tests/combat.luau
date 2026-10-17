@@ -148,6 +148,12 @@ do
     -- INSERT_AIMPOINT
     local _,name=aimPoint({Kind="Gun",Item=item})
     check(scans==8 and name=="Target" and forced,"attack bypasses stale empty HUD cache and forces fresh motion")
+    State.Config.PerformancePreset="Low effects"; State.PreviewCache=nil
+    State.GetCachedAimPreview("Gun",item,vec(0)); local before=scans
+    now+=.6; State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==before,"low effects reuses visual previews beyond the normal half-second lifetime")
+    aimPoint({Kind="Gun",Item=item})
+    check(scans==before+1,"actual aim remains fresh under the low-effects preset")
     aimPoint({Kind="Gun",Item=item},nil,false,vec(0),true)
     check(seenScreenPolicy==true,"aim point forwards screen-only selection policy")
     now=10

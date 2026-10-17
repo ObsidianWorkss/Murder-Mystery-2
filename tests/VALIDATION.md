@@ -1,4 +1,11 @@
-# Validation — 2026-10-17
+# Validation — 2026-10-18
+
+## Release candidate 1.0.0-rc.30
+
+- Luau 0.739 compiles both scripts; 83 combat, 181 release, 58 triggerbot and 118 aura assertions pass (440 total).
+- New extracted-source regressions cover independent result snapshots, empty/sent/observed/unresolved counters, aimed-mode near stabs and distant target-locked charges, duplicate prevention, mode/input cancellation, blocked-path refusal and disabled prediction. Priority checks exercise nearest, sheriff-first and selected-player behavior with fallback in aimed mode and ordinary aura.
+- Performance regressions cover unchanged custom visuals on Balanced startup, Low effects flags and guidance, background cadence changes, preserved combat switches, cache invalidation, restoring defaults, invalid choices and reapplying a saved low preset. Extended preview caching is exercised alongside fresh real attack selection. Mode, priority and performance settings survive save/reload and reset.
+- Live smoke: rc.30 running with result panel and all selectors. Aimed throws, Sheriff first and Low effects API changes synchronized the visible-control values; Low effects changed visual flags/cadence while preserving Aim and trigger settings. Original mode, priority, preset and visual preferences were restored. Settings serialization included the new choices. No combat requests were sent during these checks. Active server kills, accuracy, mobile layout and measured FPS gains remain unverified.
 
 ## Release candidate 1.0.0-rc.29
 

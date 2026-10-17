@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.30 — 2026-10-18
+
+- Added Home → Combat results with session weapon totals and last-run Kill all contacts, bursts, started throws, observed eliminations, unresolved targets, skips and current status. Snapshots do not expose mutable counters or claim attributed kills.
+- Added a saved Kill all mode selector: Burst retains same-frame contact attempts; Aimed throws uses clear nearby stabs and target-locked predicted throws at range. Mode changes stop the queue and pending automatic throws; native charge, stab and throw cooldowns remain.
+- Added saved target priorities for aura and Kill all: Nearest, Sheriff first (including hero), and Selected player using the existing player picker. Missing/unavailable preferred players fall back to eligible nearest targets. Burst mode orders contacts rather than dropping other players.
+- Added saved Balanced / Low effects presets. Low effects suppresses optional visuals and guidance, doubles background visual/dashboard intervals and extends the visual-preview cache. Actual attack prediction and trigger acquisition remain fresh. Balanced restores the affected visual defaults.
+
 ## 1.0.0-rc.29 — 2026-10-17
 
 - Kill all attempts eligible off-screen or obstructed players without local line-of-sight checks. The change applies to candidate selection, burst delivery and the explicit KillAllBurst contact reporter. Ordinary aura and triggerbot visibility policies remain unchanged. Range, protection, role, character identity, cooldown and cancellation checks remain. Server acceptance and through-wall damage are unverified.

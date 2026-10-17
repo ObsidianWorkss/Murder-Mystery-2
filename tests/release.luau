@@ -565,7 +565,8 @@ do
         return C
     end
     local function defaults()
-        return {Aim=true,Fly=false,WalkSpeed=24,Ping=0.04,MenuTheme="Midnight",Keybinds=false,ExcludedPlayers={},AnimationPack="Mage"}
+        return {Aim=true,Fly=false,WalkSpeed=24,Ping=0.04,MenuTheme="Midnight",Keybinds=false,ExcludedPlayers={},AnimationPack="Mage",
+            KillAllMode="Burst",TargetPriority="Nearest",PerformancePreset="Balanced"}
     end
     local function start(overrides)
         local State={Config=defaults()}
@@ -582,6 +583,7 @@ do
     check(writes==1,"nothing is written when nothing changed")
     first.Config.WalkSpeed,first.Config.Fly,first.Config.MenuTheme,first.Config.Ping=40,true,"Light",0.2
     first.Config.Keybinds={Menu="F4",Fly="G"}
+    first.Config.KillAllMode,first.Config.TargetPriority,first.Config.PerformancePreset="Aimed throws","Sheriff first","Low effects"
     first.Config.ExcludedPlayers["123"]={UserId=123,Name="friend",DisplayName="friend"}
     first.SaveSettings()
     check(writes==2,"a change is written once")
@@ -592,6 +594,8 @@ do
         "saved keybinds load")
     check(second.Config.ExcludedPlayers["123"] and second.Config.ExcludedPlayers["123"].Name=="friend","protected players load")
     check(second.Config.Ping==0.04,"ping is measured each session, never loaded")
+    check(second.Config.KillAllMode=="Aimed throws" and second.Config.TargetPriority=="Sheriff first" and second.Config.PerformancePreset=="Low effects",
+        "mode, priority and performance preset survive saved-settings reload")
     check(second.DefaultConfig.WalkSpeed==24 and second.DefaultConfig.ExcludedPlayers["123"]==nil,"defaults are kept apart from saved values")
     files[path]=Http:JSONEncode({Version=1,Config={WalkSpeed="fast",Aim=false,Removed=true}})
     local third=start()
@@ -621,6 +625,8 @@ do
     check(switched.Fly==false and second.Config.Fly==false and second.Config.WalkSpeed==24,"reset turns switches off through the menu and moves sliders back")
     check(applied=="Midnight" and synced and second.Config.Keybinds.Menu=="RightShift","reset restores the theme, slider positions and keybinds")
     check(second.Config.ExcludedPlayers["123"]~=nil,"reset keeps protected players")
+    check(second.Config.KillAllMode=="Burst" and second.Config.TargetPriority=="Nearest" and second.Config.PerformancePreset=="Balanced",
+        "reset restores mode, priority and performance defaults")
     check(writes==before+1,"reset is saved right away")
 end
 do
@@ -721,5 +727,27 @@ do
     check(spinnerParts[1].CanCollide and spinnerParts[2].CanCollide,"unload restores collisions")
     spinnerRoot.AssemblyAngularVelocity=nil; frame()
     check(State.Config.AntiFling==false and guard.Status:find("Anti-fling stopped",1,true)==1,"an error switches anti-fling off and says why")
+end
+do
+    local defaults={CleanVisuals=true,CompactHUD=true,StableBodyESP=false,AimMarker=true,ThreatWarning=true,TacticalGuide=true,LearnedSheriffGuide=true}
+    local State={Config={PerformancePreset="Balanced",Aim=true,Triggerbot=true,TacticalGuide=false},DefaultConfig=defaults,PreviewCache={}}
+    local redraws,guide=0,nil
+    State.SetTacticalGuide=function(value) guide=value end
+    local C={State=State,UpdateVisuals=function() redraws+=1 end}
+    -- INSERT_PERFORMANCE
+    installPerformancePreset(C)
+    check(State.Config.TacticalGuide==false and redraws==0,"balanced startup preserves custom visual settings")
+    check(State.GetBackgroundInterval(.2)==.2,"balanced keeps the normal background cadence")
+    check(State.SetPerformancePreset("Low effects") and not State.Config.AimMarker and not State.Config.ThreatWarning
+        and not State.Config.TacticalGuide and guide==false,"low effects suppresses extra visuals and guidance")
+    check(State.Config.Aim and State.Config.Triggerbot,"performance preset preserves combat switches")
+    check(State.GetBackgroundInterval(.2)==.4 and State.GetBackgroundInterval(.3)==.6,"low effects slows background visual and dashboard updates")
+    check(State.PreviewCache==nil and redraws==1,"preset changes invalidate visual previews and refresh rendered effects")
+    State.SetPerformancePreset("Balanced")
+    check(State.Config.AimMarker and State.Config.TacticalGuide and guide==true,"balanced restores visual defaults")
+    check(not State.SetPerformancePreset("Unknown") and State.Config.PerformancePreset=="Balanced","invalid performance preset is refused")
+    State.Config.PerformancePreset="Low effects"; State.Config.AimMarker=true
+    installPerformancePreset(C)
+    check(not State.Config.AimMarker and not State.Config.TacticalGuide,"saved low-effects preset is reapplied on startup")
 end
 print(string.format("%d release assertions passed",passed))

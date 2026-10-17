@@ -64,6 +64,12 @@ local function fixture()
     end
     -- INSERT_AURA_CONTACT
     -- INSERT_AURA_READY
+    local function startThrow(r,p,strict,guard)
+        f.ThrowTarget,f.ThrowStrict,f.ReleaseGuard=p,strict,guard
+        if f.ThrowFail then return false end
+        r.Charging=true; r.LastThrow=f.Now
+        return true
+    end
     -- INSERT_AURA_STAB
     f.Player,f.Target,f.Knife,f.Record,f.State=player,target,knife,record,State
     local UIS={WindowFocusReleased={},WindowFocused={}}
@@ -74,7 +80,7 @@ local function fixture()
         RoleFor=roleFor,IsAlive=alive,ClearPath=clearPath,
         InputBlocked=function() return f.InputBlocked==true end,
         EquippedWeapon=function() if f.Equipped then return knife,"Knife" end end,
-        CanStab=auraKnifeReady,Stab=auraStab,Burst=auraBurst,
+        CanStab=auraKnifeReady,Stab=auraStab,Burst=auraBurst,Throw=auraThrow,
         IsEliminated=function(p) return p.ServerDead==true end,
         Prepare=function() if f.PrepareFail then error("prepare failed") end end,
         EquipKnife=function()
@@ -349,5 +355,62 @@ do
     f.State.StartKillAll(); f.Step()
     check(f.State.Stats.StabContactReports==1 and f.State.KillAll.Active and f.State.KillAll.Attempts==0,
         "a replacement queue cannot continue the old burst or inherit its counters")
+end
+do
+    local f=fixture()
+    local empty=f.State.GetCombatResults()
+    check(empty.Attempts==0 and empty.Unresolved==0 and empty.Text:find("not attributed",1,true),"results start empty and distinguish observations from attributed kills")
+    f.State.StartKillAll(); f.Step()
+    local sent=f.State.GetCombatResults()
+    check(sent.Contacts==1 and sent.Observed==0 and sent.Unresolved==1 and sent.Bursts==1,"results separate contact requests and unresolved targets")
+    sent.Contacts=999
+    check(f.State.GetCombatResults().Contacts==1,"editing a results snapshot cannot change live counters")
+    f.Target.ServerDead=true; f.Step()
+    local observed=f.State.GetCombatResults()
+    check(observed.Observed==1 and observed.Unresolved==0 and not observed.Active,"results retain observed eliminations after completion")
+    check(not f.State.SetKillAllMode("Unknown") and not f.State.SetTargetPriority("Unknown"),"invalid mode and priority choices are refused")
+end
+
+do
+    local f=fixture(); f.State.SetKillAuraRange(1000); f.State.Config.KnifeAim=true
+    f.Target.Character=f.Character(40)
+    check(f.State.SetKillAllMode("Aimed throws"),"aimed-throw mode can be selected")
+    f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Throws==1 and f.State.KillAll.Bursts==0 and f.State.KillAll.Contacts==0
+        and f.ThrowTarget==f.Target and f.ThrowStrict,"aimed mode starts one target-locked throw beyond stab reach")
+    check(f.ReleaseGuard(),"active aimed throw passes its deferred action guard")
+    f.Step(.5)
+    check(f.State.KillAll.Throws==1,"a charged throw cannot start a duplicate")
+    f.State.SetKillAllMode("Burst")
+    check(not f.State.KillAll.Active and not f.ReleaseGuard(),"changing mode stops its queue and rejects a deferred throw")
+    f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Contacts==1 and f.State.KillAll.Throws==0,"aimed mode uses a normal assisted stab for nearby players")
+    f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.State.StartKillAll(); f.BlockAll=true; f.Step()
+    check(f.State.KillAll.Attempts==0 and (f.VisibilityChecks or 0)>0,"aimed mode requires a clear path rather than using burst wall attempts")
+    f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.State.SetKillAuraRange(1000)
+    f.Target.Character=f.Character(40); f.State.Config.KnifeAim=false; f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Throws==0 and f.State.KillAll.Status:find("prediction",1,true),"aimed mode explains disabled prediction")
+    f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.State.SetKillAuraRange(1000)
+    f.Target.Character=f.Character(40); f.State.Config.KnifeAim=true; f.State.StartKillAll(); f.Step(); f.InputBlocked=true
+    check(not f.ReleaseGuard(),"opening input during charge prevents automatic release")
+end
+
+for _,case in ipairs({
+    {"Nearest",nil,"Target"},
+    {"Sheriff first",nil,"Far"},
+    {"Selected player",3,"Far"},
+    {"Selected player",999,"Target"},
+}) do
+    local f=fixture(); f.State.SetKillAuraRange(1000); f.State.Config.KnifeAim=true
+    local far={Name="Far",UserId=3,Character=f.Character(40),Role="Sheriff",Alive=true}
+    table.insert(f.Players,far)
+    f.State.PlayerActions={SelectedId=case[2]}
+    f.State.SetTargetPriority(case[1]); f.State.SetKillAllMode("Aimed throws")
+    f.State.StartKillAll(); f.Step()
+    check(case[3]=="Target" and f.State.KillAll.Contacts==1 or case[3]=="Far" and f.ThrowTarget==far,
+        "aimed priority applies "..case[1].." with selection "..tostring(case[2]))
+    f=fixture(); f.State.SetKillAuraRange(1000); table.insert(f.Players,far)
+    f.State.PlayerActions={SelectedId=case[2]}; f.State.SetTargetPriority(case[1]); f.Enable(); f.Step()
+    check(f.Record.StabTarget.Name==case[3],"ordinary aura applies "..case[1].." priority with nearest fallback")
 end
 print(passed.." aura assertions passed")

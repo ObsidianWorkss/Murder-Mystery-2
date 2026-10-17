@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.29 · Release candidate · PC + mobile**
+**v1.0.0-rc.30 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -62,9 +62,24 @@ The aura stays enabled while waiting through normal death, respawn, or innocent 
 
 ### Kill all
 
-**Murderer → Kill Aura → Kill all** starts one native knife swing and sends contact attempts for **all eligible players in the same frame**, including players off screen or behind walls. There is no per-player cooldown wait or automatic throw charge. Close the menu to run it. Each contact is rechecked for the same living character, protection, role and range. Kill all skips local line-of-sight checks at selection and contact delivery; the server may still enforce its own visibility and distance checks. The server can reject distant or additional contacts; simultaneous kills are not guaranteed.
+**Murderer → Kill Aura → Kill all** supports two saved modes:
 
-Survivors can receive up to three attempts each, with the native stab/throw cooldown between bursts, during a maximum 30 active seconds. Out-of-range or unloaded targets remain queued. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Status separates sent contacts, bursts, observed eliminations (not attributed kills), unresolved targets and skips. Optional action keys are in **Settings → Combat keys**, initially unbound.
+- **Burst** (default): one native swing sends contact attempts for all eligible players in the same frame, including off-screen or obstructed players. Range, protection, role and character checks remain. The server can reject those requests.
+- **Aimed throws**: attacks one player at a time, using ordinary assisted stabs within 6.5 studs and target-locked predicted throws farther away. Requires a clear path and Knife throw prediction for ranged attacks. Native charge and cooldown times apply. This mode does not guarantee damage.
+
+Close the menu to run either mode. Changing mode stops the current queue and cancels its pending automatic throw. Survivors can receive up to three attempts each during at most 30 active seconds. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Optional action keys are in **Settings → Combat keys**, initially unbound.
+
+**Target priority**, in the same Kill Aura section, offers **Nearest**, **Sheriff first** (including the current hero), and **Selected player**. Select that player in **Players → Player Actions → Specific player**. Missing, protected or unavailable preferred players fall back to eligible nearby players. Priority selects the next player for ordinary aura and aimed mode; in Burst it orders contact delivery without excluding other eligible targets.
+
+### Combat results
+
+Open **Home → Combat results** for session weapon totals and the last Kill all run: gun requests, matched replies, target ray hits, unanswered requests, knife swings, sent throws and contacts, bursts, throws started, observed eliminations, unresolved targets, skips and the current status. A throw that only started charging is counted separately from one actually sent. Observed deaths are not attributed kills; unmatched requests have an unknown outcome. The panel does not label contact reports as confirmed damage.
+
+### Performance preset
+
+Choose **Settings → General → Performance preset → Low effects** to suppress the aim marker, nearby threat notice, stable body fills and tactical/learned guidance, while using clean labels and a compact HUD. Background ESP/status visuals update every 0.4 seconds instead of 0.2; menu/HUD updates use 0.6 instead of 0.3 seconds; visual aim previews can be reused for 1 second instead of 0.5. Actual assisted attacks still calculate fresh aim, and trigger acquisition, weapon cooldowns, motion tracking, protection and damage checks retain their existing timing.
+
+**Balanced** restores these visual settings to their defaults. Mode, target priority and performance preset are saved between runs. Selected player identity is session-only. Performance gains depend on the client and enabled features; no frame-rate improvement is guaranteed.
 
 ## Controls
 

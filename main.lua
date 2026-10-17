@@ -17709,6 +17709,7 @@ local State = {
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
+        KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced",
         Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
@@ -17841,7 +17842,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.29"
+State.Version = "1.0.0-rc.30"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19270,7 +19271,7 @@ function State.GetCachedAimPreview(kind, item, origin)
         return target
     end
     target = chooseTarget(kind, origin, item)
-    State.PreviewCache = {Kind=kind,Item=item,OwnCharacter=player.Character,Target=target,At=now,Until=now+0.5,
+    State.PreviewCache = {Kind=kind,Item=item,OwnCharacter=player.Character,Target=target,At=now,Until=now+(State.Config.PerformancePreset=="Low effects" and 1 or .5),
         ExclusionsRevision=State.ExclusionsRevision,ConservativeGun=State.Config.ConservativeGun,
         KnifeAllDirections=State.Config.KnifeAllDirections}
     return target
@@ -20204,6 +20205,7 @@ local function startThrow(record, preferred, strict, canRelease)
         State.Stats.SkippedKnifeThrows += 1
         knifeFeedback("No clear throw target"); return false
     end
+    record.KillAllThrow=nil
     record.Charging=true
     record.ThrowToken+=1
     local token=record.ThrowToken
@@ -21832,6 +21834,35 @@ function State.PreviewKnifeShot()
         AimPart = target.AimPart, SampleOffset = target.SampleOffset, VelocitySource = target.VelocitySource,
         ExposureQuality = target.ExposureQuality, ClearNeighbours = target.ClearNeighbours}
 end
+do
+local installPerformancePreset=function(C)
+    local State=C.State
+    local keys={"CleanVisuals","CompactHUD","StableBodyESP","AimMarker","ThreatWarning","TacticalGuide","LearnedSheriffGuide"}
+    local low={CleanVisuals=true,CompactHUD=true,StableBodyESP=false,AimMarker=false,ThreatWarning=false,TacticalGuide=false,LearnedSheriffGuide=false}
+    if State.Config.PerformancePreset~="Low effects" then State.Config.PerformancePreset="Balanced" end
+    function State.GetBackgroundInterval(base)
+        return base*(State.Config.PerformancePreset=="Low effects" and 2 or 1)
+    end
+    function State.SetPerformancePreset(name)
+        if name~="Balanced" and name~="Low effects" then return false,"Unknown performance preset" end
+        State.Config.PerformancePreset=name
+        for _,key in ipairs(keys) do
+            local value=name=="Low effects" and low[key]
+            if name=="Balanced" then value=State.DefaultConfig[key] end
+            if type(value)=="boolean" then State.Config[key]=value end
+        end
+        if State.SetTacticalGuide then State.SetTacticalGuide(State.Config.TacticalGuide) end
+        if State.SetLearnedSheriffGuide then State.SetLearnedSheriffGuide(State.Config.LearnedSheriffGuide) end
+        State.PreviewCache=nil
+        State.NextVisualUpdate=nil
+        if C.UpdateVisuals then C.UpdateVisuals() end
+        if State.MobileUI and State.MobileUI.Refresh then State.MobileUI.Refresh() end
+        return true,name=="Low effects" and "Low effects: fewer visuals and background updates" or "Balanced: visual defaults restored"
+    end
+    if State.Config.PerformancePreset=="Low effects" then State.SetPerformancePreset("Low effects") end
+end
+installPerformancePreset({State=State,UpdateVisuals=function() updateESP(); updateThreat(); updateGunESP() end})
+end
 local elapsed, pingElapsed = 0, 0
 connect(RunService.Heartbeat, function(dt)
     for _, record in pairs(State.WeaponHandlers) do scanStabContacts(record) end
@@ -21871,9 +21902,10 @@ connect(RunService.Heartbeat, function(dt)
         end
     end
     syncWeapons()
-    updateESP()
-    updateThreat()
-    updateGunESP()
+    if os.clock()>=(State.NextVisualUpdate or 0) then
+        State.NextVisualUpdate=os.clock()+State.GetBackgroundInterval(.2)
+        updateESP(); updateThreat(); updateGunESP()
+    end
     autoPickup()
     -- Legacy panel labels: write only real changes so unchanged text is not re-laid out.
     local aimText = State.AimStatus
@@ -23040,7 +23072,7 @@ local installKillAura=function(C)
     local focused=true
     local aura={Enabled=false,Status="Off",Attempts=0,Contacts=0,TargetId=nil,LastAttempt=-math.huge}
     State.KillAura=aura
-    local batch={Active=false,Status="Kill all off",Attempts=0,Contacts=0,Bursts=0,Observed=0,Skipped=0,Index=1,Targets={}}
+    local batch={Active=false,Status="Kill all off",Attempts=0,Contacts=0,Bursts=0,Throws=0,Observed=0,Skipped=0,Index=1,Targets={}}
     State.KillAll=batch
     State.Config.KillAura=false
     if State.Config.AuraEquipKnife==nil then State.Config.AuraEquipKnife=true end
@@ -23069,6 +23101,47 @@ local installKillAura=function(C)
     end
     local function refresh()
         if State.MobileUI and State.MobileUI.Refresh then pcall(State.MobileUI.Refresh) end
+    end
+    if State.Config.KillAllMode~="Aimed throws" then State.Config.KillAllMode="Burst" end
+    if State.Config.TargetPriority~="Sheriff first" and State.Config.TargetPriority~="Selected player" then State.Config.TargetPriority="Nearest" end
+    function State.SetKillAllMode(value)
+        if value~="Burst" and value~="Aimed throws" then return false,"Unknown Kill all mode" end
+        if value~=State.Config.KillAllMode and batch.Active then State.StopKillAll("Kill all stopped: mode changed") end
+        State.Config.KillAllMode=value
+        refresh(); return true,value
+    end
+    function State.SetTargetPriority(value)
+        if value~="Nearest" and value~="Sheriff first" and value~="Selected player" then return false,"Unknown target priority" end
+        State.Config.TargetPriority=value
+        refresh(); return true,value
+    end
+    local function priority(target)
+        if State.Config.TargetPriority=="Sheriff first" then
+            local role=C.RoleFor(target)
+            return (role=="Sheriff" or role=="Hero") and 0 or 1
+        elseif State.Config.TargetPriority=="Selected player" then
+            return State.PlayerActions and State.PlayerActions.SelectedId==target.UserId and 0 or 1
+        end
+        return 0
+    end
+    local function better(target,distance,other,otherDistance)
+        if not other then return true end
+        local rank,otherRank=priority(target),priority(other)
+        return rank<otherRank or rank==otherRank and (distance<otherDistance
+            or distance==otherDistance and target.UserId<other.UserId)
+    end
+    function State.GetCombatResults()
+        local stats=State.Stats or {}
+        local result={Active=batch.Active,Mode=batch.Mode or State.Config.KillAllMode,Priority=State.Config.TargetPriority,
+            Attempts=batch.Attempts,Contacts=batch.Contacts,Bursts=batch.Bursts,Throws=batch.Throws,Observed=batch.Observed,Skipped=batch.Skipped,
+            Unresolved=math.max(0,(batch.Total or 0)-batch.Observed-batch.Skipped),Elapsed=batch.Elapsed or 0,
+            GunRequests=stats.GunRequests or 0,GunReplies=stats.GunReplies or 0,GunRayHits=stats.GunTargetHits or 0,
+            GunUnconfirmed=stats.GunUnconfirmed or 0,Stabs=stats.StabRequests or 0,KnifeThrows=stats.KnifeRequests or 0,
+            KnifeContacts=stats.StabContactReports or 0,Reason=batch.Status}
+        result.Text=("Gun: %d requests · %d matched replies · %d ray hits · %d unanswered\nKnife: %d swings · %d throws · %d contacts\nKill all (%s): %d contact reports · %d bursts · %d throws started\nObserved eliminations: %d · Unresolved: %d · Skipped: %d\n%s\nObserved eliminations are not attributed kills. Requests do not prove damage.")
+            :format(result.GunRequests,result.GunReplies,result.GunRayHits,result.GunUnconfirmed,result.Stabs,result.KnifeThrows,
+                result.KnifeContacts,result.Mode,result.Contacts,result.Bursts,result.Throws,result.Observed,result.Unresolved,result.Skipped,result.Reason)
+        return result
     end
     local function cancel()
         if C.CancelStab then
@@ -23158,9 +23231,10 @@ local installKillAura=function(C)
         if not ok then return false,message end
         batch.Active,batch.RestoreAura,batch.Character=true,restore,player.Character
         batch.Targets,batch.Index,batch.Total,batch.Remaining=targets,1,#targets,#targets
-        batch.Attempts,batch.Contacts,batch.Skipped,batch.Bursts,batch.Observed,batch.Elapsed=0,0,0,0,0,0
+        batch.Attempts,batch.Contacts,batch.Skipped,batch.Bursts,batch.Throws,batch.Observed,batch.Elapsed=0,0,0,0,0,0,0
+        batch.Mode=State.Config.KillAllMode
         batch.NextBurstAt=-math.huge
-        batch.Status="Kill all ready; close the menu for a contact burst at all eligible targets."
+        batch.Status="Kill all ready ("..batch.Mode.."); close the menu to run."
         return true,batch.Status
     end
     function State.SetKillAuraRange(value)
@@ -23240,7 +23314,7 @@ local installKillAura=function(C)
                 for _,p in ipairs(C.Players:GetPlayers()) do present[p]=true end
                 local remaining=0
                 local candidates={}
-                -- Scan the whole queue so a blocked player cannot stall clear targets.
+                -- Scan the whole queue so unavailable players cannot stall ready targets.
                 for offset=0,#batch.Targets-1 do
                     local index=(batch.Index+offset-1)%#batch.Targets+1
                     local entry=batch.Targets[index]
@@ -23260,8 +23334,8 @@ local installKillAura=function(C)
                         if canAttack and clock()>=batch.NextBurstAt and entry.Attempts<3 and clock()>=entry.NextAttempt and targetRoot and C.IsAlive(p) then
                             local distance=(targetRoot.Position-root.Position).Magnitude
                             if distance<=radius then
-                                local part=State.GetAuraContactPart(p,root.Position,true)
-                                if part then table.insert(candidates,{Entry=entry,Player=p,Character=targetChar,Part=part}) end
+                                local part=State.GetAuraContactPart(p,root.Position,batch.Mode=="Burst")
+                                if part then table.insert(candidates,{Entry=entry,Player=p,Character=targetChar,Part=part,Distance=distance}) end
                             end
                         end
                     end
@@ -23274,17 +23348,28 @@ local installKillAura=function(C)
                 end
                 if #candidates==0 then
                     batch.Status=not canAttack and (readinessReason or "Knife cooling down")
-                        or ("Kill all: %d remaining; waiting for range, loading or feedback (%.0fs left)"):format(remaining,30-batch.Elapsed)
+                        or ("Kill all: %d remaining; waiting for range, loading, clear path or feedback (%.0fs left)"):format(remaining,30-batch.Elapsed)
                     aura.Status=batch.Status
                     return
                 end
+                table.sort(candidates,function(a,b) return better(a.Player,a.Distance,b.Player,b.Distance) end)
                 local generation=batch.Targets
-                local accepted,why,results=C.Burst(item,candidates)
+                local accepted,why,results
+                if batch.Mode=="Aimed throws" then
+                    local candidate=candidates[1]
+                    local contact
+                    if candidate.Distance<=6.5 then accepted,why,contact=C.Stab(item,candidate.Player,candidate.Part)
+                    else accepted,why=C.Throw(item,candidate.Player) end
+                    if accepted then
+                        results={{Entry=candidate.Entry,Contact=contact==true}}
+                        if candidate.Distance>6.5 then batch.Throws+=1 end
+                    end
+                else accepted,why,results=C.Burst(item,candidates) end
                 if not batch.Active or batch.Targets~=generation then return end
                 batch.NextBurstAt=clock()+(accepted and .85 or .15)
                 if accepted then
                     aura.Attempts+=1; aura.LastAttempt=clock(); aura.TargetId=nil
-                    batch.Bursts+=1
+                    if batch.Mode=="Burst" then batch.Bursts+=1 end
                     for _,result in ipairs(results or {}) do
                         result.Entry.Attempts+=1
                         result.Entry.NextAttempt=clock()+.85
@@ -23293,8 +23378,8 @@ local installKillAura=function(C)
                     end
                 end
                 aura.Status=why or "Waiting for a ready knife"
-                batch.Status=("Kill all: %d contacts, %d bursts, %d observed eliminated · %s")
-                    :format(batch.Contacts,batch.Bursts,batch.Observed,aura.Status)
+                batch.Status=("Kill all (%s): %d contacts, %d throws started, %d observed eliminated · %s")
+                    :format(batch.Mode,batch.Contacts,batch.Throws,batch.Observed,aura.Status)
                 return
             else
             for _,p in ipairs(C.Players:GetPlayers()) do
@@ -23304,8 +23389,7 @@ local installKillAura=function(C)
                     local targetRoot=targetChar and targetChar:FindFirstChild("HumanoidRootPart")
                     if targetHum and targetHum.Health>0 and targetRoot then
                         local distance=(targetRoot.Position-root.Position).Magnitude
-                        if distance==distance and distance<=radius and (not bestDistance or distance<bestDistance
-                            or distance==bestDistance and p.UserId<best.UserId) then
+                        if distance==distance and distance<=radius and better(p,distance,best,bestDistance) then
                             local part=State.GetAuraContactPart(p,root.Position)
                             if part then best,bestChar,bestPart,bestDistance=p,targetChar,part,distance end
                         end
@@ -23400,6 +23484,23 @@ local function auraBurst(item,candidates)
     record.StabTarget=nil
     return true,("%d/%d contact requests sent in one swing; damage unconfirmed"):format(contacts,#candidates),results
 end
+local function auraThrow(item,target)
+    local batch=State.KillAll
+    if not batch or not batch.Active or batch.Mode~="Aimed throws" or not State.CanAuraContact() then return false,"Kill all paused" end
+    if not State.Config.KnifeAim then return false,"Turn on Knife throw prediction for aimed throws" end
+    local record=State.WeaponHandlers[item]
+    if not record or not auraKnifeReady(item) then return false,"Knife cooling down" end
+    local generation=batch.Targets
+    local accepted=startThrow(record,target,true,function()
+        local own=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local root=target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        return batch.Active and batch.Mode=="Aimed throws" and batch.Targets==generation and State.CanAuraContact()
+            and own and root and (root.Position-own.Position).Magnitude<=State.GetKillAuraRange()
+    end)
+    record.KillAllThrow=accepted and record.Charging or nil
+    return accepted,accepted and "Aimed throw charging; damage unconfirmed"
+        or State.KnifeFeedback and State.KnifeFeedback.Message or "Waiting for a clear throw"
+end
 installKillAura({State=State,Player=player,Players=Players,RunService=RunService,UIS=UIS,Connect=connect,
     RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,BodyPartNames=hitPartNames.Knife,
     InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end,
@@ -23416,11 +23517,18 @@ installKillAura({State=State,Player=player,Players=Players,RunService=RunService
     end,
     CancelStab=function()
         for _,record in pairs(State.WeaponHandlers) do
+            if record.KillAllThrow then
+                record.KillAllThrow=nil
+                if record.Charging then
+                    record.ThrowToken+=1; record.Charging=false; record.LastThrow=-math.huge
+                    pcall(stopTracks,record)
+                end
+            end
             if record.AuraStab then record.StabbingUntil,record.StabTarget,record.AuraStab=0,nil,false end
         end
         if State.FlushAuraTouches then return State.FlushAuraTouches() end
     end,
-    Stab=auraStab,Burst=auraBurst})
+    Stab=auraStab,Burst=auraBurst,Throw=auraThrow})
 end
 
 
@@ -25482,6 +25590,7 @@ local createMobileUI = function(C)
     -- so the builders below can keep filling them in any order.
     mobile.Pages={}
     mobile.Sliders={}
+    mobile.FeaturePickers={}
     local function tab(title,icon)
         return window:Tab({Title=title,Icon=icon})
     end
@@ -25541,6 +25650,14 @@ local createMobileUI = function(C)
         function mobile.OpenExclusions() mobile.OpenPage("Protected") end
     end
     local function refresh()
+        for key,entry in pairs(mobile.FeaturePickers) do
+            if entry.Value~=State.Config[key] then
+                mobile.PickerSyncing=true
+                entry.Widget:Select(State.Config[key])
+                mobile.PickerSyncing=false
+                entry.Value=State.Config[key]
+            end
+        end
         syncing = true
         for key, toggle in pairs(toggles) do
             if toggle.Value ~= State.Config[key] then toggle:Set(State.Config[key], false) end
@@ -25612,6 +25729,21 @@ local createMobileUI = function(C)
             mobile.Toast(message,ok and "info" or "warn")
         end})
         mobile.KillAllStatus=automation:Paragraph({Title="Kill all status",Desc=State.KillAll.Status})
+        mobile.FeaturePickers.KillAllMode={Value=State.Config.KillAllMode,Widget=automation:Dropdown({Title="Kill all mode",
+            Desc="Burst sends contacts together. Aimed throws uses clear paths and prediction at range.",
+            Values={"Burst","Aimed throws"},Value=State.Config.KillAllMode,Multi=false,Callback=function(value)
+                if mobile.PickerSyncing or syncing or value==State.Config.KillAllMode then return end
+                suppressInput(); State.SetKillAllMode(value)
+            end})}
+        mobile.FeaturePickers.TargetPriority={Value=State.Config.TargetPriority,Widget=automation:Dropdown({Title="Target priority",
+            Desc="Selected player uses Players → Specific player; otherwise falls back to nearest.",
+            Values={"Nearest","Sheriff first","Selected player"},Value=State.Config.TargetPriority,Multi=false,Callback=function(value)
+                if mobile.PickerSyncing or syncing or value==State.Config.TargetPriority then return end
+                suppressInput(); State.SetTargetPriority(value)
+            end})}
+        mobile.ResultsStatus=page("CombatResults",home,"Combat results","chart-no-axes-combined"):Paragraph({
+            Title="Attack results",Desc=State.GetCombatResults().Text})
+        home:Button({Title="Combat results",Callback=function() mobile.OpenPage("CombatResults") end})
     end
     if State.EmergencyStop then
         home:Button({Title="Emergency stop",Desc="Stop key on PC",Callback=mobile.TriggerEmergencyStop})
@@ -25654,6 +25786,14 @@ local createMobileUI = function(C)
         mobile.DisplayPreset=name
         return true
     end
+    mobile.FeaturePickers.PerformancePreset={Value=State.Config.PerformancePreset,Widget=settings:Dropdown({Title="Performance preset",
+        Desc="Low effects reduces visuals and background updates. Balanced restores visual defaults. Attack timing stays the same.",
+        Values={"Balanced","Low effects"},Value=State.Config.PerformancePreset,Multi=false,Callback=function(value)
+            if mobile.PickerSyncing or syncing or value==State.Config.PerformancePreset then return end
+            suppressInput()
+            local ok,message=State.SetPerformancePreset(value)
+            if mobile.Toast then mobile.Toast(message,ok and "info" or "warn") end
+        end})}
     local presets=appearance
     presets:Button({Title="Clean display",Desc="Names only, compact HUD.",Callback=function() mobile.ApplyDisplayPreset("Clean") end})
     presets:Button({Title="Detailed display",Desc="Distances, full HUD, aim marker.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
@@ -26048,6 +26188,9 @@ local createMobileUI = function(C)
             updateDescription(mobile.KnifeTriggerbotStatus,"KnifeTriggerbot",detail)
         end
         if State.KillAll then updateDescription(mobile.KillAllStatus,"KillAll",State.KillAll.Status) end
+        if mobile.ResultsStatus and State.GetCombatResults then
+            updateDescription(mobile.ResultsStatus,"CombatResults",State.GetCombatResults().Text)
+        end
         local binds=State.Config.Keybinds or {}
         updateDescription(mobile.ControlsCard,"Controls",("PC  %s menu  ·  Click fire or stab  ·  E or right-click throw  ·  %s stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying")
             :format(keyLabel(binds.Menu or "RightShift"),keyLabel(binds.Stop or "End")))
@@ -26531,7 +26674,7 @@ local createMobileUI = function(C)
     local elapsed = 0
     connect(RunService.Heartbeat, function(dt)
         elapsed += dt
-        if elapsed < 0.3 then return end
+        if elapsed < State.GetBackgroundInterval(0.3) then return end
         elapsed = 0
         updateDashboard()
         local item = C.EquippedWeapon()
