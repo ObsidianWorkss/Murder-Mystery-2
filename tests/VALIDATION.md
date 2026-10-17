@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.25
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 80 combat, 146 release, 56 triggerbot and 76 aura assertions pass (358 total).
+- 19 new saved-settings assertions: first start, write-once-per-change, load of switches, sliders, theme, keybinds and protected players, ping never saved, wrong or unknown values ignored, unreadable file, no file access, failed write, and reset.
+- Live on a Murder Mystery 2 server: the running copy wrote 58 settings (no ping) with Roblox's own JSON encoder. After changing X-ray strength, theme and a keybind, unloading and starting a fresh copy, all 58 loaded and the slider, theme picker and key box showed the saved values. Reset settings restored the defaults and saved them; no console errors; one menu throughout.
+
 ## Release candidate 1.0.0-rc.24
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 80 combat, 127 release, 56 triggerbot and 76 aura assertions pass (339 total).

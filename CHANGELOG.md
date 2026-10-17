@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.25 — 2026-10-17
+
+### Added
+
+- Settings are saved between runs. Toggles, sliders, keybinds, protected players and the menu theme are written to `MM2Universal/settings.json` (checked every 2 seconds, written only when something changed, and once more on unload) and loaded on every start, so a rejoin or a new server keeps them. Features that always start off still start off.
+- The menu theme is now a saved setting.
+- **Settings → Reset settings** puts every setting back to its default, sliders and keybinds included, and keeps protected players. **Saved settings** shows whether saving works.
+
 ## 1.0.0-rc.24 — 2026-10-17
 
 ### Fixes

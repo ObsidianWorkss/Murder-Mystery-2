@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.24 · Release candidate · PC + mobile**
+**v1.0.0-rc.25 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -83,6 +83,8 @@ The aura stays enabled while waiting through normal death, respawn, or innocent 
 ### PC keybinds
 
 Settings → **Keybinds**, **Combat keys**, **Movement keys**, **Visual keys** and **Action keys** give every menu toggle and action its own key, including the menu and emergency-stop keys (these can move but never be cleared). Click a key box and press a new key; Esc cancels and Backspace clears it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
+
+Settings are saved automatically to `MM2Universal/settings.json` in your executor's folder: toggles, sliders, keybinds, protected players and the menu theme come back on every run, including after a rejoin or in a new server. Features the script always starts off (invisibility, kill aura, triggerbots, movement) still start off. **Settings → Reset settings** returns everything to defaults and keeps protected players. **Saved settings** shows whether saving works; on an executor without file access the script runs normally without saving.
 
 | Action | Default |
 | --- | --- |

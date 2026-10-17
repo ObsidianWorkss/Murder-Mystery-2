@@ -535,4 +535,92 @@ do
     check(rock.LocalTransparencyModifier==0 and wall.LocalTransparencyModifier==0 and rock.Attributes.MM2XRayBefore==nil,
         "the next copy to start restores what a crashed copy left")
 end
+do
+    -- Saved settings: a file on the executor, loaded at start, written only when something changed.
+    local encoded={}
+    local function serialize(value)
+        if type(value)~="table" then return type(value)=="string" and string.format("%q",value) or tostring(value) end
+        local keys={}
+        for k in pairs(value) do table.insert(keys,tostring(k)) end
+        table.sort(keys)
+        local parts={}
+        for _,k in ipairs(keys) do table.insert(parts,k.."="..serialize(value[k] == nil and value[tonumber(k)] or value[k])) end
+        return "{"..table.concat(parts,",").."}"
+    end
+    local function clone(value)
+        if type(value)~="table" then return value end
+        local out={}
+        for k,v in pairs(value) do out[k]=clone(v) end
+        return out
+    end
+    local Http={}
+    function Http:JSONEncode(value) local text=serialize(value); encoded[text]=clone(value); return text end
+    function Http:JSONDecode(text) if encoded[text]==nil then error("Can't parse JSON") end return clone(encoded[text]) end
+    local files,writes,failWrites={},0,false
+    local function fs(overrides)
+        local C={Http=Http,ReadFile=function(p) return files[p] end,IsFile=function(p) return files[p]~=nil end,
+            WriteFile=function(p,t) if failWrites then error("disk full") end files[p]=t; writes+=1 end,
+            MakeFolder=function() end,IsFolder=function() return true end}
+        for k,v in pairs(overrides or {}) do C[k]=v end
+        return C
+    end
+    local function defaults()
+        return {Aim=true,Fly=false,WalkSpeed=24,Ping=0.04,MenuTheme="Midnight",Keybinds=false,ExcludedPlayers={},AnimationPack="Mage"}
+    end
+    local function start(overrides)
+        local State={Config=defaults()}
+        local C=fs(overrides); C.State=State
+        -- INSERT_SETTINGS
+        installSettings(C)
+        return State
+    end
+    local path="MM2Universal/settings.json"
+    local first=start()
+    check(first.Settings.Loaded==0 and first.Config.WalkSpeed==24,"first start without a file uses defaults")
+    check(first.SaveSettings() and writes==1 and files[path]~=nil,"settings are written to the executor folder")
+    first.SaveSettings()
+    check(writes==1,"nothing is written when nothing changed")
+    first.Config.WalkSpeed,first.Config.Fly,first.Config.MenuTheme,first.Config.Ping=40,true,"Light",0.2
+    first.Config.Keybinds={Menu="F4",Fly="G"}
+    first.Config.ExcludedPlayers["123"]={UserId=123,Name="friend",DisplayName="friend"}
+    first.SaveSettings()
+    check(writes==2,"a change is written once")
+    local second=start()
+    check(second.Config.WalkSpeed==40 and second.Config.Fly==true and second.Config.MenuTheme=="Light",
+        "the next start loads saved sliders, switches and the menu theme")
+    check(type(second.Config.Keybinds)=="table" and second.Config.Keybinds.Menu=="F4" and second.Config.Keybinds.Fly=="G",
+        "saved keybinds load")
+    check(second.Config.ExcludedPlayers["123"] and second.Config.ExcludedPlayers["123"].Name=="friend","protected players load")
+    check(second.Config.Ping==0.04,"ping is measured each session, never loaded")
+    check(second.DefaultConfig.WalkSpeed==24 and second.DefaultConfig.ExcludedPlayers["123"]==nil,"defaults are kept apart from saved values")
+    files[path]=Http:JSONEncode({Version=1,Config={WalkSpeed="fast",Aim=false,Removed=true}})
+    local third=start()
+    check(third.Config.WalkSpeed==24 and third.Config.Aim==false and third.Config.Removed==nil,
+        "wrong kinds of values and unknown settings are ignored")
+    files[path]="{broken"
+    local fourth=start()
+    check(fourth.Config.WalkSpeed==24 and fourth.Settings.Status=="Saved settings were unreadable; defaults used",
+        "an unreadable file falls back to defaults and says so")
+    local noFiles=start({WriteFile=false,ReadFile=false})
+    local saved,status=noFiles.SaveSettings()
+    check(saved==false and noFiles.Settings.CanSave==false and status=="This executor cannot save files",
+        "an executor without file access runs without saving")
+    failWrites=true
+    fourth.Config.Fly=true
+    local ok,reason=fourth.SaveSettings()
+    check(ok==false and reason:find("disk full",1,true)~=nil,"a failed write is reported")
+    failWrites=false
+    check(fourth.SaveSettings() and fourth.Settings.Status=="Saved automatically","the next write succeeds and clears the error")
+    -- Reset: switches go through the menu path, numbers and keybinds go back, protected players stay.
+    local switched,applied,synced={},nil,false
+    second.MobileUI={SetOption=function(key,value) switched[key]=value; second.Config[key]=value end,
+        ApplyTheme=function(name) applied=name; second.Config.MenuTheme=name end,SyncSliders=function() synced=true end}
+    function second.ResetKeybinds() second.Config.Keybinds={Menu="RightShift"} end
+    local before=writes
+    check(second.ResetSettings(),"reset settings runs")
+    check(switched.Fly==false and second.Config.Fly==false and second.Config.WalkSpeed==24,"reset turns switches off through the menu and moves sliders back")
+    check(applied=="Midnight" and synced and second.Config.Keybinds.Menu=="RightShift","reset restores the theme, slider positions and keybinds")
+    check(second.Config.ExcludedPlayers["123"]~=nil,"reset keeps protected players")
+    check(writes==before+1,"reset is saved right away")
+end
 print(string.format("%d release assertions passed",passed))

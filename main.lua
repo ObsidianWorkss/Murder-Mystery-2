@@ -17708,7 +17708,7 @@ local State = {
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
-        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true,
+        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight",
         Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
@@ -17724,6 +17724,93 @@ if previousStats then
     for key, value in pairs(previousStats) do
         if State.Stats[key] ~= nil and type(value) == "number" then State.Stats[key] = value end
     end
+end
+do
+-- Saved settings: loaded on every start and written when they change (checked every 2 s by the main heartbeat),
+-- so a rejoin or a new game keeps toggles, sliders, keybinds, protected players and the menu theme.
+-- Values from a reload in the same server are applied afterwards and win.
+local installSettings=function(C)
+    local State=C.State
+    local folder,path="MM2Universal","MM2Universal/settings.json"
+    local canRead=type(C.ReadFile)=="function" and type(C.IsFile)=="function"
+    local canWrite=type(C.WriteFile)=="function" and type(C.MakeFolder)=="function" and type(C.IsFolder)=="function"
+    local unsaved={Ping=true} -- measured every session
+    local function copy(value)
+        if type(value)~="table" then return value end
+        local out={}
+        for k,v in pairs(value) do out[k]=copy(v) end
+        return out
+    end
+    local settings={Path=path,CanSave=canWrite,Loaded=0,Status=canWrite and "Saved automatically" or "This executor cannot save files"}
+    State.Settings=settings
+    State.DefaultConfig=copy(State.Config)
+    local function saveable(value)
+        local kind=type(value)
+        return kind=="boolean" or kind=="string" or kind=="table" or (kind=="number" and value==value and math.abs(value)<math.huge)
+    end
+    function State.EncodeSettings()
+        local data={}
+        for key,value in pairs(State.Config) do
+            if not unsaved[key] and saveable(value) then data[key]=value end
+        end
+        return C.Http:JSONEncode({Version=1,Config=data})
+    end
+    local lastSaved
+    function State.SaveSettings()
+        if not canWrite then return false,settings.Status end
+        local ok,text=pcall(State.EncodeSettings)
+        if not ok then settings.Status="Not saved: "..tostring(text); return false,settings.Status end
+        if text==lastSaved then return true,settings.Status end
+        local written,err=pcall(function()
+            if not C.IsFolder(folder) then C.MakeFolder(folder) end
+            C.WriteFile(path,text)
+        end)
+        if not written then settings.Status="Not saved: "..tostring(err); return false,settings.Status end
+        lastSaved,settings.Status=text,"Saved automatically"
+        return true,settings.Status
+    end
+    -- Only settings this version knows, holding the same kind of value, are applied; anything else is ignored.
+    if canRead then
+        local ok,text=pcall(function() return C.IsFile(path) and C.ReadFile(path) or nil end)
+        if ok and type(text)=="string" and text~="" then
+            local decoded,data=pcall(C.Http.JSONDecode,C.Http,text)
+            if decoded and type(data)=="table" and type(data.Config)=="table" then
+                for key,value in pairs(data.Config) do
+                    local current=State.Config[key]
+                    if current~=nil and not unsaved[key] and (type(current)==type(value) or (key=="Keybinds" and type(value)=="table")) then
+                        State.Config[key]=value
+                        settings.Loaded+=1
+                    end
+                end
+            else
+                settings.Status="Saved settings were unreadable; defaults used"
+            end
+        end
+    end
+    -- Back to defaults now, keeping protected players. Switches go through the menu's own path so features stop cleanly.
+    local keep={ExcludedPlayers=true,Ping=true,ESPStyleVersion=true,AuraReachVersion=true,Keybinds=true,FlingDownward=true,
+        FlingSpinContact=true,FlingAdaptivePursuit=true,AnimationPack=true,MageAnimations=true,PoseEnabled=true,MenuTheme=true}
+    function State.ResetSettings()
+        local ui=State.MobileUI
+        for key,default in pairs(State.DefaultConfig) do
+            if not keep[key] and State.Config[key]~=default then
+                if type(default)=="boolean" and ui and ui.SetOption then ui.SetOption(key,default)
+                else State.Config[key]=copy(default) end
+            end
+        end
+        if State.ResetKeybinds then State.ResetKeybinds() end
+        if State.StopPose then State.StopPose() end
+        if State.SetAnimationPack then State.SetAnimationPack(State.DefaultConfig.AnimationPack) end
+        if ui and ui.ApplyTheme then ui.ApplyTheme(State.DefaultConfig.MenuTheme) end
+        if ui and ui.SyncSliders then ui.SyncSliders() end
+        if ui and ui.Refresh then ui.Refresh() end
+        State.SaveSettings()
+        return true,"Settings reset to defaults"
+    end
+end
+
+installSettings({State=State,Http=game:GetService("HttpService"),ReadFile=readfile,IsFile=isfile,
+    WriteFile=writefile,MakeFolder=makefolder,IsFolder=isfolder})
 end
 if previousConfig then
     for key, value in pairs(previousConfig) do
@@ -17750,7 +17837,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.24"
+State.Version = "1.0.0-rc.25"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21613,6 +21700,8 @@ end
 local function autoPickup() State.TickGunPickup() end
 
 function State.Destroy()
+    -- Saved before unload switches features off. A copy replaced by a newer one never writes over newer settings.
+    if State.SaveSettings and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then State.SaveSettings() end
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
@@ -21755,6 +21844,10 @@ connect(RunService.Heartbeat, function(dt)
             task.spawn(State.Destroy)
         end
         return
+    end
+    if State.SaveSettings and os.clock() - (State.Settings.CheckedAt or -math.huge) >= 2 then
+        State.Settings.CheckedAt = os.clock()
+        State.SaveSettings()
     end
     while State.PendingGun[1] and os.clock() - State.PendingGun[1].SentAt > 3 do
         local expired = table.remove(State.PendingGun, 1)
@@ -25181,6 +25274,7 @@ local createMobileUI = function(C)
     -- Tabs follow your role in the round; each holds collapsible cards created in display order,
     -- so the builders below can keep filling them in any order.
     mobile.Pages={}
+    mobile.Sliders={}
     local function tab(title,icon)
         return window:Tab({Title=title,Icon=icon})
     end
@@ -25323,7 +25417,7 @@ local createMobileUI = function(C)
     if State.SetKillAura then
         local auraOptions=automation
         option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equips your knife while aura runs.")
-        auraOptions:Slider({Title="Aura range",Desc="Studs. Used while Extended stab reach is off.",Step=0.5,
+        mobile.Sliders.KillAuraRange=auraOptions:Slider({Title="Aura range",Desc="Studs. Used while Extended stab reach is off.",Step=0.5,
             Value={Min=1,Max=6.5,Default=State.Config.KillAuraRange},Callback=function(value)
             if syncing or not State.Running then return end
             local ok,message=State.SetKillAuraRange(value)
@@ -25331,7 +25425,7 @@ local createMobileUI = function(C)
         end})
         if State.SetAuraExtendedReach then
             option(auraOptions,"Extended stab reach","AuraExtendedReach","Extends kill aura's contact-attempt range. Requires Kill aura; the server validates damage and distance.")
-            auraOptions:Slider({Title="Extended reach",Desc="Studs.",Step=1,
+            mobile.Sliders.AuraReachRange=auraOptions:Slider({Title="Extended reach",Desc="Studs.",Step=1,
                 Value={Min=1,Max=200,Default=State.Config.AuraReachRange},Callback=function(value)
                 if syncing or not State.Running then return end
                 local ok,message=State.SetAuraReachRange(value)
@@ -25382,7 +25476,7 @@ local createMobileUI = function(C)
     buildAutomationSettings()
     if State.StopMovement then
         local function slider(title,key,min,max)
-            motion:Slider({Title=title,Step=1,Value={Min=min,Max=max,Default=State.Config[key]},Callback=function(value)
+            mobile.Sliders[key]=motion:Slider({Title=title,Step=1,Value={Min=min,Max=max,Default=State.Config[key]},Callback=function(value)
                 local n=tonumber(value)
                 if n and State.Running then State.Config[key]=math.clamp(math.floor(n+.5),min,max) end
             end})
@@ -25399,7 +25493,7 @@ local createMobileUI = function(C)
     end
     if State.StopXRay then
         option(xrayCard,"X-ray","XRay","See through walls and the map. Players and the gun stay solid.")
-        xrayCard:Slider({Title="Strength",Desc="How see-through the map gets, in percent.",Step=5,
+        mobile.Sliders.XRayAmount=xrayCard:Slider({Title="Strength",Desc="How see-through the map gets, in percent.",Step=5,
             Value={Min=20,Max=90,Default=State.Config.XRayAmount},Callback=function(value)
             local n=tonumber(value)
             if n and State.Running then State.Config.XRayAmount=math.clamp(math.floor(n+.5),20,90) end
@@ -25473,12 +25567,40 @@ local createMobileUI = function(C)
     animations:Button({Title = "Restore default animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
     local help=home
     mobile.ControlsCard=help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying"})
-    appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
-        local theme=({Midnight="MM2 Midnight",Graphite="Dark",Light="Light"})[name]
-        if theme then suppressInput(); library:SetTheme(theme) end
-    end})
+    function mobile.SyncSliders()
+        for key,element in pairs(mobile.Sliders) do
+            local value=State.Config[key]
+            if type(value)=="number" and type(element)=="table" and element.Set then pcall(element.Set,element,value) end
+        end
+    end
+    -- The chosen theme is a saved setting; Reset settings and the saved value both go through ApplyTheme.
+    local themes={Midnight="MM2 Midnight",Graphite="Dark",Light="Light"}
+    function mobile.ApplyTheme(name,fromPicker)
+        local theme=themes[name]
+        if not theme then return false end
+        State.Config.MenuTheme=name
+        library:SetTheme(theme)
+        if not fromPicker and mobile.ThemePicker then
+            mobile.ThemeSyncing=true; mobile.ThemePicker:Select(name); mobile.ThemeSyncing=false
+        end
+        return true
+    end
+    mobile.ThemePicker=appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},
+        Value=themes[State.Config.MenuTheme] and State.Config.MenuTheme or "Midnight",Multi=false,Callback=function(name)
+            if mobile.ThemeSyncing or not themes[name] then return end
+            suppressInput(); mobile.ApplyTheme(name,true)
+        end})
+    if themes[State.Config.MenuTheme] and State.Config.MenuTheme~="Midnight" then mobile.ApplyTheme(State.Config.MenuTheme,true) end
     settings:Button({Title = "Equip gun / knife", Callback = function() C.EquipWeapon() end})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
+    if State.Settings then
+        mobile.SettingsStatus=settings:Paragraph({Title="Saved settings",Desc=State.Settings.Status})
+        settings:Button({Title="Reset settings",Desc="Defaults for every setting. Protected players stay.",Callback=function()
+            suppressInput()
+            local ok,message=State.ResetSettings()
+            if mobile.Toast then mobile.Toast(message,ok and "info" or "warn",true) end
+        end})
+    end
     local repairs=settings
     local supportStatus=settings:Paragraph({Title="Support",Desc=State.Build .. " · " .. State.ReleaseChannel})
     settings:Button({Title="Copy support report",Desc="Version, settings and counters. No names or keys.",Callback=function()
@@ -25711,6 +25833,7 @@ local createMobileUI = function(C)
         local function flag(value) return value and "on" or "off" end
         session..="\nGun aim "..flag(State.Config.MagicBullet).."  ·  ESP "..flag(State.Config.ESP).."  ·  Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
+        if mobile.SettingsStatus and State.Settings then updateDescription(mobile.SettingsStatus,"Settings",State.Settings.Status) end
         if State.Triggerbot then
             local bot=State.Triggerbot
             local detail=bot.Status..("\n%d aim checks · %d gun requests · %d stab requests (not confirmed kills)"):format(bot.AimChecks,bot.Shots,bot.Stabs)
