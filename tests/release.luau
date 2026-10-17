@@ -323,15 +323,16 @@ do
 end
 do
     -- Keybinds: fake input objects and setters; nothing here touches a real game.
-    local Enum={UserInputType={Keyboard="Keyboard",MouseButton1="MouseButton1"}}
-    local focused,mode=nil,"PC"
-    local UIS={InputBegan="InputBegan",GetFocusedTextBox=function() return focused end}
-    local toasts,refreshed,synced={},0,0
+    local Enum={UserInputType={Keyboard="Keyboard",MouseButton1="MouseButton1"},KeyCode={LeftAlt="LeftAlt",RightAlt="RightAlt"}}
+    local focused,mode,altHeld=nil,"PC",true
+    local UIS={InputBegan="InputBegan",GetFocusedTextBox=function() return focused end,
+        IsKeyDown=function(_,key) return altHeld and key=="LeftAlt" end}
+    local toasts,tones,refreshed,synced={},{},0,0
     local cfg={Aim=true,MagicBullet=true,KillAura=false,ESP=true,XRay=false,Fly=false,Noclip=false,SpeedBoost=false,
         JumpBoost=false,InfiniteJump=false,Invisibility=false,MageAnimations=true,
         Keybinds={Fly="Q",Noclip="W",InfiniteJump="Q",ESP="H"}}
     local State={Running=true,Config=cfg,MobileUI={MenuOpen=false,Refresh=function() refreshed+=1 end,
-        Toast=function(text) table.insert(toasts,text) end}}
+        Toast=function(text,tone) table.insert(toasts,text); table.insert(tones,tone) end}}
     function State.SetMagicBullet(enabled) cfg.MagicBullet=enabled end
     function State.SetKillAura(enabled) if enabled then return false,"Waiting until you are murderer" end cfg.KillAura=false; return true end
     function State.SetInvisibility(enabled) cfg.Invisibility=enabled end
@@ -352,8 +353,11 @@ do
     check(cfg.Keybinds.Noclip=="None","a saved reserved key is dropped")
     check(cfg.Keybinds.InfiniteJump=="None" and cfg.Keybinds.XRay=="X","a saved duplicate key stays with the earlier action")
     check(cfg.Keybinds.Aim=="F6" and cfg.Keybinds.KillAura=="K" and cfg.Keybinds.RevealRoles=="None","missing keybinds use their defaults")
-    check(press("Q")=="Fly on" and cfg.Fly and toasts[#toasts]=="Fly on" and refreshed==1,"a keybind toggles its feature and confirms it")
-    check(press("Q")=="Fly off" and not cfg.Fly,"pressing again switches it off")
+    check(press("Q")=="Fly on" and cfg.Fly and toasts[#toasts]=="Fly on" and tones[#tones]=="on" and refreshed==1,"a keybind toggles its feature and confirms it")
+    altHeld=false
+    check(cfg.KeybindAlt==nil and press("Q")==nil and cfg.Fly,"keys need Alt held by default so stray presses do nothing")
+    altHeld=true
+    check(press("Q")=="Fly off" and not cfg.Fly and tones[#tones]=="off","pressing again switches it off")
     check(press("F6")=="Aim assist off" and not cfg.Aim and synced==1,"aim assist keeps its F6 default")
     check(press("Q",true)==nil and not cfg.Fly,"keys the game already handled are ignored")
     focused={}
@@ -376,7 +380,12 @@ do
     check(press("K")=="Waiting until you are murderer" and not cfg.KillAura,"a refused action shows why")
     State.SetKeybind("RevealRoles","R")
     check(press("R")=="Available during a round","reveal roles reports its result")
-    check(press("F10"):find("Repair camera failed",1,true)==1,"an action error is reported instead of breaking input")
+    check(press("F10"):find("Repair camera failed",1,true)==1 and tones[#tones]=="warn","an action error is reported instead of breaking input")
+    ok,message=State.SetKeybind("Fly","LeftAlt")
+    check(not ok and message=="LeftAlt is reserved","Alt itself cannot be bound")
+    cfg.KeybindAlt=false; altHeld=false
+    check(press("R")=="Available during a round" and tones[#tones]=="info","with Hold Alt off a key works on its own")
+    cfg.KeybindAlt=nil; altHeld=true
     State.ResetKeybinds()
     check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None","reset restores default keys")
 end

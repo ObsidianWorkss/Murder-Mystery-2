@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.11
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 99 release assertions pass (157 total).
+- New keybind assertions: keys need Alt by default, Alt cannot be bound, single keys work with Hold Alt off, and toasts carry on, off, info and warning tones.
+- Toast visuals and round-event toasts have not been viewed live.
+
 ## Release candidate 1.0.0-rc.10
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 96 release assertions pass (154 total).

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.11 — 2026-10-17
+
+### Keybinds
+
+- **Hold Alt**, on by default: keybinds only act while Alt is held, so brushing G or F during play never toggles anything. Switch it off in Settings → Keybinds for single-key binds. Alt itself is reserved.
+
+### Toasts
+
+- One toast at a time with a colored dot: green on, grey off, amber warning, accent info, or the role color. It slides in above the hotbar and replaces the previous one instead of stacking.
+- Every menu toggle and key press confirms itself, for example `Fly on`.
+- Round events: your role when a round starts, `You picked up the gun`, `You were eliminated` and `Gun dropped`.
+- Visuals → HUD & Alerts → **Toasts** switches them off; keybind changes still confirm.
+
 ## 1.0.0-rc.10 — 2026-10-17
 
 ### PC keybinds

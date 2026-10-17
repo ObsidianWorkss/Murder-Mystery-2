@@ -17695,7 +17695,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
-    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, KeybindAlt = true, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.10"
+State.Version = "1.0.0-rc.11"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21469,7 +21469,11 @@ updateGunESP = function()
     end
 end
 for _, object in ipairs(workspace:GetDescendants()) do if object.Name == "GunDrop" then drops[object] = true end end
-connect(workspace.DescendantAdded, function(object) if object.Name == "GunDrop" then drops[object] = true end end)
+connect(workspace.DescendantAdded, function(object)
+    if object.Name ~= "GunDrop" then return end
+    drops[object] = true
+    if State.OnGunDropped then task.defer(State.OnGunDropped, object) end
+end)
 connect(workspace.DescendantRemoving, function(object)
     drops[object] = nil
     removeGunVisual(object)
@@ -24493,7 +24497,7 @@ local installKeybinds=function(C)
     local reserved={}
     for _,name in ipairs({"W","A","S","D","Space","LeftShift","RightShift","LeftControl","End","E","Slash","Tab","Escape",
         "Return","Backspace","Delete","Backquote","I","O","Up","Down","Left","Right","F9","F11","F12","Unknown",
-        "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton"}) do reserved[name]=true end
+        "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton","LeftAlt","RightAlt"}) do reserved[name]=true end
     local function flip(key) cfg[key]=not cfg[key]; return cfg[key] end
     local actions={
         {Id="Aim",Title="Aim assist",Default="F6",Run=function() flip("Aim"); C.RefreshAim(); C.SyncWeapons(); return cfg.Aim end},
@@ -24556,14 +24560,17 @@ local installKeybinds=function(C)
     function keys.Press(input,processed)
         if processed or not State.Running or input.UserInputType~=Enum.UserInputType.Keyboard then return nil end
         if C.InputMode()~="PC" or UIS:GetFocusedTextBox() or (State.MobileUI and State.MobileUI.MenuOpen) then return nil end
+        -- Hold Alt (on by default): a stray key during play never toggles anything.
+        if cfg.KeybindAlt~=false and not (UIS:IsKeyDown(Enum.KeyCode.LeftAlt) or UIS:IsKeyDown(Enum.KeyCode.RightAlt)) then return nil end
         local name=input.KeyCode.Name
         for _,action in ipairs(actions) do
             if cfg.Keybinds[action.Id]==name then
                 local ok,on,message=pcall(action.Run)
                 local text=not ok and (action.Title.." failed: "..tostring(on))
                     or message or (action.Title..(on and " on" or " off"))
+                local tone=not ok and "warn" or (message and "info") or (on and "on" or "off")
                 if State.MobileUI and State.MobileUI.Refresh then State.MobileUI.Refresh() end
-                if State.MobileUI and State.MobileUI.Toast then State.MobileUI.Toast(text) end
+                if State.MobileUI and State.MobileUI.Toast then State.MobileUI.Toast(text,tone) end
                 return text
             end
         end
@@ -24832,6 +24839,7 @@ local createMobileUI = function(C)
                 C.SyncWeapons()
                 C.UpdateVisuals()
                 refresh()
+                if mobile.Toast then mobile.Toast(title .. (State.Config[key] and " on" or " off"), State.Config[key] and "on" or "off") end
             end,
         })
         toggles[key] = toggle
@@ -24908,6 +24916,7 @@ local createMobileUI = function(C)
     option(hud, "Nearby murderer warning", "ThreatWarning", "Warns when the murderer is close.")
     local displayOptions=visuals
     if State.GetCombatHUDData then option(hud,"Compact HUD","CompactHUD","Hide the last-shot line.") end
+    option(hud,"Toasts","Toasts","Short messages for toggles, keys and round events.")
     option(displayOptions,"Clean role visuals","CleanVisuals","Names only on ESP labels.")
     option(hud,"Gun aim marker","AimMarker","Marks where your shot will land.")
     option(displayOptions,"Stable body colors","StableBodyESP","Box fill for hard-to-see bodies.")
@@ -24948,7 +24957,8 @@ local createMobileUI = function(C)
         for name in pairs(State.Keybinds.Reserved) do
             if name~="Backspace" and name~="Delete" and Enum.KeyCode[name] then table.insert(blocked,name) end
         end
-        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key, then press a new one. Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
+        option(keybindsCard,"Hold Alt","KeybindAlt","Keys only work while Alt is held, so normal play never triggers them.")
+        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key box, then press a new key. Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
         mobile.KeybindElements,mobile.KeybindShown={},{}
         for _,action in ipairs(State.Keybinds.Actions) do
             local key=State.Config.Keybinds[action.Id]
@@ -24958,7 +24968,7 @@ local createMobileUI = function(C)
         keybindsCard:Button({Title="Reset keybinds",Callback=function()
             suppressInput()
             local _,message=State.ResetKeybinds()
-            if mobile.Toast then mobile.Toast(message) end
+            if mobile.Toast then mobile.Toast(message,"info",true) end
         end})
         mobile.KeybindCard=mobile.Pages.Keybinds.Section.ElementFrame
         mobile.KeybindCard.Visible=mobile.Mode=="PC"
@@ -25480,38 +25490,67 @@ local createMobileUI = function(C)
         padding.Parent = notice
     end
     mobile.StatusLabel = notice
-    -- One short confirmation for key presses; a newer one replaces it instead of stacking.
-    local toast = Instance.new("TextLabel")
-    toast.Name = "KeybindToast"
+    -- One short message at a time: a colored dot for its tone, then the text. A newer one replaces it.
+    local toastTones = {on = Color3.fromRGB(110, 232, 158), off = look.Muted, warn = Color3.fromRGB(255, 178, 90), info = look.Accent}
+    local toast = Instance.new("Frame")
+    toast.Name = "Toast"
     toast.AnchorPoint = Vector2.new(0.5, 1)
     toast.Position = UDim2.new(0.5, 0, 1, -96)
-    toast.Size = UDim2.fromOffset(0, 34)
+    toast.Size = UDim2.fromOffset(0, 36)
     toast.AutomaticSize = Enum.AutomaticSize.X
     toast.BackgroundColor3 = look.Surface
     toast.BackgroundTransparency = 0.06
-    toast.TextColor3 = look.Text
-    toast.TextSize = 13
-    toast.FontFace = look.Medium
     toast.Visible = false
     toast.ZIndex = 20
     toast.Parent = canvas
     Instance.new("UICorner", toast).CornerRadius = UDim.new(0, 12)
     hairline(toast)
+    local toastDot, toastText
     do
         local padding = Instance.new("UIPadding")
-        padding.PaddingLeft, padding.PaddingRight = UDim.new(0, 16), UDim.new(0, 16)
+        padding.PaddingLeft, padding.PaddingRight = UDim.new(0, 14), UDim.new(0, 16)
         padding.Parent = toast
+        local row = Instance.new("UIListLayout")
+        row.FillDirection = Enum.FillDirection.Horizontal
+        row.VerticalAlignment = Enum.VerticalAlignment.Center
+        row.Padding = UDim.new(0, 10)
+        row.Parent = toast
+        toastDot = Instance.new("Frame")
+        toastDot.Size = UDim2.fromOffset(8, 8)
+        toastDot.BorderSizePixel = 0
+        toastDot.ZIndex = 21
+        toastDot.Parent = toast
+        Instance.new("UICorner", toastDot).CornerRadius = UDim.new(1, 0)
+        toastText = Instance.new("TextLabel")
+        toastText.BackgroundTransparency = 1
+        toastText.AutomaticSize = Enum.AutomaticSize.X
+        toastText.Size = UDim2.new(0, 0, 1, 0)
+        toastText.FontFace = look.Medium
+        toastText.TextSize = 13
+        toastText.TextColor3 = look.Text
+        toastText.ZIndex = 21
+        toastText.Parent = toast
     end
     local toastToken = 0
-    function mobile.Toast(text)
-        if mobile.Destroyed then return end
+    local toastSlide = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    -- tone: "on", "off", "warn", "info" or a Color3. force shows it even with Toasts switched off.
+    function mobile.Toast(text, tone, force)
+        if mobile.Destroyed or (not force and State.Config.Toasts == false) then return end
         toastToken += 1
         local token = toastToken
-        toast.Text = tostring(text)
-        toast.Visible = true
-        task.delay(1.6, function()
+        toastText.Text = tostring(text)
+        toastDot.BackgroundColor3 = typeof(tone) == "Color3" and tone or toastTones[tone] or toastTones.info
+        if not toast.Visible then
+            toast.Position = UDim2.new(0.5, 0, 1, -88)
+            toast.Visible = true
+            game:GetService("TweenService"):Create(toast, toastSlide, {Position = UDim2.new(0.5, 0, 1, -96)}):Play()
+        end
+        task.delay(1.8, function()
             if toastToken == token and not mobile.Destroyed then toast.Visible = false end
         end)
+    end
+    function State.OnGunDropped()
+        mobile.Toast("Gun dropped", "warn")
     end
     -- Status card: role chip and weapon, one primary line, and shot feedback when not compact.
     -- The whole card is the drag handle, so it carries no "drag" label.
@@ -25747,7 +25786,7 @@ local createMobileUI = function(C)
             for id,element in pairs(mobile.KeybindElements) do
                 if not element.Picking and element.Value~=mobile.KeybindShown[id] then
                     local ok,message=State.SetKeybind(id,element.Value)
-                    mobile.Toast(message)
+                    mobile.Toast(message,ok and "info" or "warn",true)
                     if not ok then mobile.KeybindShown[id]=nil end
                 end
             end
@@ -25757,6 +25796,18 @@ local createMobileUI = function(C)
                     element:Set(key)
                     mobile.KeybindShown[id]=key
                 end
+            end
+        end
+        if State.Config.Toasts~=false and State.GetCombatHUDData then
+            local ok,data=pcall(State.GetCombatHUDData)
+            local role=ok and type(data)=="table" and data.Role or nil
+            if role and role~=mobile.LastRole then
+                local previous=mobile.LastRole
+                mobile.LastRole=role
+                if role=="Murderer" then mobile.Toast("You are the murderer",roleLook.Murderer[2])
+                elseif role=="Sheriff" then mobile.Toast(previous=="Innocent" and "You picked up the gun" or "You are the sheriff",roleLook.Sheriff[2])
+                elseif role=="Innocent" then mobile.Toast("You are innocent",roleLook.Innocent[2])
+                elseif role=="Eliminated" and previous and previous~="Lobby" then mobile.Toast("You were eliminated","off") end
             end
         end
         if State.KillAura and mobile.KillAuraStatus and mobile.KillAuraStatus.ParagraphFrame and mobile.LastKillAuraStatus~=State.KillAura.Status then

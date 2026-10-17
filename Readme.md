@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.10 · Release candidate · PC + mobile**
+**v1.0.0-rc.11 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -49,13 +49,13 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 | Throw knife | E or right click | Throw |
 | Stop active actions / return | End | Stop |
 | Fly up / down | Space or jump / Ctrl | Jump or Up / Down |
-| Toggle aim assistance | F6 (rebindable) | Aim assist setting |
-| Toggle gun aim | F7 (rebindable) | Gun aim setting |
-| Repair camera input | F10 (rebindable) | Repair camera input button |
+| Toggle aim assistance | Alt + F6 (rebindable) | Aim assist setting |
+| Toggle gun aim | Alt + F7 (rebindable) | Gun aim setting |
+| Repair camera input | Alt + F10 (rebindable) | Repair camera input button |
 
 ### PC keybinds
 
-Settings → **Keybinds** lists every bindable action. Click a key, press a new one, or press Backspace to clear it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
+Settings → **Keybinds** lists every bindable action. **Hold Alt** is on by default: hold Alt and press a key, so a stray key during play never toggles anything. Click a key box, press a new key, or press Backspace to clear it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
 
 | Action | Default |
 | --- | --- |
@@ -64,7 +64,7 @@ Settings → **Keybinds** lists every bindable action. Click a key, press a new 
 | Kill aura / Player ESP / X-ray | K / V / X |
 | Jump boost, Animation pack, Reveal roles, Teleport to map or lobby | Unbound |
 
-Movement keys, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11 and F12 stay reserved for Roblox, MM2 and this script.
+Alt, movement keys, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11 and F12 stay reserved for Roblox, MM2 and this script.
 
 The layout follows the active input device. Touch-capable PCs can continue using mouse and keyboard controls.
 
@@ -74,6 +74,7 @@ The layout follows the active input device. Touch-capable PCs can continue using
 - Movement: speed boost, jump boost, infinite jump, noclip and fly (Space or jump to rise, Ctrl to sink; on mobile, hold the Up and Down buttons that appear while flying). Each switches off cleanly, pauses while you fling or are invisible, and stops with End. The server can still kick for movement it rejects.
 - Movement → Animations → **Animation pack** swaps your whole movement set (idle, walk, run, jump, fall, climb, swim) to one of 17 Roblox catalog packs: Astronaut, Bubbly, Cartoony, Elder, Knight, Levitation, Mage, Ninja, Pirate, Robot, Rthro, Stylish, Superhero, Toy, Vampire, Werewolf or Zombie. Needs an R15 avatar; your choice is kept on respawn and reload.
 - Visuals → X-ray makes walls and the map see-through on your screen only, with a strength slider. Players, tools, coins and the dropped gun stay solid, and switching it off restores the map.
+- Toasts: a short message with a colored dot confirms every toggle and key press and announces your role, picking up the gun, elimination and a dropped gun. Visuals → HUD & Alerts → Toasts turns them off.
 - Role and dropped-gun ESP, threat warnings, and compact combat status.
 - Player exclusions shared by script-controlled targeting and player actions.
 - Players → Chat → **Reveal roles** posts the round's roles in chat, for example `🔪 Murderer: @name • 🔫 Sheriff: @name`, or `🔪 Murderer: @name • 💀 Sheriff: dead • 🦸 Hero: @name` once someone picks up the gun. It previews the message first, never names you, skips protected players, and waits 4 seconds between messages.
