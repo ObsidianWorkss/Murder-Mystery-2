@@ -17693,7 +17693,7 @@ local State = {
     Running = true, Connections = {}, Visuals = {}, GunVisuals = {}, Target = nil,
     AimMode = "DirectWeaponInput", AimStatus = "Waiting for weapon", WeaponHandlers = {},
     PickupMode = "TouchOnly",
-    Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Invisibility OFF"},
+    Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.6"
+State.Version = "1.0.0-rc.7"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20060,8 +20060,8 @@ end
 local function startThrow(record, preferred, strict)
     if record.Kind ~= "Knife" then return false end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return false end
-    if not ready(record) then knifeFeedback("Throw unavailable: equip a ready knife"); return false end
-    if strict and not State.Config.KnifeAim then knifeFeedback("Enable knife throw prediction for selected-target attacks"); return false end
+    if not ready(record) then knifeFeedback("Equip a ready knife to throw"); return false end
+    if strict and not State.Config.KnifeAim then knifeFeedback("Turn on Knife throw prediction for auto attack"); return false end
     if record.Charging then return false end
     local throwSpeed = record.Item:GetAttribute("ThrowSpeed")
     throwSpeed = type(throwSpeed)=="number" and throwSpeed==throwSpeed and throwSpeed>0 and throwSpeed<math.huge and throwSpeed or 1
@@ -20074,7 +20074,7 @@ local function startThrow(record, preferred, strict)
     local chosen=State.Config.KnifeAim and chooseTarget("Knife",handle.Position,record.Item,preferred,strict)
     if not chosen and (strict or (State.Config.KnifeAim and State.Config.RequireClearKnifeTarget)) then
         State.Stats.SkippedKnifeThrows += 1
-        knifeFeedback("Throw skipped: no clear target; reposition and try again"); return false
+        knifeFeedback("No clear throw target"); return false
     end
     record.Charging=true
     record.ThrowToken+=1
@@ -20226,14 +20226,14 @@ local function syncWeapons()
     end
     for _, item in ipairs(remove) do restoreHandler(item) end
     if not State.Config.Aim then
-        State.AimStatus = "Silent aim OFF"
+        State.AimStatus = "Aim off"
         State.Target = nil
         State.AimPreview = nil
         return
     end
-    if State.Invis.Busy then State.AimStatus = "Invisibility switching"; return end
+    if State.Invis.Busy then State.AimStatus = "Switching invisibility"; return end
     if State.ExperimentalInvis and State.ExperimentalInvis.Busy then
-        State.AimStatus = "Invisibility preparing; use Restore character to cancel"
+        State.AimStatus = "Going invisible  ·  Restore character cancels"
         State.Target, State.AimPreview = nil, nil
         return
     end
@@ -20243,13 +20243,13 @@ local function syncWeapons()
     if char then for _, item in ipairs(char:GetChildren()) do takeOver(item) end end
     local item, kind = equippedWeapon()
     if not item or not alive(player) then
-        State.AimStatus = "Equip gun or knife"
+        State.AimStatus = "Equip a weapon"
         State.Target = nil
         State.AimPreview = nil
         return
     end
     if kind == "Gun" and not State.Config.MagicBullet then
-        State.AimStatus = "Magic Bullet OFF: manual gun aiming"
+        State.AimStatus = "Gun aim off"
         State.Target, State.AimPreview = nil, nil
         return
     end
@@ -20264,23 +20264,23 @@ local function syncWeapons()
         Character = target.Player.Character, AimPart = target.AimPart, SampleOffset = target.SampleOffset, TargetMode = target.TargetMode} or nil
     local record = State.WeaponHandlers[item]
     if record and record.Charging then
-        State.AimStatus = "Knife throw charging"
+        State.AimStatus = "Charging throw"
     elseif kind == "Knife" and State.KnifeFeedback and os.clock() < State.KnifeFeedback.Until then
         State.AimStatus = State.KnifeFeedback.Message
     elseif kind == "Knife" and not State.Config.KnifeAim then
-        State.AimStatus = "Knife throw aimbot OFF"
+        State.AimStatus = "Knife aim off"
     elseif kind == "Gun" then
         local root = char and char:FindFirstChild("HumanoidRootPart")
         local targetRoot = target and target.Player.Character and target.Player.Character:FindFirstChild("HumanoidRootPart")
         local height = root and targetRoot and targetRoot.Position.Y - root.Position.Y or 0
-        local elevation = height > 5 and " / above" or (height < -5 and " / below" or "")
-        State.AimStatus = target and ((item.Enabled and "Magic Bullet ready: " or "Gun reloading: ")
-            .. target.Player.DisplayName .. " / " .. target.AimPart .. elevation
-            .. (target.TargetMode == "Stationary" and " / stationary" or (target.TargetMode == "Approaching" and " / approaching" or ""))
-            .. (target.Offscreen and " / out of view" or "")) or "Magic Bullet: no clear murderer target"
+        local elevation = height > 5 and "  ·  above" or (height < -5 and "  ·  below" or "")
+        State.AimStatus = target and ((item.Enabled and "Gun ready  ·  " or "Reloading  ·  ")
+            .. target.Player.DisplayName .. elevation
+            .. (target.TargetMode == "Stationary" and "  ·  standing still" or (target.TargetMode == "Approaching" and "  ·  approaching" or ""))
+            .. (target.Offscreen and "  ·  off screen" or "")) or "No clear shot at the murderer"
     else
-        State.AimStatus = target and ("Ready: " .. target.Player.DisplayName .. (target.Offscreen and " (out of view)" or ""))
-            or "No clear target: aimed shots skipped"
+        State.AimStatus = target and ("Knife ready  ·  " .. target.Player.DisplayName .. (target.Offscreen and "  ·  off screen" or ""))
+            or "No clear target"
     end
 end
 function State.SetMagicBullet(enabled)
@@ -20325,7 +20325,7 @@ local installSeatVisibility=function(C)
     local State, player, world = C.State, C.Player, C.Workspace
     local now, new = C.Clock or os.clock, C.NewInstance or Instance.new
     local mode = {Mode="LocalSeat", Phase="Off", Active=false, Busy=false,
-        OtherClientsVerified=false, Status="Invisibility OFF", Record=nil}
+        OtherClientsVerified=false, Status="Off", Record=nil}
     State.Invis = mode
     -- Compatibility for the baseline's attack, pickup, dodge and unload guards.
     State.ExperimentalInvis = mode
@@ -20380,7 +20380,7 @@ local installSeatVisibility=function(C)
         if not detached then table.insert(errors,"local assembly still attached") end
         if #errors>0 then
             mode.Busy,mode.Phase=true,"RestoreFailed"
-            mode.Status="Restore incomplete; press Restore character again: "..table.concat(errors,"; ")
+            mode.Status="Restore incomplete  ·  press Restore character again: "..table.concat(errors,"; ")
             -- Retain the record for retry; do not hide failures behind a reset.
             refresh(); return false,mode.Status
         end
@@ -20454,12 +20454,12 @@ local installSeatVisibility=function(C)
     local function step()
         local r=mode.Record
         if not r or mode.Phase=="RestoreFailed" then return end
-        if not State.Running then restore("Unloaded; local body restored"); return end
-        if not ownsCharacter(r) then restore("Character changed; invisibility OFF",false); return end
-        if r.Root.Anchored then fail("Root anchored; invisibility stopped"); return end
+        if not State.Running then restore("Off  ·  unloaded"); return end
+        if not ownsCharacter(r) then restore("Off  ·  character changed",false); return end
+        if r.Root.Anchored then fail("Stopped  ·  your character is anchored"); return end
         if not finite(r.Root.Position) or r.Root.Position.Y<=world.FallenPartsDestroyHeight+16 then
             -- Avoid preserving an unsafe current position during cleanup.
-            r.LocalReady=false; fail("Unsafe position; invisibility stopped"); return
+            r.LocalReady=false; fail("Stopped  ·  unsafe position"); return
         end
         if mode.Phase=="Parking" then
             r.Root.CFrame=r.ParkFrame
@@ -20482,7 +20482,7 @@ local installSeatVisibility=function(C)
             mode.Phase="Attaching"
         elseif mode.Phase=="Attaching" then
             if now()-r.Attached<0.1 then return end
-            if r.Root.AssemblyRootPart~=r.Seat then fail("Local seat did not become the assembly root; restored"); return end
+            if r.Root.AssemblyRootPart~=r.Seat then fail("Could not go invisible  ·  restored"); return end
             r.Seat.CFrame=r.StartFrame
             r.Root.AssemblyLinearVelocity,r.Root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
             restoreCamera(r)
@@ -20492,10 +20492,10 @@ local installSeatVisibility=function(C)
             refresh()
         elseif mode.Phase=="Active" then
             if not r.Seat.Parent or not r.Weld.Parent or r.Root.AssemblyRootPart~=r.Seat then
-                fail("Assembly changed; invisibility stopped"); return
+                fail("Stopped  ·  character rig changed"); return
             end
             if (r.Root.Position-r.ParkFrame.Position).Magnitude<64 then
-                r.LocalReady=false; fail("Position corrected; invisibility stopped"); return
+                r.LocalReady=false; fail("Stopped  ·  position corrected"); return
             end
         end
     end
@@ -20504,11 +20504,11 @@ local installSeatVisibility=function(C)
         if not ok then fail("Invisibility error: "..tostring(message)) end
     end)
     C.Connect(player.CharacterRemoving,function(char)
-        if mode.Record and mode.Record.Character==char then restore("Character removed; invisibility OFF",false) end
+        if mode.Record and mode.Record.Character==char then restore("Off  ·  character removed",false) end
     end)
     C.Connect(player.CharacterAdded,function()
-        if mode.Record then restore("New character; invisibility OFF",false) end
-        if not mode.Record then State.RepairRequired=false; mode.Status="Invisibility OFF"; refresh() end
+        if mode.Record then restore("Off  ·  new character",false) end
+        if not mode.Record then State.RepairRequired=false; mode.Status="Off"; refresh() end
     end)
     return mode
 end
@@ -20714,7 +20714,7 @@ local function updateESP()
                 local text = Instance.new("TextLabel")
                 text.Size = UDim2.fromScale(1, 1)
                 text.BackgroundTransparency = 1
-                text.Font = Enum.Font.GothamBold
+                text.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.SemiBold)
                 text.TextSize = 13
                 text.TextStrokeTransparency = 0.25
                 text.TextWrapped = true
@@ -21436,7 +21436,7 @@ updateGunESP = function()
                 local text = Instance.new("TextLabel")
                 text.Size = UDim2.fromScale(1, 1)
                 text.BackgroundTransparency = 1
-                text.Font = Enum.Font.GothamBold
+                text.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.SemiBold)
                 text.TextSize = 14
                 text.TextColor3 = yellow
                 text.TextStrokeTransparency = 0.15
@@ -21469,7 +21469,7 @@ do
 local installGunPickup=function(C)
     local State,player=C.State,C.Player
     local clock=C.Clock or os.clock
-    local pickup={Status="Auto pickup OFF",Attempts=0,Phase="Idle",NextAttempt=0}
+    local pickup={Status="Off",Attempts=0,Phase="Idle",NextAttempt=0}
     State.GunPickup=pickup
     local active
     local function finish()
@@ -21484,7 +21484,7 @@ local installGunPickup=function(C)
     end
     function State.StopGunPickup()
         local ok=finish()
-        if ok then pickup.Status="Auto pickup OFF" end
+        if ok then pickup.Status="Off" end
         return ok,pickup.Status
     end
     function State.TickGunPickup()
@@ -21504,23 +21504,23 @@ local installGunPickup=function(C)
             end
             if now-active.Started>=.8 then
                 active=nil; pickup.Phase="Idle"
-                pickup.Status="Gun not acquired; distance or server validation may reject this attempt"
+                pickup.Status="Gun not picked up  ·  move closer"
             end
             return
         end
-        if not State.Running or not State.Config.AutoPickup then pickup.Status="Auto pickup OFF"; return end
-        if not C.IsAlive() or C.HasKnife() then pickup.Status="Pickup waiting for an eligible living player"; return end
+        if not State.Running or not State.Config.AutoPickup then pickup.Status="Off"; return end
+        if not C.IsAlive() or C.HasKnife() then pickup.Status="Waiting until you can pick it up"; return end
         if C.HasGun() then pickup.Status="You already have the gun"; return end
-        if C.Blocked() then pickup.Status="Pickup paused: close menu / finish typing"; return end
+        if C.Blocked() then pickup.Status="Paused  ·  close the menu or finish typing"; return end
         if State.Invis and State.Invis.Busy then
-            pickup.Status="Pickup paused while invisibility switches"; return
+            pickup.Status="Paused while invisibility switches"; return
         end
-        if not C.Touch then pickup.Status="Pickup unavailable: executor has no touch API"; return end
+        if not C.Touch then pickup.Status="Unavailable  ·  your executor lacks firetouchinterest"; return end
         local char=player.Character
         local root=char and char:FindFirstChild("HumanoidRootPart")
-        if not root then pickup.Status="Pickup waiting for your character"; return end
+        if not root then pickup.Status="Waiting for your character"; return end
         local drop,distance=C.FindDrop(root)
-        if not drop then pickup.Status="Waiting for a loaded dropped gun"; pickup.LastDistance=nil; return end
+        if not drop then pickup.Status="Waiting for a dropped gun"; pickup.LastDistance=nil; return end
         local approached=pickup.LastDrop==drop and pickup.LastDistance and pickup.LastDistance>8 and distance<=8
         if pickup.LastDrop~=drop or approached then pickup.NextAttempt=0 end
         pickup.LastDrop,pickup.LastDistance=drop,distance
@@ -21725,7 +21725,7 @@ updateESP()
 updateThreat()
 updateGunESP()
 syncWeapons()
-print("MM2 Assist loaded: Magic Bullet/F7 targets the murderer on click; ANIMS/F9 toggles persistent Mage movement.")
+print("MM2 Universal " .. State.Version .. " loaded. Right Shift or the MM2 button opens the menu.")
 
 State.CancelExcludedWeaponActions = function(id)
     for _, record in pairs(State.WeaponHandlers) do
@@ -21745,7 +21745,7 @@ do
 local installPlayerFling = function(C)
     local State, Players, player = C.State, C.Players, C.Player
     local clock = C.Clock or os.clock
-    local fling = {Active = false, Status = "Fling idle", BurstDuration = 0.55, RecoveryDuration = 0.18,
+    local fling = {Active = false, Status = "Idle", BurstDuration = 0.55, RecoveryDuration = 0.18,
         Attempts = 0, Requests = 0, Bursts = 0, Phase = "Idle", LaunchSpeed = 1100, LiftSpeed = 450,
         AdaptivePursuit = not State.Config or State.Config.FlingAdaptivePursuit ~= false,
         Mode = State.Config and State.Config.FlingSpinContact and "Spin"
@@ -21996,7 +21996,7 @@ local installPlayerFling = function(C)
         end
         if record and fling.ReturnStatus and fling.ReturnStatus:find("Return failed:",1,true) then
             describe("Fling stopped | "..fling.ReturnStatus)
-        else describe(message or (record and "Fling stopped; returned to starting spot" or "Fling idle")) end
+        else describe(message or (record and "Fling stopped; returned to starting spot" or "Idle")) end
     end
     function State.SetFlingMode(mode)
         if mode ~= "Spin" and mode ~= "Downward" and mode ~= "Outward" then return false, "Unknown fling mode" end
@@ -22555,7 +22555,7 @@ do
 local installFlingQueue=function(C)
     local State,player=C.State,C.Player
     local clock=C.Clock or os.clock
-    local queue={Active=false,Status="Fling all OFF",Index=0,Total=0,Attempts=0,Skipped=0}
+    local queue={Active=false,Status="Off",Index=0,Total=0,Attempts=0,Skipped=0}
     State.FlingQueue=queue
     local targets,character,current,ownedRequest,nextAt,startedAt,watchReturn
     local limit=C.PerTargetSeconds or 6
@@ -22677,7 +22677,7 @@ do
 -- Explicit teleport and selected-target weapon automation. No server-kill claims.
 local installPlayerActions = function(C)
     local State, player, Players = C.State, C.Player, C.Players
-    local actions = {Enabled = false, SelectedId = nil, TargetId = nil, Status = "Auto attack OFF", Checks = 0}
+    local actions = {Enabled = false, SelectedId = nil, TargetId = nil, Status = "Auto attack off", Checks = 0}
     State.PlayerActions = actions
     local function status(text) actions.Status = text; return text end
     local function find(id)
@@ -22693,7 +22693,7 @@ local installPlayerActions = function(C)
     function State.StopAutoAttack(message)
         actions.Enabled, actions.TargetId, actions.Character = false, nil, nil
         if C.CancelAttack then C.CancelAttack() end
-        status(message or "Auto attack OFF")
+        status(message or "Auto attack off")
     end
     function State.SetSelectedPlayer(id)
         id = tonumber(id)
@@ -22710,7 +22710,7 @@ local installPlayerActions = function(C)
         if not char then return false, status("Wait for your character to be alive") end
         local targetChar = parts(target)
         if not targetChar or (C.IsEliminated and C.IsEliminated(target)) then return false, status("Target is not alive or loaded") end
-        if State.StopFlingAll then State.StopFlingAll("Selected-player auto attack started") end
+        if State.StopFlingAll then State.StopFlingAll("Auto attack on") end
         if State.StopKillAura then State.StopKillAura("Stopped for selected-player auto attack") end
         if C.CancelAttack then C.CancelAttack() end
         actions.Enabled, actions.TargetId, actions.SelectedId, actions.Character = true, target.UserId, target.UserId, char
@@ -22873,7 +22873,7 @@ local installKillAura=function(C)
     local State,player=C.State,C.Player
     local clock=C.Clock or os.clock
     local focused=true
-    local aura={Enabled=false,Status="Kill aura OFF",Attempts=0,TargetId=nil,LastAttempt=-math.huge}
+    local aura={Enabled=false,Status="Off",Attempts=0,TargetId=nil,LastAttempt=-math.huge}
     State.KillAura=aura
     State.Config.KillAura=false
     if State.Config.AuraEquipKnife==nil then State.Config.AuraEquipKnife=true end
@@ -22911,14 +22911,14 @@ local installKillAura=function(C)
     end
     function State.SetAuraExtendedReach(enabled)
         State.Config.AuraExtendedReach=enabled==true
-        local ok,message=State.CancelKillAuraContacts("Aura reach changed; waiting for cooldown")
+        local ok,message=State.CancelKillAuraContacts("Reach updated")
         refresh(); return ok,message
     end
     function State.SetAuraReachRange(value)
         local n=reach(value)
         if not n then return false,"Extended reach must be between 1 and 100 studs" end
         State.Config.AuraReachRange=n
-        local ok,message=State.CancelKillAuraContacts("Aura range changed; waiting for cooldown")
+        local ok,message=State.CancelKillAuraContacts("Range updated")
         return ok,ok and n or message
     end
     function State.CanAuraContact()
@@ -22933,7 +22933,7 @@ local installKillAura=function(C)
         aura.Enabled,State.Config.KillAura=false,false
         aura.TargetId=nil
         local ok,why=cancel()
-        aura.Status=ok and (message or "Kill aura OFF") or "Kill aura stopped; cleanup error: "..why
+        aura.Status=ok and (message or "Off") or "Stopped  ·  cleanup error: "..why
         refresh(); return ok,aura.Status
     end
     function State.SetKillAura(enabled)
@@ -22945,10 +22945,10 @@ local installKillAura=function(C)
             State.Config.Aim=true
             if C.Prepare then C.Prepare() end
         end)
-        if not ok then State.StopKillAura("Aura unavailable: "..tostring(message)); return false,aura.Status end
+        if not ok then State.StopKillAura("Unavailable: "..tostring(message)); return false,aura.Status end
         aura.Enabled,State.Config.KillAura=true,true
         aura.Character=player.Character
-        aura.Status="Kill aura enabled; waiting for murderer + equipped knife"
+        aura.Status="On  ·  waiting until you are murderer with a knife"
         refresh(); return true,aura.Status
     end
     function State.SetKillAuraRange(value)
@@ -22960,7 +22960,7 @@ local installKillAura=function(C)
     local function pause(message)
         aura.TargetId=nil
         local ok,why=cancel()
-        if not ok then State.StopKillAura("Aura cleanup failed: "..why); return end
+        if not ok then State.StopKillAura("Cleanup failed: "..why); return end
         aura.Status=message
     end
     local elapsed=0
@@ -22972,24 +22972,24 @@ local installKillAura=function(C)
         local ok,message=pcall(function()
             if not State.Running then State.StopKillAura("Unloaded"); return end
             local char=player.Character
-            if char~=aura.Character then State.StopKillAura("Character changed; kill aura OFF"); return end
+            if char~=aura.Character then State.StopKillAura("Off  ·  character changed"); return end
             local hum=char and char:FindFirstChildOfClass("Humanoid")
             local root=char and char:FindFirstChild("HumanoidRootPart")
-            if not hum or hum.Health<=0 then State.StopKillAura("Character unavailable; kill aura OFF"); return end
-            if C.RoleFor(player)~="Murderer" or not C.IsAlive(player) then pause("Kill aura waiting for murderer role in a round"); return end
-            if not root then pause("Kill aura waiting for your character root"); return end
-            if not State.Config.Aim then pause("Kill aura paused: enable Aim assist"); return end
-            if State.Invis and (State.Invis.Busy or State.Invis.Active and not State.Config.InvisibleKnife) then pause("Kill aura paused during invisibility"); return end
-            if State.Fling and State.Fling.Active then pause("Kill aura paused during fling"); return end
-            if not focused or C.InputBlocked() then pause("Kill aura paused: focus Roblox / close menu / finish typing"); return end
+            if not hum or hum.Health<=0 then State.StopKillAura("Off  ·  character unavailable"); return end
+            if C.RoleFor(player)~="Murderer" or not C.IsAlive(player) then pause("Waiting until you are murderer"); return end
+            if not root then pause("Waiting for your character"); return end
+            if not State.Config.Aim then pause("Paused  ·  turn on Aim assist"); return end
+            if State.Invis and (State.Invis.Busy or State.Invis.Active and not State.Config.InvisibleKnife) then pause("Paused while invisible"); return end
+            if State.Fling and State.Fling.Active then pause("Paused while flinging"); return end
+            if not focused or C.InputBlocked() then pause("Paused  ·  close the menu or finish typing"); return end
             local item=C.EquippedWeapon()
             if (not item or item.Name~="Knife" or item.Parent~=char) and State.Config.AuraEquipKnife and C.EquipKnife
                 and (not aura.LastEquip or clock()-aura.LastEquip>.5) then
                 aura.LastEquip=clock(); C.EquipKnife(); item=C.EquippedWeapon()
             end
-            if not item or item.Name~="Knife" or item.Parent~=char or item.Enabled==false then pause("Kill aura waiting for an equipped, enabled knife"); return end
+            if not item or item.Name~="Knife" or item.Parent~=char or item.Enabled==false then pause("Waiting for your knife"); return end
             local ready,reason=C.CanStab(item)
-            if not ready then aura.Status=reason or "Kill aura waiting for knife cooldown"; return end
+            if not ready then aura.Status=reason or "Knife cooling down"; return end
             if clock()-aura.LastAttempt<0.85 then return end
             local best,bestChar,bestDistance
             local radius=State.GetKillAuraRange()
@@ -23008,20 +23008,20 @@ local installKillAura=function(C)
                     end
                 end
             end
-            if not best then aura.TargetId=nil; aura.Status="Kill aura: no clear target in range"; return end
+            if not best then aura.TargetId=nil; aura.Status="No clear target in range"; return end
             if best.Character~=bestChar or State.IsPlayerExcluded(best) or not C.IsAlive(best) then return end
             local accepted,why=C.Stab(item,best)
             aura.TargetId=accepted and best.UserId or nil
             if accepted then
                 aura.Attempts+=1; aura.LastAttempt=clock()
-                aura.Status="Aura stab requested: @"..best.Name.." / hit unconfirmed"
-            else aura.Status=why or "Kill aura waiting for a ready knife" end
+                aura.Status="Stab sent  ·  @"..best.Name
+            else aura.Status=why or "Waiting for a ready knife" end
         end)
-        if not ok then State.StopKillAura("Kill aura stopped: "..tostring(message)) end
+        if not ok then State.StopKillAura("Stopped: "..tostring(message)) end
     end)
-    C.Connect(player.CharacterRemoving,function() State.StopKillAura("Respawning; kill aura OFF") end)
+    C.Connect(player.CharacterRemoving,function() State.StopKillAura("Off  ·  respawning") end)
     if C.UIS then
-        C.Connect(C.UIS.WindowFocusReleased,function() focused=false; if aura.Enabled then pause("Kill aura paused: focus Roblox") end end)
+        C.Connect(C.UIS.WindowFocusReleased,function() focused=false; if aura.Enabled then pause("Paused  ·  Roblox is in the background") end end)
         C.Connect(C.UIS.WindowFocused,function() focused=true end)
     end
     return aura
@@ -23029,12 +23029,12 @@ end
 
 local function auraKnifeReady(item)
     local record=State.WeaponHandlers[item]
-    if not record or not ready(record) then return false,"Kill aura waiting for knife handler" end
-    if record.Charging then return false,"Kill aura paused for your knife throw" end
+    if not record or not ready(record) then return false,"Waiting for your knife" end
+    if record.Charging then return false,"Paused for your throw" end
     local throwSpeed=item:GetAttribute("ThrowSpeed")
     throwSpeed=type(throwSpeed)=="number" and throwSpeed>0 and throwSpeed or 1
-    if os.clock()-record.LastThrow<2*throwSpeed then return false,"Kill aura waiting for throw cooldown" end
-    if os.clock()-record.LastStab<0.85 then return false,"Kill aura waiting for stab cooldown" end
+    if os.clock()-record.LastThrow<2*throwSpeed then return false,"Throw cooling down" end
+    if os.clock()-record.LastStab<0.85 then return false,"Stab cooling down" end
     return true
 end
 installKillAura({State=State,Player=player,Players=Players,RunService=RunService,UIS=UIS,Connect=connect,
@@ -23335,8 +23335,8 @@ local installEmergencyStop = function(C)
                 if ok==false then error(message or "Character restoration failed") end
             end
         end)
-        local message = #errors==0 and "Emergency stop: attacks, fling, pickup, dodge and movement stopped"
-            or "Emergency stop completed with issues: "..table.concat(errors,"; ")
+        local message = #errors==0 and "Everything stopped"
+            or "Stopped with issues: "..table.concat(errors,"; ")
         State.EmergencyStopReport={OK=#errors==0,Errors=errors,Message=message}
         State.AimStatus=message
         return #errors==0,message
@@ -23447,8 +23447,8 @@ local createTacticalPolicy = function()
         return count
     end
     function policy.Decide(s)
-        if not s.Active or s.Role=="Unknown" then return {Instruction="Waiting for an active round",Kind="Idle"} end
-        if s.Paused then return {Instruction="Automation active; End / STOP to return",Kind="Idle"} end
+        if not s.Active or s.Role=="Unknown" then return {Instruction="Waiting for a round",Kind="Idle"} end
+        if s.Paused then return {Instruction="Automation on  ·  End or Stop returns you",Kind="Idle"} end
         local result={Kind="Idle",Instruction="Observe the round"}
         local threat,threatDistance
         for _,p in ipairs(s.Players) do
@@ -23476,10 +23476,10 @@ local createTacticalPolicy = function()
                     result.Label="ISOLATED · APPROACH"
                     if s.Weapon=="Knife" and s.Enabled and chosen.Visible and (chosen.Position-s.Position).Magnitude<=6.5 then
                         result.Kind="Opportunity"; result.Goal=nil
-                        result.Instruction="Stab opportunity; keep clear of other players"
+                        result.Instruction="Stab chance  ·  avoid other players"
                         result.Label="STAB OPPORTUNITY"
-                    elseif s.Weapon~="Knife" then result.Instruction="Equip knife; watch the isolated player" end
-                else result.Instruction="Crowded; wait for separation"; result.Label="CROWDED · WAIT" end
+                    elseif s.Weapon~="Knife" then result.Instruction="Equip your knife  ·  watch the player alone" end
+                else result.Instruction="Crowded  ·  wait for an opening"; result.Label="CROWDED · WAIT" end
             else result.Instruction="No eligible target; exclusions stay protected" end
         elseif threat then
             result.Target=threat; result.Threat=threat.Position
@@ -23489,7 +23489,7 @@ local createTacticalPolicy = function()
             else
                 result.Kind="Retreat"; result.Instruction=threatDistance<24 and "Create distance from the murderer" or "Stay clear; move toward other players"
             end
-        else result.Instruction="Murderer unknown; stay near other players" end
+        else result.Instruction="Murderer unknown  ·  stay near others" end
         if not result.Goal and result.Kind~="Opportunity" and result.Kind~="Observe" then
             local best,bestCost
             for _,goal in ipairs(s.Destinations or {}) do
@@ -23694,7 +23694,7 @@ end
 local installTacticalGuide = function(C)
     local State,Players,player,world=C.State,C.Players,C.Player,C.Workspace
     local clock=C.Clock or os.clock
-    local guide={Instruction="Waiting for an active round",PathStatus="Idle",ObservedPlayers=0}
+    local guide={Instruction="Waiting for a round",PathStatus="Idle",ObservedPlayers=0}
     State.Guidance=guide
     local token,nextScan,nextPath=0,0,0
     local acceptedPath
@@ -23746,7 +23746,7 @@ local installTacticalGuide = function(C)
         local b=Instance.new("BillboardGui"); b.Name=name; b.Size=UDim2.fromOffset(190,26)
         b.AlwaysOnTop=false; b.StudsOffset=Vector3.new(0,2.8,0); b.Parent=parent
         local t=Instance.new("TextLabel"); t.Size=UDim2.fromScale(1,1); t.BackgroundTransparency=1
-        t.TextSize=12; t.Font=Enum.Font.GothamBold; t.TextStrokeTransparency=.25; t.TextColor3=Color3.fromRGB(245,218,126); t.Parent=b
+        t.TextSize=12; t.FontFace=Font.new("rbxassetid://12187365364",Enum.FontWeight.SemiBold); t.TextStrokeTransparency=.25; t.TextColor3=Color3.fromRGB(245,218,126); t.Parent=b
         return b,t
     end
     local function drawTarget(decision)
@@ -23908,13 +23908,13 @@ local installTacticalGuide = function(C)
                 guide.PathStatus="Path discarded during invisibility"; nextPath=0; return false
             end
             if (root.Position-start).Magnitude>8 then
-                guide.PathStatus="Path expired; player moved"; nextPath=0; return false
+                guide.PathStatus="Player moved  ·  replanning"; nextPath=0; return false
             end
             local threat=guide.ThreatPosition
             if not ok or not points or not C.Policy.RouteAllowed(points,threat,root.Position) then
                 local remaining={}; for i=index,#route do table.insert(remaining,route[i]) end
                 if route[index] and C.Policy.RouteAllowed(remaining,threat,root.Position) then
-                    guide.PathStatus="Keeping last valid route; "..tostring(reason or "no suitable replacement")
+                    guide.PathStatus="Keeping the last route  ·  "..tostring(reason or "no suitable replacement")
                 else
                     clearRoute(); guide.PathStatus=reason=="timeout" and "Path timed out; manual guidance only"
                         or (ok and "No suitable route" or "Path unavailable")
@@ -23926,7 +23926,7 @@ local installTacticalGuide = function(C)
             if acceptedPath then acceptedPath:Destroy() end
             acceptedPath=path
             pathConnection=path.Blocked:Connect(function(blockedIndex)
-                if mine==token and blockedIndex>=index then clearRoute(); nextPath=0; guide.PathStatus="Route blocked; replanning" end
+                if mine==token and blockedIndex>=index then clearRoute(); nextPath=0; guide.PathStatus="Route blocked  ·  replanning" end
             end)
             return true
         end)
@@ -24042,7 +24042,7 @@ do
 -- Explicit buttons only; destinations are discovered from loaded map/lobby spawns.
 local installWorldTeleports=function(C)
     local State,world,player=C.State,C.Workspace,C.Player
-    local status={Status="Choose map or lobby"}; State.WorldTeleport=status
+    local status={Status="Ready"}; State.WorldTeleport=status
     local function finite(v)
         return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
             and math.abs(v.X)<1e6 and math.abs(v.Y)<1e6 and math.abs(v.Z)<1e6
@@ -24537,7 +24537,7 @@ local createMobileUI = function(C)
     end
     local view = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 450)
     window = library:CreateWindow({
-        Title = "MM2 " .. mobile.Mode, Icon = "crosshair", NewElements = false, Theme="MM2 Midnight",
+        Title = "MM2 Universal", Icon = "crosshair", NewElements = false, Theme="MM2 Midnight",
         Size = UDim2.fromOffset(math.min(mobile.Mode == "PC" and 680 or 570, view.X - 32), math.min(mobile.Mode == "PC" and 520 or 470, view.Y - 48)),
         MinSize = Vector2.new(280, 240), MaxSize = Vector2.new(750, 750),
         SideBarWidth = 156, Resizable = false, AutoScale = false, Radius=14, ElementsRadius=10,
@@ -24647,7 +24647,7 @@ local createMobileUI = function(C)
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
-    option(knife, "Knife throw prediction", "KnifeAim")
+    option(knife, "Knife throw prediction", "KnifeAim", "Leads throws to where players will be.")
     option(knife, "All-direction knife aim", "KnifeAllDirections", "Also target players off screen.")
     option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
@@ -24658,7 +24658,7 @@ local createMobileUI = function(C)
         home:Button({Title="Emergency stop",Desc="End key on PC",Callback=mobile.TriggerEmergencyStop})
     end
     local advancedCombat=combat
-    option(knife, "Stab sweep", "StabSweep")
+    option(knife, "Stab sweep", "StabSweep", "Counts blade contact through the whole stab.")
     if State.SetTargetContinuity then
         option(advancedCombat,"Stable target choice","TargetContinuity","Hold the current target on near ties.")
     end
@@ -24666,18 +24666,18 @@ local createMobileUI = function(C)
     if State.SetKillAura then
         local auraOptions=automation
         option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equips your knife while aura runs.")
-        auraOptions:Input({Title="Aura range (studs)",Value=tostring(State.Config.KillAuraRange),Placeholder="1 to 6.5",Callback=function(text)
+        auraOptions:Slider({Title="Aura range",Desc="Studs. Used while Extended stab reach is off.",Step=0.5,
+            Value={Min=1,Max=6.5,Default=State.Config.KillAuraRange},Callback=function(value)
             if syncing or not State.Running then return end
-            suppressInput()
-            local ok,message=State.SetKillAuraRange(text)
+            local ok,message=State.SetKillAuraRange(value)
             if not ok then State.KillAura.Status=tostring(message) end
         end})
         if State.SetAuraExtendedReach then
             option(auraOptions,"Extended stab reach","AuraExtendedReach","Attempts contact past normal range.")
-            auraOptions:Input({Title="Extended reach (studs)",Value=tostring(State.Config.AuraReachRange),Placeholder="1 to 100",Callback=function(text)
+            auraOptions:Slider({Title="Extended reach",Desc="Studs.",Step=1,
+                Value={Min=1,Max=100,Default=State.Config.AuraReachRange},Callback=function(value)
                 if syncing or not State.Running then return end
-                suppressInput()
-                local ok,message=State.SetAuraReachRange(text)
+                local ok,message=State.SetAuraReachRange(value)
                 if not ok then State.KillAura.Status=tostring(message) end
             end})
         end
@@ -24708,13 +24708,13 @@ local createMobileUI = function(C)
     presets:Button({Title="Detailed display",Desc="Distances, full HUD, aim marker.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
     mobile.AdvancedCombat=advancedCombat
     option(visuals, "Role ESP", "ESP", "Murderer red, sheriff blue, others green.")
-    option(visuals, "Dropped gun ESP", "GunESP")
+    option(visuals, "Dropped gun ESP", "GunESP", "Shows where the gun dropped.")
     if State.GetCombatHUDData then option(hud,"Combat HUD","CombatHUD","Status card. Drag it to move.") end
-    option(hud, "Nearby murderer warning", "ThreatWarning")
+    option(hud, "Nearby murderer warning", "ThreatWarning", "Warns when the murderer is close.")
     local displayOptions=visuals
     if State.GetCombatHUDData then option(hud,"Compact HUD","CompactHUD","Hide the last-shot line.") end
     option(displayOptions,"Clean role visuals","CleanVisuals","Names only on ESP labels.")
-    option(hud,"Gun aim marker","AimMarker")
+    option(hud,"Gun aim marker","AimMarker","Marks where your shot will land.")
     option(displayOptions,"Stable body colors","StableBodyESP","Box fill for hard-to-see bodies.")
     option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Jumps or sidesteps thrown knives.")
     local canTouch = type(firetouchinterest) == "function"
@@ -24742,7 +24742,7 @@ local createMobileUI = function(C)
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
     option(movement, "Invisibility", "Invisibility", "Ghost mode. Shooting restores you first.")
-    mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Invisibility OFF"})
+    mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Off"})
     movement:Button({Title="Restore character",Desc="Turns invisibility off, no reset.",Callback=function()
         suppressInput()
         State.SetInvisibility(false)
@@ -25373,7 +25373,6 @@ local createMobileUI = function(C)
         State.InputMode = mode
         icon.Visible = mode == "Mobile"
         if emergencyButton and mode~="Mobile" then emergencyButton.Visible=false end
-        window:SetTitle("MM2 " .. mode)
         pad.Visible = mode == "Mobile" and not mobile.MenuOpen and C.EquippedWeapon() ~= nil
         suppressInput()
         resized()
@@ -25495,7 +25494,7 @@ do
             end,
             Fire = function()
                 local item = equippedWeapon()
-                if not item then State.AimStatus = "Equip a weapon first"; return end
+                if not item then State.AimStatus = "Equip a weapon"; return end
                 local record = State.WeaponHandlers[item]
                 if record then
                     if record.Kind == "Gun" then sendGun(record) else clickKnife(record) end
@@ -25512,7 +25511,7 @@ do
                     State.LastThrowInput = "MobileThrowButton"
                     startThrow(record)
                 else
-                    State.AimStatus = "Equip a knife with Aim assist ON to use this throw button"
+                    State.AimStatus = "Equip your knife and turn on Aim assist"
                 end
             end,
         })

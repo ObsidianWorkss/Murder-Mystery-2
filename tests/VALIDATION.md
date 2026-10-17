@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.7
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; all 113 assertions pass.
+- No code compares the rewritten messages; the only compared status text (fling `Return failed:`) is unchanged.
+- `luau-analyze` findings and the menu's 48 actions are unchanged from rc.6.
+- The new wording and sliders have not been viewed live.
+
 ## Release candidate 1.0.0-rc.6
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 55 release assertions pass (113 total).

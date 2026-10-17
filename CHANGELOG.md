@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-rc.7 — 2026-10-17
+
+### Polish
+
+- 73 status messages rewritten in one short style, for example `Gun ready  ·  name  ·  above` instead of `Magic Bullet ready: name / UpperTorso / above`, and `Paused  ·  close the menu or finish typing` instead of `Kill aura paused: focus Roblox / close menu / finish typing`. Cards titled Status no longer repeat the feature name.
+- Kill aura range and extended reach are sliders instead of text boxes, so phones need no keyboard. Aura range says it applies while Extended stab reach is off.
+- Every toggle has a short description.
+- ESP, dropped-gun and guidance labels use the menu font.
+- The window is titled MM2 Universal on every device, and the console load message names the version and how to open the menu.
+
 ## 1.0.0-rc.6 — 2026-10-17
 
 ### Mobile

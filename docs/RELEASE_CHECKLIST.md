@@ -1,6 +1,6 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.6**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.7**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
