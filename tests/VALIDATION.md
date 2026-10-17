@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.6
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 55 release assertions pass (113 total).
+- New assertions: fly sinks while Down is held, rises while jump is held, and stopping movement releases the Up/Down hold.
+- `luau-analyze` findings and the menu control list are unchanged from rc.5.
+- The mobile layout has not been viewed on a phone.
+
 ## Release candidate 1.0.0-rc.5
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 53 release assertions pass (111 total).

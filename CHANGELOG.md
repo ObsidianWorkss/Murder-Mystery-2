@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-rc.6 — 2026-10-17
+
+### Mobile
+
+- Fly gets on-screen **Up** and **Down** buttons while flying on a phone; hold one to rise or sink. Drag them by their grip like the weapon buttons.
+- Holding the jump button now rises while flying, on phones and PC.
+- The **Stop** button also appears while speed, jump, infinite jump, noclip or fly is on, since phones have no End key.
+- The menu keeps a smaller screen margin on phones, so short landscape screens show more of it.
+- Without a clipboard, Copy support report shows the report in its card, since phones have no developer console.
+
 ## 1.0.0-rc.5 — 2026-10-17
 
 ### Reveal roles

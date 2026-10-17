@@ -1,12 +1,12 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.5**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.6**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report and role-reveal and movement regression suites pass locally (111 assertions).
+- [x] Combat, loader, support-report and role-reveal and movement regression suites pass locally (113 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks — pending a connected Roblox client
@@ -17,7 +17,7 @@ Version: **1.0.0-rc.5**. Do not describe this candidate as fully verified until 
 - [ ] Status card, Fire/Throw/Stop buttons, status pill and murderer warning render cleanly on PC and mobile; the card drags from anywhere.
 - [ ] Reveal roles: emojis render in chat, the hero appears after the sheriff dies, preview matches the round, one message posts, the cooldown blocks a second press, and it refuses while you are murderer.
 - [ ] PC: Right Shift menu, click fire/stab, E/right-click throw, End stop.
-- [ ] Mobile: dragging, FIRE/STAB, THROW, STOP, and switching input modes.
+- [ ] Mobile: dragging, Fire/Stab, Throw, Stop, fly Up/Down hold, the menu fitting a phone in landscape, and switching input modes.
 - [ ] Support report: clipboard success and unavailable-clipboard fallback.
 - [ ] Equip/unequip, role transitions, respawn, target death, and player departure.
 - [ ] Gun/knife toggles and exclusions; no attack during focused text input.

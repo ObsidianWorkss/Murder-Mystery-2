@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.5"
+State.Version = "1.0.0-rc.6"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -24231,7 +24231,8 @@ local installMovement=function(C)
     local clock=C.Clock or os.clock
     local cfg=State.Config
     cfg.SpeedBoost,cfg.JumpBoost,cfg.InfiniteJump,cfg.Noclip,cfg.Fly=false,false,false,false,false
-    local move={Status="Off"}
+    -- Vertical is set by the mobile Up/Down fly buttons: 1 rises, -1 sinks, 0 holds height.
+    local move={Status="Off",Vertical=0}
     State.Movement=move
     local walk,jump={Property="WalkSpeed"},{}
     local collisions=setmetatable({},{__mode="k"})
@@ -24278,6 +24279,7 @@ local installMovement=function(C)
     end
     local function stopFly()
         local f=fly
+        move.Vertical=0
         if not f then return end
         fly=nil
         pcall(function() f.Velocity:Destroy() end)
@@ -24304,10 +24306,14 @@ local installMovement=function(C)
             local relative=CFrame.lookAt(Vector3.zero,flat):VectorToObjectSpace(input)
             direction=frame.LookVector*-relative.Z+frame.RightVector*relative.X
         end
+        -- Jump (keyboard or the mobile jump button) and Up rise; Ctrl and Down sink.
+        local rise,sink=hum.Jump==true or move.Vertical==1,move.Vertical==-1
         if not UIS:GetFocusedTextBox() then
-            if UIS:IsKeyDown(Enum.KeyCode.Space) then direction+=Vector3.yAxis end
-            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then direction-=Vector3.yAxis end
+            rise=rise or UIS:IsKeyDown(Enum.KeyCode.Space)
+            sink=sink or UIS:IsKeyDown(Enum.KeyCode.LeftControl)
         end
+        if rise then direction+=Vector3.yAxis end
+        if sink then direction-=Vector3.yAxis end
         fly.Velocity.Velocity=direction.Magnitude>1e-3 and direction.Unit*cfg.FlySpeed or Vector3.zero
         if flat.Magnitude>1e-3 then fly.Gyro.CFrame=CFrame.lookAt(root.Position,root.Position+flat) end
     end
@@ -24729,7 +24735,7 @@ local createMobileUI = function(C)
         slider("Jump power","JumpPower",50,150)
         option(motion,"Infinite jump","InfiniteJump","Jump again in mid-air.")
         option(motion,"Noclip","Noclip","Walk through walls.")
-        option(motion,"Fly","Fly","Move to fly where you look. Space up, Ctrl down.")
+        option(motion,"Fly","Fly","Fly where you look. Jump or Up to rise, Ctrl or Down to sink.")
         slider("Fly speed","FlySpeed",16,120)
         mobile.MovementStatus=motion:Paragraph({Title="Status",Desc=State.Movement and State.Movement.Status or "Off"})
     end
@@ -24759,7 +24765,7 @@ local createMobileUI = function(C)
     poses:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
     animations:Button({Title = "Restore animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
     local help=home
-    help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop"})
+    help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying"})
     appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
         local theme=({Midnight="MM2 Midnight",Graphite="Dark",Light="Light"})[name]
         if theme then suppressInput(); library:SetTheme(theme) end
@@ -24775,8 +24781,9 @@ local createMobileUI = function(C)
         if not ok then message="Couldn't generate the report. Try unloading and reloading."
         else
             local copy=setclipboard or toclipboard
+            -- Phones have no developer console, so without a clipboard the report goes in this card.
             if type(copy)=="function" and pcall(copy,report) then message="Support report copied. Paste it into your issue."
-            else print("MM2 support report: " .. report); message="Clipboard unavailable. Report printed in the developer console." end
+            else print("MM2 support report: " .. report); message="Clipboard unavailable. Report:\n" .. report end
         end
         if supportStatus and supportStatus.ParagraphFrame then supportStatus.ParagraphFrame:SetDesc(message) end
     end})
@@ -25058,20 +25065,37 @@ local createMobileUI = function(C)
     pad.BackgroundTransparency = 1
     pad.Parent = canvas
     -- Drag grip: a short bar instead of a labelled MOVE button.
-    local handle = button("MOVE", UDim2.fromOffset(128, 18), pad)
-    handle.Text = ""
-    handle.BackgroundTransparency = 1
-    handle.UIStroke:Destroy()
-    do
+    local function gripHandle(name, width, parent)
+        local handle = button(name, UDim2.fromOffset(width, 18), parent)
+        handle.Text = ""
+        handle.BackgroundTransparency = 1
+        handle.UIStroke:Destroy()
         local grip = Instance.new("Frame")
         grip.AnchorPoint = Vector2.new(0.5, 0.5)
         grip.Position = UDim2.fromScale(0.5, 0.5)
-        grip.Size = UDim2.fromOffset(36, 4)
+        grip.Size = UDim2.fromOffset(math.min(36, width - 20), 4)
         grip.BackgroundColor3 = look.Text
         grip.BackgroundTransparency = 0.6
         grip.Parent = handle
         Instance.new("UICorner", grip).CornerRadius = UDim.new(1, 0)
+        return handle
     end
+    local handle = gripHandle("MOVE", 128, pad)
+    -- Phones have no Space or Ctrl: hold Up or Down while flying.
+    local flyPad = Instance.new("Frame")
+    flyPad.Name = "FlyTouchPad"
+    flyPad.Size = UDim2.fromOffset(64, 122)
+    flyPad.BackgroundTransparency = 1
+    flyPad.Visible = false
+    flyPad.Parent = canvas
+    local flyHandle = gripHandle("FLY MOVE", 64, flyPad)
+    local flyUp = button("FLY UP", UDim2.fromOffset(64, 46), flyPad)
+    flyUp.Text = "Up"
+    flyUp.Position = UDim2.fromOffset(0, 24)
+    local flyDown = button("FLY DOWN", UDim2.fromOffset(64, 46), flyPad)
+    flyDown.Text = "Down"
+    flyDown.Position = UDim2.fromOffset(0, 76)
+    mobile.FlyPad = flyPad
     local fire = button("FIRE / STAB", UDim2.fromOffset(128, 46), pad)
     fire.Text = "Fire"
     fire.Position = UDim2.fromOffset(0, 24)
@@ -25129,6 +25153,27 @@ local createMobileUI = function(C)
     end
     draggable(icon, icon, function() window:Toggle() end)
     draggable(handle, pad)
+    draggable(flyHandle, flyPad)
+    -- Holding Up or Down sets the fly direction until that same finger or mouse button lifts.
+    local function holdVertical(control, direction)
+        local holding
+        connect(control.InputBegan, function(input)
+            local kind = input.UserInputType
+            if kind ~= Enum.UserInputType.Touch and kind ~= Enum.UserInputType.MouseButton1 then return end
+            holding = input
+            suppressInput()
+            if State.Movement then State.Movement.Vertical = direction end
+        end)
+        connect(UIS.InputEnded, function(input)
+            local h = holding
+            if not h or (h.UserInputType == Enum.UserInputType.Touch and input ~= h)
+                or (h.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= h.UserInputType) then return end
+            holding = nil
+            if State.Movement and State.Movement.Vertical == direction then State.Movement.Vertical = 0 end
+        end)
+    end
+    holdVertical(flyUp, 1)
+    holdVertical(flyDown, -1)
     local emergencyButton
     if State.EmergencyStop then
         emergencyButton=button("STOP / RETURN",UDim2.fromOffset(112,40),canvas)
@@ -25294,6 +25339,7 @@ local createMobileUI = function(C)
         icon.Position = UDim2.fromOffset(12, math.max(62, size.Y * 0.22))
         -- Keep the normal jump button and movement thumbstick clear by default.
         pad.Position = UDim2.fromOffset(size.X - 252, size.Y - 207)
+        flyPad.Position = UDim2.fromOffset(size.X - 324, size.Y - 207)
         layoutHUD()
         if combatHUD then
             local y=mobile.Mode=="Mobile" and 92 or size.Y-combatHUD.Size.Y.Offset-12
@@ -25303,18 +25349,20 @@ local createMobileUI = function(C)
             local y=combatHUD and State.Config.CombatHUD and combatHUD.Position.Y.Offset+combatHUD.Size.Y.Offset+12 or 52
             emergencyButton.Position=UDim2.fromOffset(size.X/2-emergencyButton.Size.X.Offset/2,y); clamp(emergencyButton)
         end
-        clamp(icon); clamp(pad)
+        clamp(icon); clamp(pad); clamp(flyPad)
     end
     local function resized()
         local size = canvas.AbsoluteSize
-        local width = math.max(280, math.min(mobile.Mode == "PC" and 680 or 570, size.X - 24))
-        local height = math.max(240, math.min(mobile.Mode == "PC" and 520 or 470, size.Y - 24))
+        -- Phones are short in landscape, so the menu keeps a smaller margin there.
+        local margin = mobile.Mode == "PC" and 24 or 12
+        local width = math.max(280, math.min(mobile.Mode == "PC" and 680 or 570, size.X - margin))
+        local height = math.max(240, math.min(mobile.Mode == "PC" and 520 or 470, size.Y - margin))
         window.Size = UDim2.fromOffset(width, height)
         if not window.Closed then window:SetSize(window.Size) end
         window:SetToTheCenter()
         notice.Size = UDim2.fromOffset(math.min(300, size.X - 24), 36)
         notice.Position = UDim2.new(0.5, -notice.Size.X.Offset / 2, 0, 8)
-        clamp(icon); clamp(pad)
+        clamp(icon); clamp(pad); clamp(flyPad)
         if emergencyButton then clamp(emergencyButton) end
         layoutHUD()
     end
@@ -25349,6 +25397,9 @@ local createMobileUI = function(C)
         local item = C.EquippedWeapon()
         mobile.ApplyInputMode()
         pad.Visible = mobile.Mode == "Mobile" and not mobile.MenuOpen and item ~= nil
+        local flying = mobile.Mode == "Mobile" and not mobile.MenuOpen and State.Config.Fly == true
+        if flyPad.Visible ~= flying then flyPad.Visible = flying end
+        if not flying and State.Movement and State.Movement.Vertical ~= 0 then State.Movement.Vertical = 0 end
         local fireText = item and item.Name == "Knife" and "Stab" or "Fire"
         if fire.Text ~= fireText then fire.Text = fireText end
         throw.Visible = item ~= nil and item.Name == "Knife"
@@ -25379,7 +25430,8 @@ local createMobileUI = function(C)
                 if record.Charging or (record.StabbingUntil or 0)>os.clock() then pendingWeapon=true; break end
             end
             emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
-                and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge) or false
+                and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge
+                    or State.Config.Fly or State.Config.Noclip or State.Config.SpeedBoost or State.Config.JumpBoost or State.Config.InfiniteJump) or false
         end
         if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end
         if fling and mobile.DownwardContactToggle and mobile.DownwardContactToggle.Value ~= (fling.Mode == "Downward") then mobile.DownwardContactToggle:Set(fling.Mode == "Downward",false) end

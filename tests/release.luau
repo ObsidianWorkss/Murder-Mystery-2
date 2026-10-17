@@ -203,11 +203,17 @@ do
     check(#created==2 and created[1].Parent==root and hum.PlatformStand,"fly attaches movers and stands the humanoid")
     keys.Space=true; move.Step()
     check(created[1].Velocity.Y==50 and created[1].Velocity.X==0 and not move.Status:find("stopped"),"fly climbs at fly speed while Space is held")
+    keys.Space=nil; move.Vertical=-1; move.Step()
+    check(created[1].Velocity.Y==-50,"fly sinks while the mobile Down button is held")
+    move.Vertical=0; hum.Jump=true; move.Step()
+    check(created[1].Velocity.Y==50,"holding the jump button rises while flying")
+    hum.Jump=false; move.Vertical=1
     now+=1; move.JumpRequested()
     check(#states==2,"infinite jump stays off while flying")
     cfg.SpeedBoost,cfg.Noclip=true,true; move.Step(); move.StepNoclip()
     State.StopMovement()
-    check(created[1].Destroyed and created[2].Destroyed and not hum.PlatformStand,"stopping movement removes fly movers")
+    check(created[1].Destroyed and created[2].Destroyed and not hum.PlatformStand and move.Vertical==0,
+        "stopping movement removes fly movers and releases the Up/Down hold")
     check(not (cfg.SpeedBoost or cfg.JumpBoost or cfg.InfiniteJump or cfg.Noclip or cfg.Fly) and hum.WalkSpeed==16 and head.CanCollide,
         "stopping movement turns every assist off and restores the character")
 end
