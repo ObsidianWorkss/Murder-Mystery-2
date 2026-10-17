@@ -80,7 +80,7 @@ local function fixture()
         GetPassthrough=function() return f.Passthrough or {} end,
         ClearPath=function() return f.Clear end,
         SendGun=function(r,p,strict)
-            f.Attempts+=1; f.SentTarget=p; f.Strict=strict
+            f.Attempts+=1; f.RecordUsed=r; f.Preferred=p; f.Strict=strict
             if f.ThrowError then error("injected failure") end
             if f.Send then r.LastGun=f.Now else State.LastGunFeedback={Message="No timing-safe solution"} end
             return f.Send
@@ -113,11 +113,11 @@ do
     check(f.Attempts==0 and f.Bot.Status=="Turn on Gun aim","gun aim off blocks gun trigger")
     f.State.Config.MagicBullet=true
     f.Step()
-    check(f.Attempts==0 and f.Bot.Active,"first body sample arms but does not fire")
+    check(f.Attempts==1 and f.Bot.AimChecks==1,"ready gun immediately asks the manual aim-assist path for a shot")
     f.Hold(3)
-    check(f.Attempts==1 and f.Bot.Shots==1 and f.SentTarget==f.Target and f.Strict==true,
-        "steady murderer body hit sends once with strict target and honest counter")
-    check(f.RayPoint.X==220 and f.RayPoint.Y==160,"cursor coordinates use viewport without a GUI inset offset")
+    check(f.Attempts==1 and f.Bot.Shots==1 and f.RecordUsed==f.Record and f.Preferred==nil and f.Strict==nil,
+        "automatic gun passes the same record and arguments as a manual assisted click")
+    check(f.Rays==0,"gun does not require a separate cursor raycast")
     f.Hold(20)
     check(f.Attempts==1,"gun cannot spam while the crosshair stays on target")
     f.State.SetTriggerbot(false); f.State.SetTriggerbot(true); f.Hold()
@@ -129,10 +129,6 @@ end
 for _,case in ipairs({
     {"menu/chat/input suppression",function(f) f.Blocked=true end},
     {"local death or inactive round",function(f) f.Own.Alive=false end},
-    {"target death",function(f) f.Target.Alive=false end},
-    {"protected target",function(f) f.Target.Excluded=true end},
-    {"innocent crosshair target",function(f) f.Target.Role="Innocent" end},
-    {"unknown crosshair role",function(f) f.Target.Role="Unknown" end},
     {"own murderer role with gun",function(f) f.Own.Role="Murderer" end},
     {"unequipped gun",function(f) f.Unequipped=true end},
     {"tool disabled",function(f) f.Gun.Enabled=false end},
@@ -150,14 +146,6 @@ for _,case in ipairs({
     {"pending reply",function(f) f.State.PendingGun={{Item=f.Gun,SentAt=f.Now}} end},
     {"in-progress gun send",function(f) f.Record.GunSending=true end},
     {"missing camera",function(f) f.World.CurrentCamera=nil end},
-    {"cursor outside viewport",function(f) f.Cursor=vec(-1,60) end},
-    {"touch without mouse lock",function(f) f.Mode="Mobile" end},
-    {"empty crosshair",function(f) f.Hit=nil end},
-    {"own body",function(f) f.Hit=f.Own.Character.Head end},
-    {"visible wall",function(f) f.Hit=f.Instance("Wall","BasePart",f.World) end},
-    {"avatar hat",function(f)
-        f.Hit=f.Instance("Handle","BasePart",f.Instance("Hat","Accessory",f.Target.Character))
-    end},
 }) do
     local f=fixture(); f.State.SetTriggerbot(true); case[2](f); f.Hold()
     check(f.Attempts==0,"trigger refuses "..case[1])
@@ -165,42 +153,44 @@ end
 
 do
     local f=fixture(); f.State.SetTriggerbot(true); f.State.Config.ConservativeGun=false
-    f.Send=false; f.Hold()
+    f.Send=false; f.Step()
     check(f.Attempts==1 and f.Bot.Shots==0 and f.Bot.LastShot==-math.huge and f.Bot.Status=="No timing-safe solution",
         "rejected shot preserves counter and exposes actual reason")
     f.Hold(4)
     check(f.Attempts==1,"failed predictions are throttled")
     f.Step(.2)
     check(f.Attempts==2,"failed prediction can retry without consuming a gun cooldown")
+    check(f.Bot.AimChecks==2 and f.Bot.LastAimCheck.Sent==false and f.Bot.LastAimCheck.Message=="No timing-safe solution",
+        "last assisted check remains available for diagnosing why no request was sent")
     check(f.State.Config.ConservativeGun==false,"trigger preserves conservative mode preference")
     f.Blocked=true; f.Hold(2)
     check(f.Bot.BeforePause=="No timing-safe solution","opening menu preserves the actual reason for a skipped shot")
 end
 
 do
-    local f=fixture(); f.State.SetTriggerbot(true); f.Step()
+    local f=fixture(); f.EnableKnife(); f.Step()
     f.Hit=nil; f.Step(); f.Hit=f.Target.Character.Head; f.Hold(2)
     check(f.Attempts==0,"loss of crosshair target cancels acquisition")
     f.Hold(2)
     check(f.Attempts==1,"reacquired target must remain under crosshair again")
-    f=fixture(); f.State.SetTriggerbot(true); f.Step(); f.Step(.5)
+    f=fixture(); f.EnableKnife(); f.Step(); f.Step(.5)
     check(f.Attempts==0,"slow frame cannot fire on a stale acquisition")
     f.Hold(3); check(f.Attempts==1,"fresh samples after frame stall can fire")
-    f=fixture(); f.State.SetTriggerbot(true); f.Step()
-    local replacement=f.MakePlayer("Replacement",5,"Murderer")
+    f=fixture(); f.EnableKnife(); f.Step()
+    local replacement=f.MakePlayer("Replacement",5,"Innocent")
     f.Target.Character=replacement.Character; f.Target.Character.Player=f.Target; f.Hit=f.Target.Character.Head
     f.Hold(2); check(f.Attempts==0,"target respawn resets acquisition")
     f.Hold(2); check(f.Attempts==1,"new target character needs fresh dwell")
 end
 
 do
-    local f=fixture(); f.State.SetTriggerbot(true); f.Step()
+    local f=fixture(); f.EnableKnife(); f.Step()
     f.Callbacks[f.UIS.WindowFocusReleased](); f.Hold()
     check(f.Attempts==0,"window focus loss prevents shots and cancels acquisition")
     f.Callbacks[f.UIS.WindowFocused](); f.Step()
     check(f.Attempts==0,"restoring focus requires fresh acquisition")
     f.Hold(3); check(f.Attempts==1,"focused window resumes after dwell")
-    f=fixture(); f.State.SetTriggerbot(true); f.Step()
+    f=fixture(); f.EnableKnife(); f.Step()
     local rays=f.Rays
     f.Step(.001); f.Step(.001)
     check(f.Rays==rays,"raycasts are capped at 30 Hz")
@@ -214,17 +204,17 @@ do
 end
 
 do
-    local f=fixture(); f.State.SetTriggerbot(true); f.Mode="Mobile"; f.Locked=true; f.Hold()
+    local f=fixture(); f.EnableKnife(); f.Mode="Mobile"; f.Locked=true; f.Hold()
     check(f.Attempts==1 and f.RayPoint.X==400 and f.RayPoint.Y==300,"touch mouse lock uses the native center crosshair")
-    f=fixture(); f.State.SetTriggerbot(true)
+    f=fixture(); f.EnableKnife()
     local transparent=f.Instance("Effect","BasePart",f.World); transparent.Transparency=1
     f.Path={transparent,f.Target.Character.Head}; f.Hold()
     check(f.Attempts==1 and table.find(f.Filter,transparent),"transparent effects are skipped like native aiming")
-    f=fixture(); f.State.SetTriggerbot(true)
+    f=fixture(); f.EnableKnife()
     local passthrough=f.Instance("Passthrough","BasePart",f.World)
     f.Passthrough={passthrough}; f.Path={passthrough,f.Target.Character.Head}; f.Hold()
     check(f.Attempts==1 and table.find(f.Filter,passthrough),"weapon passthrough tags are respected")
-    f=fixture(); f.State.SetTriggerbot(true); f.Path={}
+    f=fixture(); f.EnableKnife(); f.Path={}
     for i=1,9 do local part=f.Instance("Effect"..i,"BasePart",f.World); part.Transparency=1; table.insert(f.Path,part) end
     table.insert(f.Path,f.Target.Character.Head); f.Step()
     check(f.Rays==8 and f.Attempts==0,"transparency traversal is bounded and fails closed")
@@ -243,6 +233,16 @@ do
 end
 
 for _,case in ipairs({
+    {"target death",function(f) f.Target.Alive=false end},
+    {"protected target",function(f) f.Target.Excluded=true end},
+    {"cursor outside viewport",function(f) f.Cursor=vec(-1,60) end},
+    {"touch without mouse lock",function(f) f.Mode="Mobile" end},
+    {"empty crosshair",function(f) f.Hit=nil end},
+    {"own body",function(f) f.Hit=f.Own.Character.Head end},
+    {"visible wall",function(f) f.Hit=f.Instance("Wall","BasePart",f.World) end},
+    {"avatar hat",function(f)
+        f.Hit=f.Instance("Handle","BasePart",f.Instance("Hat","Accessory",f.Target.Character))
+    end},
     {"out-of-range opponent despite extended aura preference",function(f)
         f.State.Config.AuraExtendedReach=true; f.Target.Character.HumanoidRootPart.Position=vec(7)
     end},
@@ -256,13 +256,26 @@ for _,case in ipairs({
     check(f.Attempts==0 and f.Contacts==0,"knife trigger refuses "..case[1])
 end
 
+for _,case in ipairs({
+    {"cursor on empty space",function(f) f.Hit=nil end},
+    {"cursor on a wall",function(f) f.Hit=f.Instance("Wall","BasePart",f.World) end},
+    {"cursor on an innocent",function(f) f.Hit=f.MakePlayer("Innocent",6,"Innocent").Character.Head end},
+    {"cursor on own body",function(f) f.Hit=f.Own.Character.Head end},
+    {"cursor outside viewport",function(f) f.Cursor=vec(-1,60) end},
+    {"touch input without mouse lock",function(f) f.Mode="Mobile" end},
+}) do
+    local f=fixture(); f.State.SetTriggerbot(true); case[2](f); f.Step()
+    check(f.Attempts==1 and f.Bot.Shots==1 and f.Preferred==nil and f.Strict==nil and f.Rays==0,
+        "gun uses assisted targeting with "..case[1])
+end
+
 do
     local f=fixture(); f.State.SetTriggerbot(true); f.State.SetKnifeTriggerbot(true)
     installEmergencyStop({State=f.State})
     check(f.State.EmergencyStop() and not f.State.Config.Triggerbot and not f.State.Config.KnifeTriggerbot,
         "real emergency stop disables both trigger modes")
     f.Hold(); check(f.Attempts==0 and f.Rays==0,"emergency stop leaves no queued shot")
-    f=fixture(); f.State.SetTriggerbot(true); f.Step(); f.State.Running=false; f.Hold()
+    f=fixture(); f.EnableKnife(); f.Step(); f.State.Running=false; f.Hold()
     check(f.Attempts==0 and not f.Bot.Active,"unloaded state cannot finish an armed shot")
 end
 print(passed.." triggerbot assertions passed")

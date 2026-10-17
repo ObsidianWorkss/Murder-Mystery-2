@@ -1,5 +1,13 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.20
+
+- Luau 0.739 compiles both scripts; 58 combat, 118 release, and 80 triggerbot assertions pass (256 total).
+- Regressions verify the gun passes the identical record and arguments as a manual assisted click, bypasses cursor/body acquisition, works with the cursor on empty space, walls, innocent players or your own body, and does not require mouse lock on mobile. These cases use a recorded assisted-send callback; the existing combat suite separately exercises the extracted `sendGun` checks.
+- Failed aim checks remain throttled and retain their reason without counting a sent shot. Existing knife crosshair, focus, range and obstruction tests remain; gun cooldown and pause guards remain covered.
+- Read-only rc.19 live diagnostics showed Gun aim and both triggers enabled, zero trigger sends and zero skipped gun shots, with two manual assisted requests. This is consistent with an early trigger gate preventing attempts, but does not reconstruct the exact reported shot angle. The gun crosshair gate has now been removed as requested. Live combat accuracy remains unverified.
+- Loaded rc.20 in the connected MM2 client and verified running state, menu readiness, the T bind, aim-check diagnostics, and both modes off. The local character had no gun equipped, so this startup check did not send a combat request.
+
 ## Release candidate 1.0.0-rc.19
 
 - Adds four extracted-source keybind assertions: T is the universal default in the Combat group, enables both trigger modes, disables both, and stops a mixed state. Resetting keybinds restores T. Existing input guards and independent binds are exercised by the release suite.

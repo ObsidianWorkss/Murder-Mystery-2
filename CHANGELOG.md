@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.20 — 2026-10-17
+
+- Gun triggerbot now calls the exact `sendGun(record)` path used by a manual assisted click. It finds the known murderer and uses fresh prediction, timing and path checks, without requiring a direct cursor hit or crosshair dwell. Clear offscreen assisted shots work the same way as manual Gun aim.
+- Removed the extra gun crosshair gate that could prevent an assisted shot from ever being attempted. A ready gun checks for a shot at most four times per second, preserving tool readiness, the 3-second request interval, unresolved-feedback handling, and existing pause conditions. Knife triggerbot still uses its crosshair and range checks.
+- Added aim-check counts and a retained last-check reason to the status cards, so a pause or round change does not hide why a gun shot was rejected. Universal T still toggles both modes.
+
 ## 1.0.0-rc.19 — 2026-10-17
 
 - **T** now toggles gun and knife triggerbots together. If either mode is on, T switches both off; otherwise it switches both on. The equipped weapon and role determine which mode runs.

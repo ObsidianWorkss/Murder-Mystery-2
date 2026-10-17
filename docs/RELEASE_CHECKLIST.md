@@ -1,18 +1,18 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.19**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.20**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind and triggerbot regression suites pass locally (251 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind and triggerbot regression suites pass locally (256 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
 
 - [x] PC triggerbot smoke check: rc.18 running, both status cards present, independent menu setters, unchanged master aim, unbound keys, both modes off, and no trigger requests sent.
-- [ ] Triggerbot: PC cursor and mobile mouse-lock body acquisition, gun and knife cooldowns, independent toggles, status cards, pause/resume, emergency stop, and reload-off behavior. Record sent requests separately from matched server feedback and observed eliminations.
+- [ ] Triggerbot: assisted gun acquisition from clear angles including offscreen, knife crosshair and mobile mouse-lock acquisition, gun and knife cooldowns, independent toggles, status cards, pause/resume, emergency stop, and reload-off behavior. Record sent requests separately from matched server feedback and observed eliminations.
 - [ ] First launch: valid key, invalid key, cancel, and saved-key behavior.
 - [ ] Toasts: every toggle, key press, role start, gun pickup, elimination and gun drop shows one message; the Toasts setting silences them.
 - [ ] Keybinds: default keys act on PC, nothing fires while chatting or with the menu open, rebinding and Backspace work, the card is hidden on mobile.

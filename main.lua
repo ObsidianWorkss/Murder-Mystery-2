@@ -17742,7 +17742,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.19"
+State.Version = "1.0.0-rc.20"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -24529,12 +24529,12 @@ end
 
 
 do
--- Only the current crosshair hit can arm an attack. No saved mouse.Target, nearest-player
--- fallback, delayed shots or changes to the user's other combat settings.
+-- Guns use the same fresh aim-assisted shot path as a manual click. Knives keep
+-- crosshair acquisition and normal stab reach. No delayed shots or setting changes.
 local installTriggerbot=function(C)
     local State,player,UIS,world=C.State,C.Player,C.UIS,C.World
     local clock=C.Clock or os.clock
-    local bot={Active=false,Status="Off",Shots=0,Stabs=0,LastShot=-math.huge}
+    local bot={Active=false,Status="Off",Shots=0,Stabs=0,AimChecks=0,LastShot=-math.huge}
     State.Triggerbot=bot
     State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false -- explicit opt-in after every reload
     local focused=true
@@ -24553,7 +24553,7 @@ local installTriggerbot=function(C)
     end
     function State.SetTriggerbot(enabled)
         State.Config.Triggerbot=enabled==true
-        reset(enabled and "Waiting for crosshair target" or "Gun triggerbot off")
+        reset(enabled and "Waiting for an assisted gun shot" or "Gun triggerbot off")
         return true
     end
     function State.SetKnifeTriggerbot(enabled)
@@ -24645,6 +24645,24 @@ local installTriggerbot=function(C)
             for _,pending in ipairs(State.PendingGun or {}) do
                 if pending.Item==item and now-pending.SentAt<3 then reset("Waiting for shot feedback"); return end
             end
+            if not world.CurrentCamera then reset("Waiting for camera"); return end
+            if now<nextAttempt then return end
+            nextAttempt=now+.25
+            bot.AimChecks+=1
+            -- Exactly the same call used by this gun's Activated handler. It finds
+            -- the murderer, predicts a body point, and rechecks timing and paths.
+            -- The cursor can be off target; no stale preview is used to send shots.
+            local sent=C.SendGun(record)
+            if sent==true then
+                bot.Shots+=1
+                bot.LastShot=now
+                reset("Assisted shot sent; outcome is server-controlled")
+            else
+                reset(sent==false and State.LastGunFeedback and State.LastGunFeedback.Message
+                    or "Waiting for gun readiness")
+            end
+            bot.LastAimCheck={At=now,Sent=sent==true,Message=bot.Status}
+            return
         elseif kind=="Knife" then
             if not State.Config.KnifeTriggerbot then reset("Knife triggerbot off"); return end
             if C.Role(player)~="Murderer" then reset("Waiting for murderer"); return end
@@ -24660,9 +24678,7 @@ local installTriggerbot=function(C)
             reset(reason or "Aim at a clear opponent's body"); return
         end
         local role=C.Role(target)
-        if (kind=="Gun" and role~="Murderer") or (kind=="Knife" and role=="Murderer") then
-            reset(kind=="Gun" and "Aim at the murderer" or "Aim at an opponent"); return
-        end
+        if role=="Murderer" then reset("Aim at an opponent"); return end
         local character=target.Character
         if not character or part.Parent~=character then reset("Target changed"); return end
         if kind=="Knife" then
@@ -24682,19 +24698,13 @@ local installTriggerbot=function(C)
         if now-since<.1 then bot.Status="Steady crosshair on target"; return end
         if now<nextAttempt then return end
         nextAttempt=now+.25 -- failed prediction is retried at most four times a second
-        local sent
-        if kind=="Gun" then
-            sent=C.SendGun(record,target,true) -- never substitute another murderer
-            if sent==true then bot.Shots+=1; bot.LastShot=now end
-        else
-            sent=C.StabKnife(record,target)
-            if sent==true then
-                bot.Stabs+=1
-                C.ReportContact(record,part,"Triggerbot")
-            end
+        local sent=C.StabKnife(record,target)
+        if sent==true then
+            bot.Stabs+=1
+            C.ReportContact(record,part,"Triggerbot")
         end
-        if sent==true then reset(kind=="Gun" and "Shot sent; outcome is server-controlled" or "Stab sent; outcome is server-controlled")
-        else bot.Status=kind=="Gun" and State.LastGunFeedback and State.LastGunFeedback.Message or "Waiting for a valid attack" end
+        if sent==true then reset("Stab sent; outcome is server-controlled")
+        else bot.Status="Waiting for a valid stab" end
     end
     C.Connect(UIS.WindowFocusReleased,function()
         focused=false
@@ -24702,7 +24712,7 @@ local installTriggerbot=function(C)
     end)
     C.Connect(UIS.WindowFocused,function()
         focused=true
-        reset((State.Config.Triggerbot or State.Config.KnifeTriggerbot) and "Waiting for crosshair target" or "Off")
+        reset((State.Config.Triggerbot or State.Config.KnifeTriggerbot) and "Waiting for an assisted shot or knife target" or "Off")
     end)
     C.Connect(C.Heartbeat,function()
         local ok,message=pcall(bot.Step)
@@ -25175,7 +25185,7 @@ local createMobileUI = function(C)
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
-    option(combat,"Gun triggerbot","Triggerbot","Auto-fire at the murderer under your crosshair. Requires Aim assist and Gun aim. Off on reload.")
+    option(combat,"Gun triggerbot","Triggerbot","Auto-fire whenever Gun aim finds a clear assisted shot at the murderer. Requires Aim assist and Gun aim. Off on reload.")
     mobile.TriggerbotStatus=combat:Paragraph({Title="Triggerbot status",Desc="Off"})
     option(knife,"Knife triggerbot","KnifeTriggerbot","Auto-stab a clear opponent under your crosshair within 6.5 studs. Off on reload.")
     mobile.KnifeTriggerbotStatus=knife:Paragraph({Title="Triggerbot status",Desc="Off"})
@@ -25588,7 +25598,8 @@ local createMobileUI = function(C)
         updateDescription(mobile.OverviewStatus,"Overview",session)
         if State.Triggerbot then
             local bot=State.Triggerbot
-            local detail=bot.Status..("\n%d gun requests · %d stab requests (not confirmed kills)"):format(bot.Shots,bot.Stabs)
+            local detail=bot.Status..("\n%d aim checks · %d gun requests · %d stab requests (not confirmed kills)"):format(bot.AimChecks,bot.Shots,bot.Stabs)
+            if bot.LastAimCheck then detail..="\nLast gun check: "..bot.LastAimCheck.Message end
             if bot.BeforePause then detail..="\nBefore pause: "..bot.BeforePause end
             updateDescription(mobile.TriggerbotStatus,"GunTriggerbot",detail)
             updateDescription(mobile.KnifeTriggerbotStatus,"KnifeTriggerbot",detail)
