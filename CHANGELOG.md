@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.17 — 2026-10-17
+
+### Removed
+
+- The triggerbot and knife triggerbot added in rc.13 and rc.14: their module, menu toggles, the T key, the Combat key entries, the emergency-stop and unload hooks, the support-report flags and their tests. With it on, it fired the gun on its own and most of those shots missed. Normal gun aim is unchanged; its code is the same as rc.1.
+
 ## 1.0.0-rc.16 — 2026-10-17
 
 ### Keybinds for everything

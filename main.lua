@@ -17708,7 +17708,7 @@ local State = {
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
-        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, Triggerbot = false, KnifeTriggerbot = false},
+        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
         GunReplies = 0, GunTargetHits = 0, GunMisses = 0, GunUnconfirmed = 0,
@@ -17741,7 +17741,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.16"
+State.Version = "1.0.0-rc.17"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17752,7 +17752,7 @@ function State.GetSupportSnapshot()
         if connection.Connected ~= false then connections += 1 end
     end
     local flags = {}
-    for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "Triggerbot", "KnifeTriggerbot", "KnifeAim", "KnifeAllDirections",
+    for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "KnifeAim", "KnifeAllDirections",
         "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura",
         "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly", "XRay"}) do
         flags[name] = State.Config[name] == true
@@ -21590,7 +21590,6 @@ function State.Destroy()
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
-    if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
     if State.FlushAuraTouches and not State.FlushAuraTouches() then
         warn("Unload stopped: blade touch cleanup incomplete; retry unload")
         return false
@@ -23347,7 +23346,6 @@ local installEmergencyStop = function(C)
             local ok,message=State.StopKillAura("Emergency stop")
             if ok==false then error(message or "Aura cleanup failed") end
         end end)
-        run("triggerbot",function() if State.StopTriggerbot then State.StopTriggerbot("Emergency stop") end end)
         run("auto attack",function() if State.StopAutoAttack then State.StopAutoAttack("Emergency stop") end end)
         -- End dodge before fling return so a dodge restore cannot replace that return.
         State.Config.AutoKnifeDodge = false
@@ -24528,225 +24526,6 @@ end
 
 
 do
--- Triggerbot: automatically fires when aiming at the murderer with a ready gun,
--- or swings your knife when aiming at a player in reach while you are murderer.
-local installTriggerbot=function(C)
-    local State,player,Players=C.State,C.Player,C.Players
-    local clock=C.Clock or os.clock
-    local focused=true
-    local bot={Enabled=false,Active=false,Status="Off",Shots=0,LastShot=-math.huge,TargetName=nil}
-    State.Triggerbot=bot
-    State.Config.Triggerbot=false
-    State.Config.KnifeTriggerbot=false
-    local function refresh()
-        if State.MobileUI and State.MobileUI.Refresh then pcall(State.MobileUI.Refresh) end
-    end
-    function State.StopTriggerbot(message)
-        bot.Enabled,State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false,false
-        bot.Active=false
-        bot.TargetName=nil
-        bot.Status=message or "Off"
-        refresh()
-        return true,bot.Status
-    end
-    function State.SetTriggerbot(enabled)
-        if not enabled then return State.StopTriggerbot() end
-        if not State.Running then State.StopTriggerbot("Script is unloaded"); return false,bot.Status end
-        if bot.Enabled and State.Config.Triggerbot and State.Config.KnifeTriggerbot then return true,bot.Status end
-        bot.Enabled,State.Config.Triggerbot,State.Config.KnifeTriggerbot=true,true,true
-        State.Config.Aim=true
-        State.Config.MagicBullet=true
-        if C.SetMagicBullet then pcall(C.SetMagicBullet,true) end
-        bot.Status="On  ·  waiting for target"
-        refresh()
-        return true,bot.Status
-    end
-    function State.SetKnifeTriggerbot(enabled)
-        State.Config.KnifeTriggerbot=enabled==true
-        if State.Config.KnifeTriggerbot then
-            bot.Enabled=true
-            bot.Status="On  ·  waiting for target"
-        elseif not State.Config.Triggerbot then
-            State.StopTriggerbot()
-        end
-        refresh()
-        return true,bot.Status
-    end
-    local function getAimTarget()
-        if C.GetTarget then return C.GetTarget() end
-        local mouse=player and player.GetMouse and player:GetMouse()
-        local targetPart=mouse and mouse.Target
-        if targetPart then
-            local targetChar=targetPart:FindFirstAncestorOfClass("Model")
-            local targetPlayer=targetChar and Players:GetPlayerFromCharacter(targetChar)
-            if targetPlayer and targetPlayer~=player then
-                return targetPlayer,targetChar,targetPart
-            end
-        end
-        local camera=C.Workspace and C.Workspace.CurrentCamera or workspace.CurrentCamera
-        if camera and C.UIS and C.UIS.GetMouseLocation then
-            local cursor=C.UIS:GetMouseLocation()
-            if not cursor or (C.TouchInput and C.TouchInput()) then
-                cursor=camera.ViewportSize/2
-            end
-            local unitRay=camera:ViewportPointToRay(cursor.X,cursor.Y)
-            local params=RaycastParams.new()
-            params.FilterType=Enum.RaycastFilterType.Exclude
-            params.IgnoreWater=true
-            params.FilterDescendantsInstances={player.Character}
-            local result=workspace:Raycast(unitRay.Origin,unitRay.Direction*1000,params)
-            if result and result.Instance then
-                local targetChar=result.Instance:FindFirstAncestorOfClass("Model")
-                local targetPlayer=targetChar and Players:GetPlayerFromCharacter(targetChar)
-                if targetPlayer and targetPlayer~=player then
-                    return targetPlayer,targetChar,result.Instance
-                end
-            end
-        end
-        return nil
-    end
-    function bot.Step()
-        if not State.Running then return end
-        if (not State.Config.Triggerbot and not State.Config.KnifeTriggerbot) or not bot.Enabled then
-            if bot.Active then State.StopTriggerbot() end
-            return
-        end
-        local char=player.Character
-        local hum=char and char:FindFirstChildOfClass("Humanoid")
-        local ownRoot=char and char:FindFirstChild("HumanoidRootPart")
-        if not char or not hum or hum.Health<=0 or not ownRoot or not C.IsAlive(player) then
-            bot.Status="Off  ·  character unavailable"
-            return
-        end
-        if not focused or (C.InputBlocked and C.InputBlocked()) then
-            bot.Status="Paused  ·  menu or chat open"
-            return
-        end
-        if State.Invis and (State.Invis.Busy or State.Invis.Active) then
-            bot.Status="Paused while invisible"
-            return
-        end
-        if State.Fling and State.Fling.Active then
-            bot.Status="Paused while flinging"
-            return
-        end
-        local item,kind=C.EquippedWeapon()
-        if not item or (kind~="Gun" and kind~="Knife") or item.Parent~=char then
-            bot.Status="Waiting for weapon"
-            return
-        end
-        local isKnife=(kind=="Knife")
-        local isGun=(kind=="Gun")
-        if isGun and not State.Config.Triggerbot then
-            return
-        end
-        if isKnife then
-            if not State.Config.KnifeTriggerbot and not State.Config.Triggerbot then
-                return
-            end
-            if C.RoleFor(player)~="Murderer" then
-                return
-            end
-        end
-        local record=State.WeaponHandlers and State.WeaponHandlers[item]
-        if not record then
-            bot.Status="Weapon unavailable"
-            return
-        end
-        bot.Active=true
-
-        if isGun then
-            if not item.Enabled then
-                bot.Status="Gun reloading"
-                return
-            end
-            if clock()-bot.LastShot<0.3 then return end
-            local targetPlayer,targetChar=getAimTarget()
-            if not targetPlayer or not targetChar or not C.IsAlive(targetPlayer) then
-                bot.Status="Ready  ·  aim at murderer"
-                return
-            end
-            if State.IsPlayerExcluded(targetPlayer) then
-                bot.Status="Target protected"
-                return
-            end
-            if C.RoleFor(targetPlayer)~="Murderer" then
-                bot.Status="Aiming at innocent"
-                return
-            end
-            bot.LastShot=clock()
-            bot.Shots+=1
-            bot.TargetName=targetPlayer.Name
-            bot.Status="Fired  ·  @"..targetPlayer.Name
-            if C.SendGun then C.SendGun(record,targetPlayer) end
-        elseif isKnife then
-            if record.Charging then
-                bot.Status="Paused for throw"
-                return
-            end
-            if clock()-bot.LastShot<0.85 then return end
-            if record.LastStab and clock()-record.LastStab<0.85 then return end
-            local targetPlayer,targetChar,targetPart=getAimTarget()
-            if not targetPlayer or not targetChar or not C.IsAlive(targetPlayer) then
-                bot.Status="Ready  ·  aim at player"
-                return
-            end
-            if State.IsPlayerExcluded(targetPlayer) then
-                bot.Status="Target protected"
-                return
-            end
-            if C.RoleFor(targetPlayer)=="Murderer" then
-                bot.Status="Aiming at murderer"
-                return
-            end
-            local targetRoot=targetChar:FindFirstChild("HumanoidRootPart")
-            local reach=C.GetKillAuraRange and C.GetKillAuraRange() or 6.5
-            local dist=targetRoot and (targetRoot.Position-ownRoot.Position).Magnitude
-            if not dist or dist>reach then
-                bot.Status="Target out of reach"
-                return
-            end
-            if C.ClearPath and not C.ClearPath(ownRoot.Position,targetRoot.Position,targetChar) then
-                bot.Status="Target obstructed"
-                return
-            end
-            bot.LastShot=clock()
-            bot.Shots+=1
-            bot.TargetName=targetPlayer.Name
-            bot.Status="Swung  ·  @"..targetPlayer.Name
-            if C.StabKnife then C.StabKnife(record,targetPlayer,targetPart or targetRoot) end
-        end
-    end
-    if C.RunService and C.RunService.Heartbeat then C.Connect(C.RunService.Heartbeat,bot.Step) end
-    if player and player.CharacterRemoving then C.Connect(player.CharacterRemoving,function() State.StopTriggerbot("Off  ·  respawning") end) end
-    if C.UIS and C.UIS.WindowFocusReleased then
-        C.Connect(C.UIS.WindowFocusReleased,function() focused=false; if bot.Enabled then bot.Status="Paused  ·  window unfocused" end end)
-    end
-    if C.UIS and C.UIS.WindowFocused then
-        C.Connect(C.UIS.WindowFocused,function() focused=true end)
-    end
-    return bot
-end
-
-installTriggerbot({State=State,Player=player,Players=Players,Workspace=workspace,UIS=UIS,
-    RunService=RunService,Connect=connect,RoleFor=roleFor,IsAlive=alive,
-    EquippedWeapon=equippedWeapon,SendGun=function(record,target) sendGun(record,target) end,
-    StabKnife=function(record,target,part)
-        if not ready(record) then return false end
-        State.LastKnifeInput={Action="Stab"}
-        local ok=stabKnife(record,target)
-        if ok and part then
-            reportStabContact(record,part,"TriggerbotKnife")
-        end
-        return ok
-    end,
-    ClearPath=clearPath,
-    GetKillAuraRange=function() return State.GetKillAuraRange and State.GetKillAuraRange() or 6.5 end,
-    TouchInput=touchInput,InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end})
-end
-
-
-do
 -- PC keybinds. A key only acts while you play: never while typing (chat included), with the menu open,
 -- or in the mobile layout. Keys the game or this script already use cannot be bound.
 local installKeybinds=function(C)
@@ -24774,14 +24553,6 @@ local installKeybinds=function(C)
     local actions={
         {Id="Aim",Title="Aim assist",Default="F6",Run=function() flip("Aim"); C.RefreshAim(); C.SyncWeapons(); return cfg.Aim end},
         {Id="MagicBullet",Title="Gun aim",Default="F7",Run=function() State.SetMagicBullet(not cfg.MagicBullet); return cfg.MagicBullet end},
-        {Id="Triggerbot",Title="Triggerbot",Default="T",Run=function()
-            if State.SetTriggerbot then
-                local ok,message=State.SetTriggerbot(not cfg.Triggerbot)
-                if ok==false then return nil,tostring(message) end
-                return cfg.Triggerbot
-            end
-            return flip("Triggerbot")
-        end},
         {Id="KillAura",Title="Kill aura",Default="K",Run=function()
             local ok,message=State.SetKillAura(not cfg.KillAura)
             if ok==false then return nil,tostring(message),true end
@@ -24808,7 +24579,7 @@ local installKeybinds=function(C)
     -- Every other menu toggle and action can have a key too; they start unbound.
     for _,entry in ipairs({
         {"Combat","ConservativeGun","Conservative gun shots"},{"Combat","TargetContinuity","Stable target choice"},
-        {"Combat","KnifeTriggerbot","Knife triggerbot"},{"Combat","KnifeAim","Knife throw prediction"},
+        {"Combat","KnifeAim","Knife throw prediction"},
         {"Combat","KnifeAllDirections","All-direction knife aim"},{"Combat","RequireClearKnifeTarget","Require clear throw target"},
         {"Combat","StabAssist","Clicked stab assist"},{"Combat","StabSweep","Stab sweep"},
         {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
@@ -24846,7 +24617,7 @@ local installKeybinds=function(C)
     -- The menu and emergency-stop keys are bound by the menu itself; they can move but never be cleared.
     table.insert(actions,1,{Id="Menu",Title="Open / close menu",Default="RightShift",Group="Menu",Special=true})
     table.insert(actions,2,{Id="Stop",Title="Emergency stop",Default="End",Group="Menu",Special=true})
-    local groupOf={Aim="Combat",MagicBullet="Combat",Triggerbot="Combat",KillAura="Combat",ESP="Visuals",XRay="Visuals",
+    local groupOf={Aim="Combat",MagicBullet="Combat",KillAura="Combat",ESP="Visuals",XRay="Visuals",
         Fly="Movement",Noclip="Movement",SpeedBoost="Movement",JumpBoost="Movement",InfiniteJump="Movement",
         Invisibility="Movement",AnimationPack="Movement",TeleportMap="Movement",TeleportLobby="Movement",
         RevealRoles="Actions",RepairCamera="Actions"}
@@ -25168,8 +24939,6 @@ local createMobileUI = function(C)
         -- Setters that refuse return false and a reason; the toast shows that reason.
         local accepted,reason=true,nil
         if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
-        elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
-        elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
         elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
         elseif key == "AuraExtendedReach" then accepted,reason=State.SetAuraExtendedReach(enabled)
         elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
@@ -25204,10 +24973,8 @@ local createMobileUI = function(C)
     home:Paragraph({Title="MM2 Universal",Desc="v" .. State.Version})
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
-    option(combat, "Triggerbot", "Triggerbot", "Automatically fires when aiming at the murderer.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
     option(knife, "Knife throw prediction", "KnifeAim", "Leads throws to where players will be.")
-    option(knife, "Knife triggerbot", "KnifeTriggerbot", "Automatically swings when aiming at players in reach.")
     option(knife, "All-direction knife aim", "KnifeAllDirections", "Also target players off screen.")
     option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
@@ -26136,7 +25903,7 @@ local createMobileUI = function(C)
                 if record.Charging or (record.StabbingUntil or 0)>os.clock() then pendingWeapon=true; break end
             end
             emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
-                and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Triggerbot and State.Triggerbot.Enabled) or State.Config.Triggerbot or State.Config.KnifeTriggerbot or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge
+                and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge
                     or State.Config.Fly or State.Config.Noclip or State.Config.SpeedBoost or State.Config.JumpBoost or State.Config.InfiniteJump) or false
         end
         if fling and mobile.SpinContactToggle and mobile.SpinContactToggle.Value ~= (fling.Mode == "Spin") then mobile.SpinContactToggle:Set(fling.Mode == "Spin",false) end

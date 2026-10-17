@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.17
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 111 release assertions pass (169 total). The 18 triggerbot assertions were removed with the feature.
+- No file mentions the triggerbot any more; the diff from rc.16 only removes code apart from the shortened lines that listed it.
+- Live data before removal (rc.16, one server): 27 gun shots, 11 of them fired by the triggerbot; the server confirmed 2 hits and 6 misses, 19 had no matching reply; 13 shots were skipped by the conservative check; 238 FPS; 87 ms ping.
+
 ## Release candidate 1.0.0-rc.16
 
 - `main.lua` and `loader.lua` compile with Luau 0.739 (0.07 s, 1.07 MB bytecode); 58 combat and 129 release assertions pass (187 total) in 0.5 s.

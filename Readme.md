@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.16 · Release candidate · PC + mobile**
+**v1.0.0-rc.17 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -26,8 +26,6 @@ For clearer startup errors, execute the included [`loader.lua`](loader.lua) file
 | --- | --- |
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
 | Gun aim | Redirects a fired shot toward a clear body point on the known murderer, including targets outside the camera view. |
-| Triggerbot | Automatically fires when your crosshair or cursor aims at the murderer with a ready gun, or swings your knife at players in reach when murderer. Disabled by default. |
-| Knife triggerbot | Automatically swings your knife when aiming at an eligible player within reach while you are murderer. Disabled by default. |
 | Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
@@ -63,7 +61,7 @@ Settings → **Keybinds**, **Combat keys**, **Movement keys**, **Visual keys** a
 | --- | --- |
 | Aim assist / Gun aim / Invisibility / Repair camera | F6 / F7 / F8 / F10 |
 | Fly / Noclip / Speed boost / Infinite jump | F / N / G / J |
-| Kill aura / Player ESP / X-ray / Triggerbot | K / V / X / T |
+| Kill aura / Player ESP / X-ray | K / V / X |
 | Open menu / Emergency stop | Right Shift / End |
 | Every other toggle and action (jump boost, animation pack, reveal roles, teleports, fling actions, HUD and ESP options, unload and more) | Unbound |
 

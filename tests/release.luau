@@ -17,7 +17,7 @@ do
     local report=State.GetSupportSnapshot()
     check(report.Version==State.Version and report.Players==2,"support report identifies version and counts")
     check(report.WeaponHandlers==1 and report.Connections==2 and report.PendingShots==1,"support resource counts are accurate")
-    check(report.Settings.Aim and not report.Settings.KillAura and not report.Settings.Triggerbot,"support settings are explicit booleans")
+    check(report.Settings.Aim and not report.Settings.KillAura,"support settings are explicit booleans")
     check(report.Target==nil and report.Settings.ExcludedPlayers==nil and report.Stats.SecretKey==nil
         and report.Performance.TargetName==nil,"support report excludes identity and arbitrary secret fields")
     check(not report.Capabilities.Clipboard and not report.Capabilities.FileWrite,"missing optional capabilities are reported")
@@ -326,118 +326,17 @@ do
     check(State.Config.AnimationPack=="Mage","an unknown saved pack falls back to Mage")
 end
 do
-    local function vec(x,y,z)
-        return setmetatable({X=x,Y=y,Z=z,Magnitude=math.sqrt(x*x+y*y+z*z)},{
-            __sub=function(a,b) return vec(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
-        })
-    end
-    local now=0
-    local ownRoot={Position=vec(0,0,0)}
-    local char={hum={Health=100}}
-    function char:FindFirstChildOfClass(c) return c=="Humanoid" and self.hum or nil end
-    function char:FindFirstChild(n) if n=="HumanoidRootPart" then return ownRoot end return nil end
-    local me={Name="Me",UserId=1,Character=char}
-    local killerRoot={Position=vec(0,0,3)}
-    local killerChar={hum={Health=100}}
-    function killerChar:FindFirstChildOfClass(c) return c=="Humanoid" and self.hum or nil end
-    function killerChar:FindFirstChild(n) if n=="HumanoidRootPart" then return killerRoot end return nil end
-    local killer={Name="Killer",UserId=2,Character=killerChar}
-    local innoRoot={Position=vec(0,0,3)}
-    local innocentChar={hum={Health=100}}
-    function innocentChar:FindFirstChildOfClass(c) return c=="Humanoid" and self.hum or nil end
-    function innocentChar:FindFirstChild(n) if n=="HumanoidRootPart" then return innoRoot end return nil end
-    local innocent={Name="Inno",UserId=3,Character=innocentChar}
-    local roles={[me]="Sheriff",[killer]="Murderer",[innocent]="Innocent"}
-    local excluded={[killer]=false}
-    local alivePlayers={[me]=true,[killer]=true,[innocent]=true}
-    local gunTool={Name="Gun",Enabled=true,Parent=char}
-    local knifeTool={Name="Knife",Enabled=true,Parent=char}
-    local currentWeapon=gunTool
-    local sentGunShots={}
-    local sentKnifeStabs={}
-    local aimTarget=nil
-    local pathClear=true
-
-    local State={Running=true,Config={Triggerbot=false,KnifeTriggerbot=false,Aim=false,MagicBullet=false},
-        WeaponHandlers={[gunTool]={Kind="Gun",Item=gunTool},[knifeTool]={Kind="Knife",Item=knifeTool,Charging=false,LastStab=-math.huge}},
-        IsPlayerExcluded=function(p) return excluded[p]==true end,
-        SetMagicBullet=function(v) State.Config.MagicBullet=v end,
-        GetKillAuraRange=function() return 6.5 end}
-    local connections={}
-    local C={State=State,Player=me,Players={GetPlayers=function() return {me,killer,innocent} end},
-        Clock=function() return now end,Connect=function(s,cb) connections[s]=cb end,
-        RunService={Heartbeat="Heartbeat"},
-        RoleFor=function(p) return roles[p] end,
-        IsAlive=function(p) return alivePlayers[p]==true end,
-        EquippedWeapon=function() return currentWeapon,currentWeapon and currentWeapon.Name end,
-        SendGun=function(record,target) table.insert(sentGunShots,target); return true end,
-        StabKnife=function(record,target,part) table.insert(sentKnifeStabs,target); return true end,
-        GetTarget=function() return aimTarget,aimTarget and aimTarget.Character,aimTarget and aimTarget.Character:FindFirstChild("HumanoidRootPart") end,
-        ClearPath=function() return pathClear end,
-        GetKillAuraRange=function() return 6.5 end,
-        InputBlocked=function() return false end}
-    -- INSERT_TRIGGERBOT
-    installTriggerbot(C)
-    local bot=State.Triggerbot
-    check(connections.Heartbeat and not State.Config.Triggerbot and not State.Config.KnifeTriggerbot and bot.Status=="Off","triggerbot hooks heartbeat and starts off")
-    bot.Step()
-    check(#sentGunShots==0 and not bot.Active,"triggerbot stays off until enabled")
-    State.SetTriggerbot(true)
-    check(State.Config.Triggerbot and State.Config.KnifeTriggerbot and State.Config.Aim and State.Config.MagicBullet,"enabling triggerbot turns on aim and gun aim")
-    bot.Step()
-    check(bot.Status=="Ready  ·  aim at murderer" and #sentGunShots==0,"triggerbot waits for aim target")
-    aimTarget=innocent
-    bot.Step()
-    check(bot.Status=="Aiming at innocent" and #sentGunShots==0,"triggerbot ignores innocent players")
-    aimTarget=killer; excluded[killer]=true
-    bot.Step()
-    check(bot.Status=="Target protected" and #sentGunShots==0,"triggerbot skips protected murderer")
-    excluded[killer]=false
-    bot.Step()
-    check(#sentGunShots==1 and sentGunShots[1]==killer and bot.Shots==1 and bot.Status=="Fired  ·  @Killer","triggerbot fires at murderer")
-    bot.Step()
-    check(#sentGunShots==1,"triggerbot enforces cooldown between shots")
-    currentWeapon=nil
-    now+=1
-    bot.Step()
-    check(bot.Status=="Waiting for weapon","triggerbot reports missing gun")
-    currentWeapon=knifeTool
-    roles[me]="Murderer"
-    roles[killer]="Sheriff"
-    aimTarget=killer
-    now+=1
-    bot.Step()
-    check(#sentKnifeStabs==1 and sentKnifeStabs[1]==killer and bot.Status=="Swung  ·  @Killer","triggerbot swings knife at player in reach while murderer")
-    bot.Step()
-    check(#sentKnifeStabs==1,"triggerbot enforces knife swing cooldown")
-    now+=1
-    killerRoot.Position=vec(0,0,20)
-    bot.Step()
-    check(bot.Status=="Target out of reach" and #sentKnifeStabs==1,"triggerbot does not swing at players out of reach")
-    killerRoot.Position=vec(0,0,3)
-    pathClear=false
-    bot.Step()
-    check(bot.Status=="Target obstructed" and #sentKnifeStabs==1,"triggerbot does not swing at obstructed targets")
-    pathClear=true
-    State.StopTriggerbot()
-    check(not State.Config.Triggerbot and not State.Config.KnifeTriggerbot and bot.Status=="Off","stopping triggerbot clears knife triggerbot")
-    State.SetKnifeTriggerbot(true)
-    check(State.Config.KnifeTriggerbot and bot.Enabled,"setting knife triggerbot enables it")
-    State.StopTriggerbot()
-end
-do
     -- Keybinds: fake input objects and setters; nothing here touches a real game.
     local Enum={UserInputType={Keyboard="Keyboard",MouseButton1="MouseButton1"}}
     local focused,mode=nil,"PC"
     local UIS={InputBegan="InputBegan",GetFocusedTextBox=function() return focused end}
     local toasts,tones,refreshed,synced={},{},0,0
-    local cfg={Aim=true,MagicBullet=true,Triggerbot=false,KillAura=false,ESP=true,XRay=false,Fly=false,Noclip=false,SpeedBoost=false,
+    local cfg={Aim=true,MagicBullet=true,KillAura=false,ESP=true,XRay=false,Fly=false,Noclip=false,SpeedBoost=false,
         JumpBoost=false,InfiniteJump=false,Invisibility=false,MageAnimations=true,
         Keybinds={Fly="Q",Noclip="W",InfiniteJump="Q",ESP="H"}}
     local State={Running=true,Config=cfg,MobileUI={MenuOpen=false,Refresh=function() refreshed+=1 end,
         Toast=function(text,tone) table.insert(toasts,text); table.insert(tones,tone) end}}
     function State.SetMagicBullet(enabled) cfg.MagicBullet=enabled end
-    function State.SetTriggerbot(enabled) cfg.Triggerbot=enabled; return true end
     function State.SetKillAura(enabled) if enabled then return false,"Waiting until you are murderer" end cfg.KillAura=false; return true end
     function State.SetInvisibility(enabled) cfg.Invisibility=enabled end
     function State.SetMageAnimations(enabled) cfg.MageAnimations=enabled end
@@ -460,9 +359,6 @@ do
     check(press("Q")=="Fly on" and cfg.Fly and toasts[#toasts]=="Fly on" and tones[#tones]=="on" and refreshed==1,"a keybind toggles its feature and confirms it")
     check(press("Q")=="Fly off" and not cfg.Fly and tones[#tones]=="off","pressing again switches it off")
     check(press("F6")=="Aim assist off" and not cfg.Aim and synced==1,"aim assist keeps its F6 default")
-    check(cfg.Keybinds.Triggerbot=="T","triggerbot defaults to T")
-    check(press("T")=="Triggerbot on" and cfg.Triggerbot and toasts[#toasts]=="Triggerbot on","keybind toggles triggerbot")
-    check(press("T")=="Triggerbot off" and not cfg.Triggerbot,"pressing again switches triggerbot off")
     check(press("Q",true)==nil and not cfg.Fly,"keys the game already handled are ignored")
     focused={}
     check(press("Q")==nil,"keys are ignored while typing")
@@ -505,7 +401,7 @@ do
         cfg[key]=enabled
         return enabled
     end
-    local everything={"KnifeTriggerbot","StabSweep","GunESP","Toasts","AutoKnifeDodge","InvisibleKnife","TacticalGuide",
+    local everything={"StabSweep","GunESP","Toasts","AutoKnifeDodge","InvisibleKnife","TacticalGuide",
         "FlingMurderer","FlingAll","StopFling","RepairCharacter","Unload"}
     local listed=0
     for _,id in ipairs(everything) do if cfg.Keybinds[id]=="None" then listed+=1 end end
