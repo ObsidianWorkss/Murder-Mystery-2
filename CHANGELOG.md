@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.26 — 2026-10-17
+
+### Added
+
+- Anti-fling, on by default (Movement → Anti-fling, with a status line and an optional key). A player spinning faster than 60 rad/s or moving faster than 250 studs/s stops colliding with you on your screen for 3 seconds after their last spike; everyone else stays solid. If you are launched or spun anyway, your speed is zeroed and you are put back where you stood in the same frame, with a "Fling blocked" message. Thresholds sit above everything normal play and the script's own movement do (walk and fly speed, jump power, long falls). It pauses while your own fling or invisibility moves you and for half a second after, and unload or switching it off restores every collision it changed.
+
 ## 1.0.0-rc.25 — 2026-10-17
 
 ### Added

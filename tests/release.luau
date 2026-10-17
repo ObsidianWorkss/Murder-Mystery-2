@@ -623,4 +623,103 @@ do
     check(second.Config.ExcludedPlayers["123"]~=nil,"reset keeps protected players")
     check(writes==before+1,"reset is saved right away")
 end
+do
+    -- Anti-fling on fake characters: spinners lose collision with you, and a launch you did not make is undone.
+    local now=0
+    local vectorMeta={}
+    local function vector(x,y,z) return setmetatable({X=x,Y=y,Z=z,Magnitude=math.sqrt(x*x+y*y+z*z)},vectorMeta) end
+    local Vector3={new=vector,zero=vector(0,0,0)}
+    local workspace={Gravity=196.2}
+    local function part(collide) return {CanCollide=collide,Parent=true,IsA=function(_,class) return class=="BasePart" end} end
+    local function body(name)
+        local root=part(true); root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=vector(0,0,0),vector(0,0,0)
+        local parts={root,part(true),part(true),part(false)}
+        local hum={Health=100,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,UseJumpPower=true}
+        local char={}
+        function char:FindFirstChild(n) return n=="HumanoidRootPart" and root or nil end
+        function char:FindFirstChildOfClass(class) return class=="Humanoid" and hum or nil end
+        function char:GetDescendants() return parts end
+        return {Name=name,Character=char},root,parts,hum
+    end
+    local me,myRoot,_,myHum=body("me")
+    local friend,friendRoot,friendParts=body("friend")
+    local spinner,spinnerRoot,spinnerParts=body("spinner")
+    local toasts={}
+    local State={Running=true,Config={AntiFling=true,Fly=false,FlySpeed=50},
+        MobileUI={Toast=function(text) table.insert(toasts,text) end}}
+    local connections={}
+    local C={State=State,Player=me,Players={GetPlayers=function() return {me,friend,spinner} end},Clock=function() return now end,
+        RunService={Stepped="Stepped",Heartbeat="Heartbeat"},Connect=function(signal,callback) connections[signal]=callback end}
+    -- INSERT_ANTIFLING
+    installAntiFling(C)
+    local guard=State.AntiFling
+    local function frame(dt) now+=dt or 1/60; guard.StepShield(); guard.StepSelf() end
+    check(connections.Stepped==guard.StepShield and connections.Heartbeat==guard.StepSelf,"anti-fling runs before and after physics")
+    friendRoot.AssemblyLinearVelocity,friendRoot.AssemblyAngularVelocity=vector(16,0,0),vector(0,25,0)
+    frame()
+    check(friendParts[1].CanCollide and friendParts[2].CanCollide and guard.Shielded==0,"players moving and turning normally stay solid")
+    spinnerRoot.AssemblyAngularVelocity=vector(0,300,0)
+    frame()
+    check(not spinnerParts[1].CanCollide and not spinnerParts[2].CanCollide and guard.Shielded==1,"a spinning player passes through you")
+    check(friendParts[1].CanCollide,"other players stay solid while one is shielded")
+    spinnerRoot.AssemblyAngularVelocity=vector(0,0,0)
+    frame(2)
+    check(not spinnerParts[1].CanCollide,"the shield holds for a few seconds after the spin stops")
+    frame(1.5)
+    check(spinnerParts[1].CanCollide and spinnerParts[2].CanCollide and not spinnerParts[4].CanCollide and guard.Shielded==0,
+        "collisions come back afterwards and parts that never collided stay that way")
+    spinnerRoot.AssemblyLinearVelocity=vector(0,900,0)
+    frame()
+    check(not spinnerParts[1].CanCollide,"a player launched at fling speed is shielded too")
+    spinnerRoot.AssemblyLinearVelocity=vector(0,0,0)
+    -- Your own movement: walking, boosted speed, jumping, flying and long falls are never undone.
+    local start={"start"}
+    myRoot.CFrame=start
+    local function move(x,y,z) myRoot.AssemblyLinearVelocity=vector(x,y,z); frame() end
+    myRoot.AssemblyAngularVelocity=vector(0,25,0)
+    move(16,0,0); myRoot.AssemblyAngularVelocity=vector(0,0,0); myHum.WalkSpeed=60; move(60,0,0); myHum.JumpPower=150; move(0,150,0)
+    State.Config.Fly,State.Config.FlySpeed=true,120; move(120,0,0); move(0,120,0)
+    State.Config.Fly=false
+    for y=0,-700,-4 do move(0,y,0) end
+    check(guard.Stopped==0 and myRoot.AssemblyLinearVelocity.Y==-700,"walking, turning, speed boost, jumping, flying and falling are left alone")
+    move(0,0,0)
+    local safe={"safe"}
+    myRoot.CFrame=safe; frame()
+    myRoot.CFrame={"flung"}; move(900,40,0)
+    check(guard.Stopped==1 and myRoot.CFrame==safe and myRoot.AssemblyLinearVelocity.Magnitude==0,"a sideways launch is undone and you are put back")
+    check(#toasts==1 and toasts[1]=="Fling blocked","a toast says a fling was blocked")
+    myRoot.AssemblyAngularVelocity=vector(200,0,0); myRoot.CFrame={"tilted"}; frame()
+    check(guard.Stopped==2 and myRoot.CFrame==safe and myRoot.AssemblyAngularVelocity.Magnitude==0,"being spun is undone")
+    check(#toasts==1,"toasts are limited to one every few seconds")
+    move(0,-5,0); myRoot.CFrame={"slammed"}; move(0,-1100,0)
+    check(guard.Stopped==3 and myRoot.CFrame==safe,"a slam into the floor is undone")
+    check(guard.Status:find("3 flings stopped",1,true)~=nil,"the status counts stopped flings")
+    -- Your own fling and invisibility move you on purpose: anti-fling stands aside, then waits a moment.
+    State.Fling={Active=true}
+    spinnerRoot.AssemblyAngularVelocity=vector(0,300,0)
+    myRoot.CFrame={"flinging"}; move(0,0,1100)
+    check(guard.Stopped==3 and spinnerParts[1].CanCollide and guard.Status=="Paused while you fling",
+        "your own fling is never undone and can still hit players")
+    State.Fling.Active=false; spinnerRoot.AssemblyAngularVelocity=vector(0,0,0)
+    move(0,0,0); move(0,0,1100)
+    check(guard.Stopped==3,"anti-fling waits briefly after your fling ends")
+    now+=1; move(0,0,0); myRoot.CFrame={"late"}; move(0,0,1100)
+    check(guard.Stopped==4,"anti-fling resumes after the wait")
+    State.Invis={Active=true}; move(0,0,0); move(0,0,1100)
+    check(guard.Stopped==4 and guard.Status=="Paused while invisible","invisibility moves you without interference")
+    State.Invis=nil
+    -- Off and unload restore every collision it changed.
+    now+=1; spinnerRoot.AssemblyAngularVelocity=vector(0,300,0); frame()
+    check(not spinnerParts[1].CanCollide,"shield active before switching off")
+    State.Config.AntiFling=false; frame()
+    check(spinnerParts[1].CanCollide and spinnerParts[2].CanCollide and guard.Status=="Off","switching off restores collisions")
+    move(0,0,0); move(900,0,0)
+    check(guard.Stopped==4,"switched off, nothing is undone")
+    State.Config.AntiFling=true; frame()
+    check(not spinnerParts[1].CanCollide,"switching back on shields again")
+    State.StopAntiFling()
+    check(spinnerParts[1].CanCollide and spinnerParts[2].CanCollide,"unload restores collisions")
+    spinnerRoot.AssemblyAngularVelocity=nil; frame()
+    check(State.Config.AntiFling==false and guard.Status:find("Anti-fling stopped",1,true)==1,"an error switches anti-fling off and says why")
+end
 print(string.format("%d release assertions passed",passed))

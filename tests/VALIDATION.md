@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.26
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 80 combat, 170 release, 56 triggerbot and 76 aura assertions pass (382 total).
+- 24 new anti-fling assertions: normal and turning players stay solid, spinning or launched players are shielded and released after 3 s, walking, turning, speed boost, jumping, flying and a 700 studs/s fall are left alone, sideways launches, spins and floor slams are undone, your own fling and invisibility are never undone, the post-fling wait, off and unload restore collisions, and an error switches it off with its reason shown.
+- Live on an 8-player Murder Mystery 2 server: over 20 s of normal play, other players peaked at 19.7 rad/s spin and 65 studs/s, and your own turning reached 20 rad/s. The spin limits were raised from 40 to 60 rad/s after this, and nobody was shielded. A one-frame 400 studs/s sideways launch on your own character ended 0 studs from the start, and a 200 rad/s spin was stopped. Cost per frame: 48.6 µs for the shield scan and 16.4 µs for the launch guard. No console errors, one menu.
+- Not yet observed against a real flinger.
+
 ## Release candidate 1.0.0-rc.25
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 80 combat, 146 release, 56 triggerbot and 76 aura assertions pass (358 total).

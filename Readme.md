@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.25 · Release candidate · PC + mobile**
+**v1.0.0-rc.26 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -103,6 +103,7 @@ The layout follows the active input device. Touch-capable PCs can continue using
 
 - Menu tabs follow your role: Murderer, Sheriff and Innocent, then Fling, Movement, Visuals, Players and Settings.
 - Movement: speed boost, jump boost, infinite jump, noclip and fly (Space or jump to rise, Ctrl to sink; on mobile, hold the Up and Down buttons that appear while flying). Each switches off cleanly, pauses while you fling or are invisible, and stops with End. The server can still kick for movement it rejects.
+- Anti-fling (Movement → Anti-fling, on by default): a player spinning or moving at fling speed passes through you on your screen for a few seconds, and if you are launched or spun anyway, your speed is zeroed and you are put back where you stood in the same frame. Everyone else stays solid, so aim and dodge checks are unchanged. It stands aside while your own fling or invisibility moves you. Its key starts unbound (Settings → Movement keys).
 - Movement → Animations → **Animation pack** swaps your whole movement set (idle, walk, run, jump, fall, climb, swim) to one of 17 Roblox catalog packs: Astronaut, Bubbly, Cartoony, Elder, Knight, Levitation, Mage, Ninja, Pirate, Robot, Rthro, Stylish, Superhero, Toy, Vampire, Werewolf or Zombie. Needs an R15 avatar; your choice is kept on respawn and reload.
 - Visuals → X-ray makes walls and the map see-through on your screen only, with a strength slider. Players, tools, coins and the dropped gun stay solid, and switching it off restores the map.
 - Toasts: a short message with a colored dot confirms every toggle and key press and announces your role, picking up the gun, elimination and a dropped gun. Visuals → HUD & Alerts → Toasts turns them off.

@@ -1,12 +1,12 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.25**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.26**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura and saved-settings regression suites pass locally (358 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings and anti-fling regression suites pass locally (382 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
@@ -16,6 +16,8 @@ Version: **1.0.0-rc.25**. Do not describe this candidate as fully verified until
 - [x] PC triggerbot smoke check: rc.18 running, both status cards present, independent menu setters, unchanged master aim, unbound keys, both modes off, and no trigger requests sent.
 - [ ] Triggerbot: visible on-screen gun and knife acquisition without cursor contact, offscreen cancellation including camera turns, reaction scheduling, weapon cooldowns, independent toggles, pause/resume, emergency stop and reload-off behavior. Record sent requests separately from matched server feedback and observed eliminations.
 - [x] Saved settings: a change is written within 2 s, a fresh start loads it (slider, theme and keybind shown), and Reset settings restores defaults and saves them.
+- [x] Anti-fling: a one-frame 400 studs/s launch and a 200 rad/s spin on your own character are undone in the same frame; 20 s of normal play in an 8-player server shielded nobody.
+- [ ] Anti-fling against a real flinger (shield on their parts, no launch).
 - [ ] One copy: running the loader again or from a second executor leaves exactly one menu; X-ray and invisibility switch off cleanly afterwards.
 - [ ] First launch: valid key, invalid key, cancel, and saved-key behavior.
 - [ ] Toasts: every toggle, key press, role start, gun pickup, elimination and gun drop shows one message; the Toasts setting silences them.

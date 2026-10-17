@@ -17708,7 +17708,7 @@ local State = {
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
-        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight",
+        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
         Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
@@ -17837,7 +17837,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.25"
+State.Version = "1.0.0-rc.26"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17850,7 +17850,7 @@ function State.GetSupportSnapshot()
     local flags = {}
     for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "KnifeAim", "KnifeAllDirections",
         "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura", "Triggerbot", "KnifeTriggerbot",
-        "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly", "XRay"}) do
+        "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly", "XRay", "AntiFling"}) do
         flags[name] = State.Config[name] == true
     end
     local stats = {}
@@ -21717,6 +21717,7 @@ function State.Destroy()
     -- Only now can unload no longer be refused, so a refused unload keeps movement and X-ray as they were.
     if State.StopMovement then State.StopMovement() end
     if State.StopXRay then State.StopXRay() end
+    if State.StopAntiFling then State.StopAntiFling() end
     if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
     if not State.Running then return end
     State.Running = false
@@ -24656,6 +24657,131 @@ end
 
 
 do
+-- Anti-fling: nobody can fling you. A player spinning or moving at fling speed stops colliding with you on
+-- your screen (only them, so aim and dodge checks still see everyone else), and if you are launched anyway
+-- your speed is zeroed and you are put back where you stood. Pauses while your own fling or invisibility moves you.
+local installAntiFling=function(C)
+    local State,Players,player=C.State,C.Players,C.Player
+    local clock=C.Clock or os.clock
+    local cfg=State.Config
+    local guard={Status="Off",Stopped=0,Shielded=0}
+    State.AntiFling=guard
+    -- No walk, jump, fall or fly in this game or script comes near these; a fling goes far past them.
+    -- Normal play measured live: spins up to 20 rad/s (turning), other players up to 65 studs/s.
+    local otherSpin,otherSpeed,markSeconds,ownSpin,grace=60,250,3,60,.5
+    local marked=setmetatable({},{__mode="k"})
+    local collisions=setmetatable({},{__mode="k"})
+    local cache=setmetatable({},{__mode="k"})
+    local safe={}
+    local resumeAt,lastToast=-math.huge,-math.huge
+    local function paused()
+        if (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) then return "Paused while you fling" end
+        if State.Invis and (State.Invis.Active or State.Invis.Busy) then return "Paused while invisible" end
+        return nil
+    end
+    local function partsOf(char)
+        local now,entry=clock(),cache[char]
+        if not entry or now-entry.At>1 then
+            entry={At=now,Parts={}}
+            for _,item in ipairs(char:GetDescendants()) do if item:IsA("BasePart") then table.insert(entry.Parts,item) end end
+            cache[char]=entry
+        end
+        return entry.Parts
+    end
+    local function release(keep)
+        for part in pairs(collisions) do
+            if not (keep and keep[part]) then
+                if part.Parent then pcall(function() part.CanCollide=true end) end
+                collisions[part]=nil
+            end
+        end
+    end
+    local function stop(message)
+        release(nil); table.clear(marked); safe={}
+        guard.Shielded,guard.Status=0,message or "Off"
+    end
+    function State.StopAntiFling() stop("Off"); return true end
+    -- Before physics: players at fling speed lose collision with you for a few seconds after their last spike.
+    function guard.StepShield()
+        if not State.Running then return end
+        local ok,err=pcall(function()
+            local keep,count,now={},0,clock()
+            if cfg.AntiFling and not paused() then
+                for _,other in ipairs(Players:GetPlayers()) do
+                    local char=other~=player and other.Character
+                    local root=char and char:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        if root.AssemblyAngularVelocity.Magnitude>otherSpin or root.AssemblyLinearVelocity.Magnitude>otherSpeed then
+                            marked[other]=now+markSeconds
+                        end
+                        if (marked[other] or -math.huge)>now then
+                            count+=1
+                            for _,part in ipairs(partsOf(char)) do
+                                if part.CanCollide then collisions[part]=true; part.CanCollide=false end
+                                if collisions[part] then keep[part]=true end
+                            end
+                        else
+                            marked[other]=nil
+                        end
+                    end
+                end
+            end
+            release(keep)
+            guard.Shielded=count
+        end)
+        if not ok then cfg.AntiFling=false; guard.Error="Anti-fling stopped: "..tostring(err); stop(guard.Error) end
+    end
+    local function limits(hum)
+        local jump=hum.UseJumpPower and hum.JumpPower or math.sqrt(2*workspace.Gravity*hum.JumpHeight)
+        local fly=cfg.Fly and cfg.FlySpeed or 0
+        return math.max(150,hum.WalkSpeed*2.5,fly*1.5),math.max(200,jump*1.4,fly*1.5)
+    end
+    -- After physics: a launch you did not make is undone in the same frame.
+    function guard.StepSelf()
+        if not State.Running then return end
+        local ok,err=pcall(function()
+            local char=player.Character
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            -- A stop caused by an error keeps its reason on screen until anti-fling is switched on again.
+            if not cfg.AntiFling then safe={}; guard.Status=guard.Error or "Off"; return end
+            guard.Error=nil
+            if not (hum and root and hum.Health>0) then safe={}; guard.Status="On"; return end
+            local blocked=paused() or (hum.SeatPart and "Paused while seated")
+            if blocked then safe={}; resumeAt=clock()+grace; guard.Status=blocked; return end
+            local velocity,spin=root.AssemblyLinearVelocity,root.AssemblyAngularVelocity
+            local side,up=limits(hum)
+            local fallen=safe.Root==root and velocity.Y<-400 and velocity.Y-safe.VelocityY<-150
+            local launched=spin.Magnitude>ownSpin or Vector3.new(velocity.X,0,velocity.Z).Magnitude>side or velocity.Y>up or fallen
+            if launched then
+                if safe.Root==root and clock()>=resumeAt then
+                    root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+                    root.CFrame=safe.Frame
+                    guard.Stopped+=1
+                    if clock()-lastToast>=3 and State.MobileUI and State.MobileUI.Toast then
+                        lastToast=clock()
+                        State.MobileUI.Toast("Fling blocked","warn")
+                    end
+                end
+            else
+                safe.Root,safe.Frame,safe.VelocityY=root,root.CFrame,velocity.Y
+            end
+            local parts={"On"}
+            if guard.Shielded>0 then table.insert(parts,"shielding "..guard.Shielded..(guard.Shielded==1 and " player" or " players")) end
+            if guard.Stopped>0 then table.insert(parts,guard.Stopped..(guard.Stopped==1 and " fling stopped" or " flings stopped")) end
+            guard.Status=table.concat(parts,"  ·  ")
+        end)
+        if not ok then cfg.AntiFling=false; guard.Error="Anti-fling stopped: "..tostring(err); stop(guard.Error) end
+    end
+    C.Connect(C.RunService.Stepped,guard.StepShield)
+    C.Connect(C.RunService.Heartbeat,guard.StepSelf)
+end
+
+installAntiFling({State=State,Players=Players,Player=player,RunService=RunService,Connect=connect})
+end
+
+
+do
 -- X-ray: map parts turn see-through on your screen only (LocalTransparencyModifier never replicates).
 -- Players, tools, coins, the dropped gun and the script's own objects stay solid. Off restores every part.
 local installXRay=function(C)
@@ -24988,7 +25114,7 @@ local installKeybinds=function(C)
         {"Combat","StabAssist","Clicked stab assist"},{"Combat","StabSweep","Stab sweep"},
         {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
         {"Combat","AutoKnifeDodge","Dodge incoming knives"},{"Combat","AutoPickup","Auto gun pickup"},
-        {"Movement","InvisibleKnife","Knife while invisible"},
+        {"Movement","InvisibleKnife","Knife while invisible"},{"Movement","AntiFling","Anti-fling"},
         {"Visuals","GunESP","Dropped gun ESP"},{"Visuals","CombatHUD","Combat HUD"},{"Visuals","CompactHUD","Compact HUD"},
         {"Visuals","ThreatWarning","Nearby murderer warning"},{"Visuals","AimMarker","Gun aim marker"},
         {"Visuals","CleanVisuals","Clean role visuals"},{"Visuals","StableBodyESP","Stable body colors"},
@@ -25300,6 +25426,7 @@ local createMobileUI = function(C)
     local flingReports=page("FlingReports",flingPage,"Fling Reports","clipboard-list")
     local movementPage=tab("Movement","footprints")
     local motion=page("Movement",movementPage,"Movement","footprints",true)
+    page("AntiFling",movementPage,"Anti-fling","shield")
     local movement=page("Invisibility",movementPage,"Invisibility","ghost")
     local travel=page("Teleports",movementPage,"Teleports","map-pin")
     local animations=page("Animations",movementPage,"Animations","sparkles")
@@ -25490,6 +25617,11 @@ local createMobileUI = function(C)
         option(motion,"Fly","Fly","Fly where you look. Jump or Up to rise, Ctrl or Down to sink.")
         slider("Fly speed","FlySpeed",16,120)
         mobile.MovementStatus=motion:Paragraph({Title="Status",Desc=State.Movement and State.Movement.Status or "Off"})
+    end
+    if State.AntiFling then
+        local shield=mobile.Pages.AntiFling.Section
+        option(shield,"Anti-fling","AntiFling","Nobody can fling you. Players spinning into you pass through on your screen.")
+        mobile.AntiFlingStatus=shield:Paragraph({Title="Status",Desc=State.AntiFling.Status})
     end
     if State.StopXRay then
         option(xrayCard,"X-ray","XRay","See through walls and the map. Players and the gun stay solid.")
@@ -26397,6 +26529,7 @@ local createMobileUI = function(C)
             refresh()
         end
         if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
+        if State.AntiFling and mobile.AntiFlingStatus then updateDescription(mobile.AntiFlingStatus,"AntiFling",State.AntiFling.Status) end
         if mobile.PackPicker then
             -- Keep the picker honest when a pose, F9 or a respawn changes the active pack.
             local label=State.Config.MageAnimations and State.Config.AnimationPack or "Default"
