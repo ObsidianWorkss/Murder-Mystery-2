@@ -62,10 +62,10 @@ do
     check(f.Attempts==1 and f.Bot.Shots==1 and f.Bot.AimChecks==1,"ready gun reacts on the first active frame")
     check(f.RecordUsed==f.Record and f.Preferred==nil and f.Strict==false and f.ScreenOnly==true,
         "automatic gun always passes the screen-only firing policy")
-    f.Hold(15); check(f.Attempts==1,"fast reaction never bypasses gun cooldown")
+    f.Step(.1); check(f.Attempts==1,"fast reaction respects the bounded request interval")
     f.State.SetTriggerbot(false); f.State.SetTriggerbot(true); f.Step()
     check(f.Attempts==1,"toggle cannot reset gun cooldown")
-    f.Step(3); check(f.Attempts==2,"gun resumes when cooldown expires")
+    f.Step(.051); check(f.Attempts==2,"gun retries without the old three-second delay")
 end
 for _,case in ipairs({
     {"menu or text input",function(f) f.Blocked=true end},
@@ -88,7 +88,7 @@ for _,case in ipairs({
     {"gun send in progress",function(f) f.Record.GunSending=true end},
     {"missing camera",function(f) f.World.CurrentCamera=nil end},
 }) do
-    local f=fixture(); f.State.SetTriggerbot(true); case[2](f); f.Hold()
+    local f=fixture(); f.State.SetTriggerbot(true); case[2](f); f.Step(.01)
     check(f.Attempts==0,"trigger respects "..case[1])
 end
 do
@@ -97,6 +97,10 @@ do
     f.Step(.004); check(f.Attempts==2,"aim is reconsidered on the next heartbeat even below the old 50 ms interval")
     f.Send=true; f.Step(.004)
     check(f.Attempts==3 and f.Bot.Shots==1,"new target fires on the next heartbeat with no artificial wait")
+    f=fixture(); f.State.SetTriggerbot(true); f.State.PendingGun={{Item=f.Gun,SentAt=f.Now}}; f.Step(.74)
+    check(f.Attempts==0,"unresolved feedback blocks automatic retry after the request interval")
+    f.Step(.02)
+    check(f.Attempts==1,"unanswered feedback has a bounded timeout instead of stalling three seconds")
     f=fixture(); f.State.SetTriggerbot(true); f.Send=false; f.Step(); f.Blocked=true; f.Step()
     check(f.Bot.BeforePause=="No clear on-screen shot" and f.Bot.LastAimCheck.Message=="No clear on-screen shot","pause preserves last rejection")
     f=fixture(); f.State.SetTriggerbot(true); f.ThrowError=true; f.Step()

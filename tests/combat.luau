@@ -298,6 +298,8 @@ do
     check(sends==3,"cancelled charge token cannot release")
     r=record(); startThrow(r); failRemote=true; release(); failRemote=false
     check(sends==3 and not r.Charging and r.LastThrow==-math.huge,"throw send failure releases charge and cooldown")
+    r=record(); startThrow(r,near,true,function() return false end); release()
+    check(sends==3 and not r.Charging and r.LastThrow==-math.huge,"stopping automatic action cancels its deferred throw before sending")
     r=record(); clickKnife(r)
     check(contacts==1 and r.StabTarget==near,"manual click requests one selected stab contact")
     clickKnife(r)

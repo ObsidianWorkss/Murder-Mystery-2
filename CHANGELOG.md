@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.27 — 2026-10-17
+
+- Kill all revisits surviving targets instead of ending after one request each. Temporarily blocked or out-of-range targets remain queued while clear targets can be attacked. Attempts are capped at three per player and 30 active seconds. Status separates observed eliminations, unresolved players, skips and attack starts.
+- Kill all uses aimed, target-locked knife throws beyond 6.5 studs instead of distant stab reports. Stops, menu/focus pauses, role changes and stale queue generations prevent deferred automatic throws from releasing. Server damage remains unverified.
+- One Aura range slider controls the active 1–200 stud radius, default 60. The old 6-stud default is migrated once; other active custom ranges are preserved.
+- Triggerbot still acquires visible on-screen targets every heartbeat. Removed its extra 3-second local gun wait; requests are bounded to one per 150 ms, wait up to 750 ms for unresolved feedback, and respect tool readiness. Native GunClient inspection found no fixed local 3-second timer. These intervals do not guarantee server fire rate or hits.
+
 ## 1.0.0-rc.26 — 2026-10-17
 
 ### Added

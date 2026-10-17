@@ -1,5 +1,13 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.27
+
+- Luau 0.739 compiles main.lua and loader.lua; 81 combat, 170 release, 58 triggerbot and 88 aura assertions pass (397 total). Tests extract shipped code into mocked clients; they do not establish real server damage or fire rate.
+- Queue regressions cover retries of living targets, fair rotation, temporary obstruction/range recovery, observed deaths during cooldown, unresolved results, three sent-attack limit, 30-second active deadline even without a knife, pause timing, protection, respawn, departure, role loss and unload.
+- Ranged adapter checks verify target-locked throws beyond stab reach, required prediction, cancellation on stopped/replaced queue, menu pause and range changes. The extracted real throw function also rejects a deferred automatic release after cancellation.
+- Trigger checks cover first-frame acquisition, the 150 ms request bound, manual-shot/toggle continuity, a 750 ms unanswered-feedback window, tool readiness, visibility, input pauses and exclusion checks. Inspected the current native GunClient, which sends through Shoot without a fixed local 3-second interval.
+- Live startup smoke: rc.27 loaded in the connected MM2 public client, menu slider initialized at 60, the range setter accepted 200 and refused 201, and 60 was restored. Both triggers enabled, reported the menu/input pause, and were switched off again; zero trigger shots or stabs were sent. No startup error appeared in the inspected console entries. Live combat accuracy, accepted aura distance, ranged kills and measured reaction time remain unverified.
+
 ## Release candidate 1.0.0-rc.26
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 80 combat, 170 release, 56 triggerbot and 76 aura assertions pass (382 total).

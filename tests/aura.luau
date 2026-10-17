@@ -6,7 +6,7 @@ vectorMeta.__sub=function(a,b) return vec(a.X-b.X) end
 vectorMeta.__index=function(v,k) if k=="Magnitude" then return math.abs(v.X) end end
 -- INSERT_AURA
 
-local function fixture()
+local function fixture(ranged)
     local f={Now=10,Equipped=true,Ready=true,Blocked={},Callbacks={},EquipCount=0,Cancels=0}
     local os={clock=function() return f.Now end}
     local function node(name,class,parent)
@@ -33,7 +33,7 @@ local function fixture()
     local player={Name="Own",UserId=1,Character=f.Character(0),Role="Murderer",Alive=true,CharacterRemoving={}}
     local target={Name="Target",UserId=2,Character=f.Character(5),Role="Innocent",Alive=true}
     local knife=node("Knife","Tool",player.Character); knife.Enabled=true
-    local record={Item=knife,Active=true,LastStab=-math.huge,LastThrow=-math.huge,StabbingUntil=0}
+    local record={Item=knife,ThrowToken=0,Active=true,LastStab=-math.huge,LastThrow=-math.huge,StabbingUntil=0}
     local State={Running=true,Config={Aim=true,AuraExtendedReach=false,AuraEquipKnife=true,KillAuraRange=6},
         WeaponHandlers={[knife]=record},Stats={StabRequests=0,StabContactReports=0},
         IsPlayerExcluded=function(p) return p.Excluded==true end}
@@ -59,6 +59,12 @@ local function fixture()
     end
     -- INSERT_AURA_CONTACT
     -- INSERT_AURA_READY
+    local function startThrow(r,p,strict,guard)
+        f.ThrowTarget,f.ThrowStrict,f.ReleaseGuard=p,strict,guard
+        if f.ThrowFail then return false end
+        r.Charging=true; r.LastThrow=f.Now
+        return true
+    end
     -- INSERT_AURA_STAB
     f.Player,f.Target,f.Knife,f.Record,f.State=player,target,knife,record,State
     local UIS={WindowFocusReleased={},WindowFocused={}}
@@ -69,7 +75,8 @@ local function fixture()
         RoleFor=roleFor,IsAlive=alive,ClearPath=clearPath,
         InputBlocked=function() return f.InputBlocked==true end,
         EquippedWeapon=function() if f.Equipped then return knife,"Knife" end end,
-        CanStab=auraKnifeReady,Stab=auraStab,
+        CanStab=auraKnifeReady,Stab=auraStab,Throw=ranged and auraThrow or nil,
+        IsEliminated=function(p) return p.ServerDead==true end,
         Prepare=function() if f.PrepareFail then error("prepare failed") end end,
         EquipKnife=function()
             f.EquipCount+=1
@@ -116,7 +123,8 @@ do
     f.State.SetAuraExtendedReach(false)
     check(f.State.GetKillAuraRange()==6,"disabling reach restores the normal radius")
     check(f.State.SetAuraReachRange(200) and f.State.GetKillAuraRange()==6,"extended reach setting accepts 200 without changing the disabled normal radius")
-    check(not f.State.SetAuraReachRange(201) and not f.State.SetKillAuraRange(7),"invalid aura ranges are refused")
+    check(not f.State.SetAuraReachRange(201) and not f.State.SetKillAuraRange(201),"ranges above 200 are refused")
+    check(f.State.SetKillAuraRange(100) and f.State.GetKillAuraRange()==100 and f.State.Config.KillAuraRange==100,"main aura slider updates the active extended range beyond 6.5 studs")
     local before=f.Cancels; f.State.SetKillAuraRange(4)
     check(f.Cancels>before,"normal range changes cancel outstanding aura contacts")
 end
@@ -194,66 +202,105 @@ do
     local f=fixture()
     local second={Name="Second",UserId=3,Character=f.Character(6),Role="Innocent",Alive=true}
     table.insert(f.Players,second)
-    check(f.State.StartKillAll() and f.State.KillAll.Active and f.State.KillAll.Total==2,"Kill all snapshots eligible players for one pass")
-    check(not f.State.StartKillAll(),"a second Kill all cannot duplicate an active queue")
+    check(f.State.StartKillAll() and f.State.KillAll.Active and f.State.KillAll.Total==2,"Kill all snapshots eligible players")
+    check(not f.State.StartKillAll(),"a second Kill all cannot duplicate the queue")
     f.Step()
-    check(f.Record.StabTarget==f.Target and f.State.KillAll.Contacts==1,"Kill all sends one contact to the first player")
+    check(f.Record.StabTarget==f.Target and f.State.KillAll.Contacts==1,"first target receives an attack")
     f.Step(.4)
-    check(f.State.KillAll.Index==2 and f.State.KillAll.Attempts==1,"Kill all waits for native stab cooldown")
+    check(f.State.KillAll.Attempts==1,"queue respects stab cooldown")
     f.Step(.5)
-    check(f.Record.StabTarget==second and f.State.KillAll.Contacts==2,"Kill all advances to the next player instead of repeating the nearest")
+    check(f.Record.StabTarget==second and f.State.KillAll.Contacts==2,"queue fairly advances to the next target")
+    f.Step(.9)
+    check(f.Record.StabTarget==f.Target and f.State.KillAll.Attempts==3,"surviving first target is retried instead of forgotten")
+    check(f.State.KillAll.Active and f.State.KillAll.Observed==0,"contact sends never count as eliminations")
+    f.Target.ServerDead=true; second.Character.Humanoid.Health=0; f.Step()
+    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.State.KillAll.Observed==2,"observed server elimination or humanoid death completes targets even during cooldown")
+    check(f.State.KillAll.Status:find("0 unresolved",1,true)~=nil,"completion distinguishes unresolved targets")
     f.Step(1)
-    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.State.KillAll.Attempts==2,"completed pass stops aura when it was previously off")
-    check(f.State.KillAll.Status:find("kills unconfirmed",1,true)~=nil,"completed pass does not claim contact requests are kills")
-    f.Step(1)
-    check(f.State.Stats.StabRequests==2,"completed Kill all never sends a queued extra swing")
+    check(f.State.Stats.StabRequests==3,"completed queue has no extra swing")
 end
+
 do
-    local f=fixture(); f.Enable(); f.State.StartKillAll(); f.Step(); f.Step(1)
-    check(not f.State.KillAll.Active and f.Aura.Enabled,"finishing Kill all preserves a previously enabled aura")
-    f.Step()
-    check(f.Aura.Contacts==2,"ordinary nearest-target aura resumes after a completed pass")
+    local f=fixture(); f.Enable(); f.State.StartKillAll(); f.Step(); f.Target.ServerDead=true; f.Step()
+    check(not f.State.KillAll.Active and f.Aura.Enabled,"completion restores an existing aura")
     f=fixture(); f.State.StartKillAll(); f.State.StopKillAll("Cancelled"); f.Step()
-    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.Aura.Attempts==0,"Stop Kill all cancels before any attack")
+    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.Aura.Attempts==0,"stop cancels before any request")
     f=fixture(); f.State.StartKillAll(); f.State.StopKillAura("Emergency stop"); f.Step()
-    check(not f.State.KillAll.Active and not f.Aura.Enabled,"stopping aura also stops Kill all")
+    check(not f.State.KillAll.Active and not f.Aura.Enabled,"stopping aura stops Kill all")
     f=fixture(); f.Player.Role="Innocent"
-    check(not f.State.StartKillAll() and not f.Aura.Enabled,"Kill all refuses when not murderer")
+    check(not f.State.StartKillAll(),"Kill all refuses when not murderer")
     f=fixture(); f.Target.Excluded=true
-    check(not f.State.StartKillAll() and not f.State.KillAll.Active,"Kill all refuses an empty eligible queue")
+    check(not f.State.StartKillAll(),"protected-only queue is refused")
 end
+
 for _,case in ipairs({
     {"new exclusion",function(f) f.Target.Excluded=true end},
-    {"target death",function(f) f.Target.Alive=false end},
     {"target respawn",function(f) f.Target.Character=f.Character(5) end},
     {"departed player",function(f) f.Players={f.Player} end},
-    {"out-of-range target",function(f) f.Target.Character=f.Character(201) end},
-    {"obstructed target",function(f) f.BlockAll=true end},
 }) do
-    local f=fixture(); f.State.StartKillAll(); case[2](f); f.Step(); f.Step()
+    local f=fixture(); f.State.StartKillAll(); case[2](f); f.Step()
     check(f.State.KillAll.Skipped==1 and f.State.KillAll.Attempts==0 and not f.State.KillAll.Active,
-        "Kill all skips "..case[1].." without a request")
+        "Kill all removes "..case[1].." without a request")
 end
+
+for _,case in ipairs({
+    {"obstruction",function(f) f.BlockAll=true end,function(f) f.BlockAll=false end},
+    {"out of range",function(f) f.Target.Character.HumanoidRootPart.Position=vec(201) end,
+        function(f) f.Target.Character.HumanoidRootPart.Position=vec(5) end},
+}) do
+    local f=fixture(); f.State.StartKillAll(); case[2](f); f.Step()
+    check(f.State.KillAll.Active and f.State.KillAll.Skipped==0 and f.Aura.Attempts==0,
+        "temporary "..case[1].." preserves the target")
+    case[3](f); f.Step()
+    check(f.State.KillAll.Contacts==1,"queue attacks after "..case[1].." clears")
+end
+
 do
-    local f=fixture(); f.State.StartKillAll(); f.InputBlocked=true; f.Step()
-    check(f.State.KillAll.Active and f.State.KillAll.Index==1 and f.Aura.Attempts==0,"menu pauses Kill all without losing its queue")
+    local f=fixture(); f.State.StartKillAll(); f.InputBlocked=true; f.Step(2)
+    check(f.State.KillAll.Elapsed==0 and f.State.KillAll.Attempts==0,"menus pause attacks and active deadline")
     f.InputBlocked=false; f.Step()
-    check(f.State.KillAll.Contacts==1,"Kill all resumes after menu closes")
-    f=fixture(); f.Equipped=false; f.Knife.Parent={}; f.State.StartKillAll(); f.Step()
-    check(f.EquipCount==1 and f.State.KillAll.Contacts==1,"Kill all uses automatic knife equipping")
+    check(f.State.KillAll.Contacts==1,"queue resumes when menu closes")
+    f=fixture(); f.State.StartKillAll()
+    for _=1,125 do f.Step(.25) end
+    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==3,"unconfirmed target gets at most three attempts before deadline")
+    check(f.State.KillAll.Status:find("1 unresolved",1,true)~=nil and f.State.KillAll.Observed==0,"failed damage is reported as unresolved")
+    f=fixture(); f.State.StartKillAll(); f.BlockAll=true
+    for _=1,125 do f.Step(.25) end
+    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"permanent blockage cannot leave queue running forever")
+    f=fixture(); f.Equipped=false; f.EquipFail=true; f.State.StartKillAll()
+    for _=1,125 do f.Step(.25) end
+    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"missing knife still reaches the bounded deadline")
+    f=fixture(); f.SwingFail=true; f.State.StartKillAll()
+    for _=1,125 do f.Step(.25) end
+    check(f.State.KillAll.Attempts==0 and f.State.KillAll.Targets[1]==nil,"failed swings stop at bounded deadline")
     f=fixture(); f.State.StartKillAll(); f.Callbacks[f.Player.CharacterRemoving]()
-    check(not f.State.KillAll.Active and not f.Aura.Enabled,"respawn cancels Kill all instead of carrying it into a new round")
-    f=fixture(); f.Enable(); f.State.StartKillAll(); f.Callbacks[f.Player.CharacterRemoving]()
-    check(not f.State.KillAll.Active and f.Aura.Enabled,"respawn cancellation preserves the pre-existing ordinary aura")
+    check(not f.State.KillAll.Active and not f.Aura.Enabled,"own respawn cancels queue")
     f=fixture(); f.State.StartKillAll(); f.Player.Role="Sheriff"; f.Step()
-    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"losing murderer role cancels Kill all")
+    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"role loss cancels queue")
     f=fixture(); f.State.StartKillAll(); f.State.Running=false; f.Step()
-    check(not f.State.KillAll.Active and not f.Aura.Enabled and f.State.KillAll.Attempts==0,"unload cancels Kill all without a final request")
-    f=fixture(); f.ContactFail=true; f.State.StartKillAll(); f.Step(); f.Step(1)
-    check(f.State.KillAll.Attempts==1 and f.State.KillAll.Contacts==0 and f.State.KillAll.Skipped==1,
-        "failed batch contact is not reported as a hit or successful contact")
-    f=fixture(); f.SwingFail=true; f.State.StartKillAll(); f.Step(); f.Step()
-    check(f.State.KillAll.Attempts==0 and f.State.KillAll.Skipped==1 and not f.State.KillAll.Active,
-        "failed batch swing advances and completes without retry spam")
+    check(not f.State.KillAll.Active and f.Aura.Attempts==0,"unload cancels without attacking")
+end
+
+do
+    local f=fixture(true); f.State.Config.KnifeAim=true; f.State.SetKillAuraRange(60)
+    f.Target.Character=f.Character(35); f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Throws==1 and f.State.KillAll.Contacts==0 and f.ThrowTarget==f.Target and f.ThrowStrict,
+        "distant Kill all uses target-locked prediction instead of distant stab contact")
+    check(f.ReleaseGuard(),"active ranged attack can release")
+    f.State.StopKillAll()
+    check(not f.ReleaseGuard(),"stopping queue rejects a deferred ranged release")
+    f.State.StartKillAll()
+    check(not f.ReleaseGuard(),"new queue cannot revive an old throw")
+    f=fixture(true); f.State.Config.KnifeAim=true; f.State.SetKillAuraRange(60)
+    f.Target.Character=f.Character(35); f.State.StartKillAll(); f.Step(); f.InputBlocked=true
+    check(not f.ReleaseGuard(),"opening menu prevents charged automatic throw from releasing")
+    f.InputBlocked=false; f.Target.Character.HumanoidRootPart.Position=vec(100)
+    check(not f.ReleaseGuard(),"leaving range during charge prevents release")
+    f=fixture(true); f.State.Config.KnifeAim=false; f.State.SetKillAuraRange(60)
+    f.Target.Character=f.Character(35); f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Throws==0 and f.State.KillAll.Status:find("prediction",1,true),"disabled prediction never falls back to a distant stab")
+    for _=1,4 do f.Step(.3) end
+    f.State.Config.KnifeAim=true; f.Step(.3)
+    check(f.State.KillAll.Throws==1,"restoring prediction retries without consuming the sent-attack budget on local refusals")
 end
 print(passed.." aura assertions passed")
