@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.3 — 2026-10-17
+
+### New
+
+- Players → Chat → **Reveal roles** posts `Murderer: @name • Sheriff: @name` to chat. The card previews the exact message, never names you, skips protected players, refuses while you are murderer and waits 4 seconds between messages.
+
+### Interface
+
+- Status card rebuilt: role chip in the role's color, weapon state, one primary line, and a toned last-shot line when not compact. The whole card drags; the "MM2 · drag" label is gone.
+- Overlay buttons now outline their edge instead of their letters; Fire is the accented primary, the MOVE bar is a grip, Stop is a quiet red pill.
+- Status pill, murderer warning and ESP labels use the menu font, neutral surfaces, and short lowercase details.
+- Shorter menu copy throughout; status cards are titled Status.
+
 ## 1.0.0-rc.2 — 2026-10-17
 
 Same features and settings as rc.1.

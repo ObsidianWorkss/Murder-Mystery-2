@@ -36,6 +36,9 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     end = source.index('if State.Config.ESPStyleVersion', start)
     release = release.replace("-- INSERT_SUPPORT", source[start:end])
     release = release.replace("-- INSERT_LOADER", (root / "loader.lua").read_text(encoding="utf-8"))
+    start = source.index("local installRoleReveal=function(C)")
+    end = source.index("installRoleReveal({", start)
+    release = release.replace("-- INSERT_REVEAL", source[start:end])
     if "-- INSERT_" in release or "-- INSERT_" in template:
         raise RuntimeError("Unexpanded regression-test source marker")
     harness.write_text(release, encoding="utf-8")

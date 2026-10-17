@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.3
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 27 release assertions pass (85 total).
+- 13 new role-reveal assertions cover the message format, dead or protected sheriffs, never naming you, refusing while you are murderer, lobby leftovers, the cooldown and failed sends. A fake send function records messages; the tests never reach a real chat.
+- `luau-analyze` reports no new errors or unknown non-Roblox globals compared with rc.2.
+- Reveal roles has not been pressed in a live server.
+
 ## Release candidate 1.0.0-rc.2
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; the 72 rc.1 assertions still pass.

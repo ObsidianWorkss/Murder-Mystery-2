@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.2"
+State.Version = "1.0.0-rc.3"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20436,7 +20436,7 @@ local installSeatVisibility=function(C)
             root.CFrame=r.ParkFrame
         end)
         if not ok then return fail("Preparation failed: "..tostring(message)) end
-        mode.Status="Preparing invisibility; coin pickup unavailable / observer visibility unverified"
+        mode.Status="Going invisible"
         refresh(); return true,mode.Status
     end
     function State.SetExperimentalInvisibility(enabled) return State.SetInvisibility(enabled) end
@@ -20487,7 +20487,7 @@ local installSeatVisibility=function(C)
             restoreCamera(r)
             r.LocalReady=true
             mode.Phase,mode.Active,mode.Busy="Active",true,false
-            mode.Status="Invisibility ON locally; visibility to others unverified / pickups unavailable"
+            mode.Status="Invisible"
             refresh()
         elseif mode.Phase=="Active" then
             if not r.Seat.Parent or not r.Weld.Parent or r.Root.AssemblyRootPart~=r.Seat then
@@ -20740,8 +20740,8 @@ local function updateESP()
             local targetRoot = char:FindFirstChild("HumanoidRootPart")
             local distance = ownRoot and targetRoot and (targetRoot.Position - ownRoot.Position).Magnitude
             local labelText = "@" .. p.Name
-                .. (visual.Hidden and " | INVISIBLE" or "")
-                .. (distance and (" | " .. math.floor(distance + 0.5) .. " studs") or "")
+                .. (visual.Hidden and "  ·  invisible" or "")
+                .. (distance and ("  ·  " .. math.floor(distance + 0.5) .. " studs") or "")
             local labelSize = UDim2.fromOffset(280,44)
             if State.Config.CleanVisuals then labelText, labelSize = "@"..p.Name, UDim2.fromOffset(190,24) end
             -- Write only real changes: the old flip between two strings re-rendered every label twice per tick.
@@ -20837,44 +20837,60 @@ local threatBanner = Instance.new("TextLabel")
 threatBanner.Name = "NearbyMurdererWarning"
 threatBanner.AnchorPoint = Vector2.new(0.5, 0)
 threatBanner.Position = UDim2.new(0.5, 0, 0, 54)
-threatBanner.Size = UDim2.new(0.8, 0, 0, 52)
-threatBanner.BackgroundTransparency = 0.15
-threatBanner.TextColor3 = Color3.new(1, 1, 1)
-threatBanner.Font = Enum.Font.GothamBold
-threatBanner.TextSize = 15
-threatBanner.TextWrapped = true
+threatBanner.Size = UDim2.new(0.8, 0, 0, 40)
+threatBanner.BackgroundColor3 = Color3.fromRGB(16, 12, 14)
+threatBanner.BackgroundTransparency = 0.06
+threatBanner.TextColor3 = Color3.fromRGB(226, 230, 237)
+threatBanner.FontFace = Font.new("rbxassetid://12187365364", Enum.FontWeight.Medium)
+threatBanner.TextSize = 14
+threatBanner.RichText = true
+threatBanner.TextTruncate = Enum.TextTruncate.AtEnd
 threatBanner.Visible = false
 threatBanner.Parent = gui
 local bannerLimit = Instance.new("UISizeConstraint")
-bannerLimit.MaxSize = Vector2.new(540, 52)
+bannerLimit.MaxSize = Vector2.new(460, 40)
 bannerLimit.Parent = threatBanner
-Instance.new("UICorner", threatBanner).CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", threatBanner).CornerRadius = UDim.new(0, 12)
+local bannerStroke = Instance.new("UIStroke")
+bannerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+bannerStroke.Thickness = 1
+bannerStroke.Parent = threatBanner
+do
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft, padding.PaddingRight = UDim.new(0, 16), UDim.new(0, 16)
+    padding.Parent = threatBanner
+end
 local function updateThreat()
-    State.Threat = nil
-    threatBanner.Visible = false
-    if not State.Config.ThreatWarning or not alive(player) then return end
-    local ownRoot = player.Character:FindFirstChild("HumanoidRootPart")
-    if not espInRoundArea(ownRoot.Position) then return end
     local closest
-    for _, other in ipairs(Players:GetPlayers()) do
-        if other ~= player and roleFor(other) == "Murderer" and alive(other)
-            and espInRoundArea(other.Character.HumanoidRootPart.Position) then
-            local info = threatDetails(ownRoot, other.Character:FindFirstChild("HumanoidRootPart"), workspace.CurrentCamera)
-            if info.Distance <= State.Config.ThreatRange and (not closest or info.Distance < closest.Distance) then
-                info.Name, info.DisplayName = other.Name, other.DisplayName
-                closest = info
+    local ownRoot = State.Config.ThreatWarning and alive(player) and player.Character:FindFirstChild("HumanoidRootPart")
+    if ownRoot and espInRoundArea(ownRoot.Position) then
+        for _, other in ipairs(Players:GetPlayers()) do
+            if other ~= player and roleFor(other) == "Murderer" and alive(other)
+                and espInRoundArea(other.Character.HumanoidRootPart.Position) then
+                local info = threatDetails(ownRoot, other.Character:FindFirstChild("HumanoidRootPart"), workspace.CurrentCamera)
+                if info.Distance <= State.Config.ThreatRange and (not closest or info.Distance < closest.Distance) then
+                    info.Name, info.DisplayName = other.Name, other.DisplayName
+                    closest = info
+                end
             end
         end
     end
-    if not closest then return end
     State.Threat = closest
-    if State.Config.CleanVisuals and State.Config.TacticalGuide and State.Config.CombatHUD then return end
-    threatBanner.BackgroundColor3 = closest.Distance <= 12 and Color3.fromRGB(150, 28, 38)
-        or Color3.fromRGB(115, 66, 22)
-    threatBanner.Text = "MURDERER: " .. closest.DisplayName .. " | " .. math.floor(closest.Distance + 0.5)
-        .. " studs | " .. closest.Direction .. (closest.Height and (" | " .. closest.Height) or "")
-        .. (closest.Closing and " | CLOSING" or "")
-    threatBanner.Visible = true
+    local shown = closest ~= nil and not (State.Config.CleanVisuals and State.Config.TacticalGuide and State.Config.CombatHUD)
+    if shown then
+        -- Red inside 12 studs, amber further out; details stay neutral so the role reads first.
+        local near = closest.Distance <= 12
+        local accent = near and "#FF5A64" or "#FFB25A"
+        bannerStroke.Color = near and Color3.fromRGB(255, 90, 100) or Color3.fromRGB(255, 178, 90)
+        bannerStroke.Transparency = near and 0.2 or 0.45
+        local name = closest.DisplayName:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+        local text = ('<font color="%s"><b>Murderer</b></font>   %s  ·  %d studs  ·  %s'):format(
+            accent, name, math.floor(closest.Distance + 0.5), (closest.Direction:lower():gsub("-", " ")))
+            .. (closest.Height and ("  ·  " .. closest.Height:lower()) or "")
+            .. (closest.Closing and ('  ·  <font color="%s">closing</font>'):format(accent) or "")
+        if threatBanner.Text ~= text then threatBanner.Text = text end
+    end
+    if threatBanner.Visible ~= shown then threatBanner.Visible = shown end
 end
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(286, 679)
@@ -21434,7 +21450,7 @@ updateGunESP = function()
             if not visual.Label.Enabled then visual.Label.Enabled = true end
             if visual.Label.Adornee ~= part then visual.Label.Adornee = part end
             local distance = root and math.round((part.Position - root.Position).Magnitude)
-            local text = "DROPPED GUN" .. (distance and " | " .. distance .. " studs" or "")
+            local text = "Gun" .. (distance and "  ·  " .. distance .. " studs" or "")
             if visual.Text.Text ~= text then visual.Text.Text = text end
         else
             removeGunVisual(object)
@@ -24204,6 +24220,74 @@ installGhostAppearance({State=State,Player=player,RunService=RunService})
 end
 
 
+do
+-- Button only: posts the murderer and sheriff of the current round to chat. Never names you,
+-- skips protected players, and waits a few seconds between messages.
+local installRoleReveal=function(C)
+    local State,player=C.State,C.Player
+    local clock=C.Clock or os.clock
+    local reveal={Cooldown=4,LastSent=-math.huge,Sent=0}
+    State.RoleReveal=reveal
+    function State.FormatRoleReveal(murderer,sheriff,sheriffDead)
+        local message="Murderer: @"..murderer.Name
+        if sheriff then message..=" • Sheriff: @"..sheriff.Name
+        elseif sheriffDead then message..=" • Sheriff: dead" end
+        return message
+    end
+    local function find(role)
+        for _,p in ipairs(C.Players:GetPlayers()) do
+            if C.InRound(p) and C.RoleFor(p)==role then return p end
+        end
+        return nil
+    end
+    local function protected(p) return State.IsPlayerExcluded~=nil and State.IsPlayerExcluded(p)==true end
+    function State.GetRoleReveal()
+        if not C.InRound(player) and not C.ViewerInRound() then return nil,"Available during a round" end
+        local murderer=find("Murderer")
+        if not murderer then return nil,"Murderer not known yet" end
+        if murderer==player then return nil,"You are the murderer" end
+        if protected(murderer) then return nil,"The murderer is protected" end
+        local sheriff=find("Sheriff")
+        local sheriffDead=sheriff==nil
+        if sheriff==player or (sheriff and protected(sheriff)) then sheriff=nil end
+        return State.FormatRoleReveal(murderer,sheriff,sheriffDead)
+    end
+    function State.RevealRolesInChat()
+        local wait=reveal.Cooldown-(clock()-reveal.LastSent)
+        if wait>0 then return false,("Wait %d s"):format(math.ceil(wait)) end
+        local message,reason=State.GetRoleReveal()
+        if not message then return false,reason end
+        local sent,why=C.Send(message)
+        if not sent then return false,why end
+        reveal.LastSent,reveal.Sent=clock(),reveal.Sent+1
+        return true,"Sent  ·  "..message
+    end
+end
+
+installRoleReveal({State=State,Player=player,Players=Players,RoleFor=roleFor,
+    InRound=function(p)
+        local root=alive(p) and p.Character:FindFirstChild("HumanoidRootPart")
+        return root~=nil and root~=false and espInRoundArea(root.Position)
+    end,
+    ViewerInRound=function() return espViewerAtRound() end,
+    Send=function(message)
+        local chat=game:GetService("TextChatService")
+        if chat.ChatVersion==Enum.ChatVersion.TextChatService then
+            local channels=chat:FindFirstChild("TextChannels")
+            local general=channels and channels:FindFirstChild("RBXGeneral")
+            if not general then return false,"Chat channel unavailable" end
+            local ok,err=pcall(general.SendAsync,general,message)
+            return ok,not ok and "Chat send failed: "..tostring(err) or nil
+        end
+        local events=game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+        local say=events and events:FindFirstChild("SayMessageRequest")
+        if not say then return false,"Chat unavailable" end
+        local ok,err=pcall(say.FireServer,say,message,"All")
+        return ok,not ok and "Chat send failed: "..tostring(err) or nil
+    end})
+end
+
+
 -- Mobile and PC controls around the bundled WindUI library. No camera or cursor writes.
 local createMobileUI = function(C)
     local State, UIS, RunService = C.State, C.UIS, C.RunService
@@ -24320,6 +24404,7 @@ local createMobileUI = function(C)
     local playersPage=tab("Players","users")
     local playersTab=page("Players",playersPage,"Player Actions","users",true)
     local protected=page("Protected",playersPage,"Protected","shield-check")
+    local chatSection=page("Chat",playersPage,"Chat","message-circle")
     local flingPage=tab("Fling","wind")
     local flingTab=page("Fling",flingPage,"Fling","wind",true)
     local roleFling=page("RoleFling",flingPage,"Role Fling","target")
@@ -24373,30 +24458,30 @@ local createMobileUI = function(C)
         toggles[key] = toggle
         return toggle
     end
-    mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Reading your current role and weapon…"})
-    home:Paragraph({Title="MM2 Universal · " .. State.Version,Desc="Release candidate · PC and mobile\nUse Settings → Copy support report when reporting an issue."})
-    option(combat,"Aim assist","Aim","Master switch for gun aim, knife aim and automatic stabs.")
-    option(combat, "Gun aim", "MagicBullet", "Aim at the known murderer when you fire.")
-    option(combat, "Conservative gun shots", "ConservativeGun", "Require every sampled timing check to intersect the target. Skips uncertain shots; server hits are not guaranteed.")
+    mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Waiting for round"})
+    home:Paragraph({Title="MM2 Universal",Desc="v" .. State.Version})
+    option(combat,"Aim assist","Aim","Master switch for every aim feature.")
+    option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
+    option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
     option(knife, "Knife throw prediction", "KnifeAim")
-    option(knife, "All-direction knife aim", "KnifeAllDirections", "Also acquire clear targets outside the camera view; visible targets take priority.")
-    option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Skip assisted throws without a clear target and keep the charged target through release.")
-    option(knife, "Clicked stab assist", "StabAssist", "On your click, attempt contact with the nearest clear opponent within 6.5 studs. Server validation still applies.")
+    option(knife, "All-direction knife aim", "KnifeAllDirections", "Also target players off screen.")
+    option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
+    option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
     if State.SetKillAura then
-        option(automation,"Murderer kill aura","KillAura","Automatic stab attempts while you are the murderer.")
+        option(automation,"Kill aura","KillAura","Stabs nearby players while you are murderer.")
     end
     if State.EmergencyStop then
-        home:Button({Title="Emergency stop / return",Desc="End on PC · STOP on mobile",Callback=mobile.TriggerEmergencyStop})
+        home:Button({Title="Emergency stop",Desc="End key on PC",Callback=mobile.TriggerEmergencyStop})
     end
     local advancedCombat=combat
     option(knife, "Stab sweep", "StabSweep")
     if State.SetTargetContinuity then
-        option(advancedCombat,"Stable target choice","TargetContinuity","Keep the current target when choices nearly tie.")
+        option(advancedCombat,"Stable target choice","TargetContinuity","Hold the current target on near ties.")
     end
     local function buildAutomationSettings()
     if State.SetKillAura then
         local auraOptions=automation
-        option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equip your knife automatically while aura is active.")
+        option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equips your knife while aura runs.")
         auraOptions:Input({Title="Aura range (studs)",Value=tostring(State.Config.KillAuraRange),Placeholder="1 to 6.5",Callback=function(text)
             if syncing or not State.Running then return end
             suppressInput()
@@ -24404,7 +24489,7 @@ local createMobileUI = function(C)
             if not ok then State.KillAura.Status=tostring(message) end
         end})
         if State.SetAuraExtendedReach then
-            option(auraOptions,"Extended stab reach","AuraExtendedReach","Longer contact attempts; the server may reject them.")
+            option(auraOptions,"Extended stab reach","AuraExtendedReach","Attempts contact past normal range.")
             auraOptions:Input({Title="Extended reach (studs)",Value=tostring(State.Config.AuraReachRange),Placeholder="1 to 100",Callback=function(text)
                 if syncing or not State.Running then return end
                 suppressInput()
@@ -24414,15 +24499,15 @@ local createMobileUI = function(C)
         end
     end
     if State.SetTacticalGuide then
-        toggles.TacticalGuide=guidance:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="Suggested target and next waypoint. You move and attack.",
+        toggles.TacticalGuide=guidance:Toggle({Title="Tactical hints",Value=State.Config.TacticalGuide,Desc="Shows a target and the next waypoint.",
             Callback=function(enabled) if syncing then return end; suppressInput(); State.SetTacticalGuide(enabled) end})
     end
     if State.SetLearnedSheriffGuide then
-        option(guidance,"Learned Sheriff guidance","LearnedSheriffGuide","Practice-trained suggestions; live results may differ.")
+        option(guidance,"Learned Sheriff guidance","LearnedSheriffGuide","Suggestions trained on practice rounds.")
     end
-    mobile.GuidanceStatus=guidance:Paragraph({Title="Current suggestion",Desc="Waiting for a round"})
+    mobile.GuidanceStatus=guidance:Paragraph({Title="Suggestion",Desc="Waiting for a round"})
     end
-    if mobile.OpenExclusions then home:Button({Title="Open exclusions",Desc="Choose friends your automatic actions should skip.",Callback=mobile.OpenExclusions}) end
+    if mobile.OpenExclusions then home:Button({Title="Protected players",Desc="Players every feature skips.",Callback=mobile.OpenExclusions}) end
     function mobile.ApplyDisplayPreset(name)
         if mobile.Destroyed or not State.Running then return false,"Menu unavailable" end
         local values=name=="Clean" and {CleanVisuals=true,CompactHUD=true,CombatHUD=true,StableBodyESP=false,AimMarker=false,ThreatWarning=false}
@@ -24435,29 +24520,29 @@ local createMobileUI = function(C)
         return true
     end
     local presets=appearance
-    presets:Button({Title="Clean display",Desc="Username labels, compact HUD and fewer indicators.",Callback=function() mobile.ApplyDisplayPreset("Clean") end})
-    presets:Button({Title="Detailed display",Desc="Show distances, full HUD and aim indicators.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
+    presets:Button({Title="Clean display",Desc="Names only, compact HUD.",Callback=function() mobile.ApplyDisplayPreset("Clean") end})
+    presets:Button({Title="Detailed display",Desc="Distances, full HUD, aim marker.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
     mobile.AdvancedCombat=advancedCombat
-    option(visuals, "Role ESP", "ESP", "Murderer red · Sheriff blue · others green")
+    option(visuals, "Role ESP", "ESP", "Murderer red, sheriff blue, others green.")
     option(visuals, "Dropped gun ESP", "GunESP")
-    if State.GetCombatHUDData then option(hud,"Combat HUD","CombatHUD","Small status panel; drag its header to move it.") end
+    if State.GetCombatHUDData then option(hud,"Combat HUD","CombatHUD","Status card. Drag it to move.") end
     option(hud, "Nearby murderer warning", "ThreatWarning")
     local displayOptions=visuals
-    if State.GetCombatHUDData then option(hud,"Compact HUD","CompactHUD","Two lines instead of detailed feedback.") end
-    option(displayOptions,"Clean role visuals","CleanVisuals","Username only; turn off to add distance and status.")
+    if State.GetCombatHUDData then option(hud,"Compact HUD","CompactHUD","Hide the last-shot line.") end
+    option(displayOptions,"Clean role visuals","CleanVisuals","Names only on ESP labels.")
     option(hud,"Gun aim marker","AimMarker")
-    option(displayOptions,"Stable body colors","StableBodyESP","Optional box fallback. Leave off for clean body silhouettes.")
-    option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Jump or sidestep when a clear path is available.")
+    option(displayOptions,"Stable body colors","StableBodyESP","Box fill for hard-to-see bodies.")
+    option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Jumps or sidesteps thrown knives.")
     local canTouch = type(firetouchinterest) == "function"
     if not canTouch then State.Config.AutoPickup = false end
-    local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Try to collect a dropped gun without teleporting." or "Unavailable: this executor has no firetouchinterest.")
+    local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Collects a dropped gun without teleporting." or "Your executor lacks firetouchinterest.")
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
     buildAutomationSettings()
-    if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Kill aura status",Desc=State.KillAura.Status}) end
-    if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Gun pickup status",Desc=State.GunPickup.Status}) end
-    option(movement, "Invisibility", "Invisibility", "Ghost appearance locally. Gun attacks restore your body first.")
-    mobile.InvisibilityStatus=movement:Paragraph({Title="Invisibility status",Desc=State.Invis and State.Invis.Status or "Invisibility OFF"})
-    movement:Button({Title="Restore character",Desc="Turn invisibility off without a reset",Callback=function()
+    if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
+    if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
+    option(movement, "Invisibility", "Invisibility", "Ghost mode. Shooting restores you first.")
+    mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Invisibility OFF"})
+    movement:Button({Title="Restore character",Desc="Turns invisibility off, no reset.",Callback=function()
         suppressInput()
         State.SetInvisibility(false)
         refresh()
@@ -24465,11 +24550,11 @@ local createMobileUI = function(C)
     if State.TeleportToArea then
         travel:Button({Title="TP to map",Callback=function() suppressInput(); State.TeleportToArea("Map") end})
         travel:Button({Title="TP to lobby",Callback=function() suppressInput(); State.TeleportToArea("Lobby") end})
-        mobile.TeleportStatus=travel:Paragraph({Title="Teleport status",Desc=State.WorldTeleport.Status})
+        mobile.TeleportStatus=travel:Paragraph({Title="Status",Desc=State.WorldTeleport.Status})
     end
     local invisOptions=movement
-    option(invisOptions,"Knife while invisible","InvisibleKnife","Allow knife attempts while invisible. Server hits are unconfirmed.")
-    invisOptions:Paragraph({Title="Visibility",Desc="Spectators may still track you. Coin collection may stop while invisible."})
+    option(invisOptions,"Knife while invisible","InvisibleKnife","Keep using your knife while invisible.")
+    invisOptions:Paragraph({Title="Note",Desc="Spectators can still follow you. Coins may stop."})
     option(animations, "Mage movement animations", "MageAnimations", "Reapplies after respawn.")
     local poses=animations
     poses:Button({Title = "Floating pose", Callback = function() State.SetPose(616006778); refresh() end})
@@ -24479,7 +24564,7 @@ local createMobileUI = function(C)
     poses:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
     animations:Button({Title = "Restore animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
     local help=home
-    help:Paragraph({Title="Controls",Desc="PC: Right Shift menu · click fire/stab · E or right-click throw · End stop\nMobile: draggable MM2 icon · FIRE/STAB · THROW · STOP"})
+    help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop"})
     appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
         local theme=({Midnight="MM2 Midnight",Graphite="Dark",Light="Light"})[name]
         if theme then suppressInput(); library:SetTheme(theme) end
@@ -24488,7 +24573,7 @@ local createMobileUI = function(C)
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
     local repairs=settings
     local supportStatus=settings:Paragraph({Title="Support",Desc=State.Build .. " · " .. State.ReleaseChannel})
-    settings:Button({Title="Copy support report",Desc="Version, feature settings and counters. No access key or player names.",Callback=function()
+    settings:Button({Title="Copy support report",Desc="Version, settings and counters. No names or keys.",Callback=function()
         suppressInput()
         local ok,report=pcall(State.GetSupportReport)
         local message
@@ -24511,23 +24596,23 @@ local createMobileUI = function(C)
         contactOptions=flingOptions
         if State.SetFlingSpinContact then
             mobile.SpinContactToggle = contactOptions:Toggle({Title = "Spin contact", Value = State.Fling.Mode == "Spin",
-                Desc = "Follow the selected body. Changing mode stops the current session.",
+                Desc = "Orbit the target. Changing mode stops fling.",
                 Callback = function(enabled) if State.StopFlingAll then State.StopFlingAll("Fling mode changed") end; State.SetFlingSpinContact(enabled) end})
         end
         if State.SetFlingDownward then
             mobile.DownwardContactToggle = contactOptions:Toggle({Title = "Downward contact (experimental)", Value = State.Fling.Mode == "Downward",
-                Desc = "Try contact from above. Changing mode stops the session.",
+                Desc = "Hit from above. Changing mode stops fling.",
                 Callback = function(enabled) if State.StopFlingAll then State.StopFlingAll("Fling mode changed") end; State.SetFlingDownward(enabled) end})
         end
         if State.SetFlingAdaptivePursuit then
             mobile.AdaptivePursuitToggle = contactOptions:Toggle({Title = "Track fast / flying targets", Value = State.Fling.AdaptivePursuit,
-                Desc = "Follow 3D movement. Noncolliding targets may prevent contact.",
+                Desc = "Follow jumping and flying targets.",
                 Callback = function(enabled) if State.StopFlingAll then State.StopFlingAll("Fling tracking changed") end; State.SetFlingAdaptivePursuit(enabled) end})
         end
         if State.GetFlingReport then
             diagnostics=flingReports
-            diagnostics:Paragraph({Title = "Fling build", Desc = tostring(State.Build) .. "\nContact attempts do not confirm a server launch."})
-            diagnostics:Button({Title = "Copy fling report", Desc = "Copy status and contact measurements", Callback = function()
+            diagnostics:Paragraph({Title = "Build", Desc = tostring(State.Build)})
+            diagnostics:Button({Title = "Copy fling report", Desc = "Status and contact data.", Callback = function()
                 local copy = setclipboard or toclipboard
                 local report = State.GetFlingReport()
                 local ok = type(copy) == "function" and pcall(copy, report)
@@ -24588,7 +24673,7 @@ local createMobileUI = function(C)
             SearchBarEnabled=true,Callback=selectPlayer})
         if State.PlayerActions then
             local selectedActions=playersTab
-            mobile.PlayerActionStatus = selectedActions:Paragraph({Title = "Teleport / auto attack", Desc = State.PlayerActions.Status})
+            mobile.PlayerActionStatus = selectedActions:Paragraph({Title = "Status", Desc = State.PlayerActions.Status})
             local function playerAction(callback)
                 if State.StopFlingAll then State.StopFlingAll("Player action selected") end
                 local ok, accepted, message = pcall(callback)
@@ -24604,7 +24689,7 @@ local createMobileUI = function(C)
             end})
             local autoToggle
             autoToggle = selectedActions:Toggle({Title = "Auto attack selected player", Value = false,
-                Desc = "Use your owned weapon. Close the menu to attack.",
+                Desc = "Uses your weapon once the menu closes.",
                 Callback = function(enabled)
                     local accepted = playerAction(function() return State.SetAutoAttack(enabled,selectedId) end)
                     if not accepted and autoToggle then autoToggle:Set(false,false) end
@@ -24616,17 +24701,17 @@ local createMobileUI = function(C)
             end})
         end
         flingTab:Button({Title = "Fling selected player", Callback = function() runFlingAction("Selected player", function() return State.FlingPlayer(selectedId) end) end})
-        roleFling:Button({Title = "Fling role opponent", Desc = "Murderer targets sheriff; other roles target murderer.", Callback = function() runFlingAction("Role opponent", function() return State.FlingRole("Opponent") end) end})
+        roleFling:Button({Title = "Fling role opponent", Desc = "Murderer flings sheriff, others fling murderer.", Callback = function() runFlingAction("Role opponent", function() return State.FlingRole("Opponent") end) end})
         if State.FlingAll then
-            flingTab:Button({Title="Fling all",Desc="One player at a time. Protected players are skipped.",Callback=function()
+            flingTab:Button({Title="Fling all",Desc="One at a time. Skips protected players.",Callback=function()
                 runFlingAction("All players",State.FlingAll)
             end})
-            mobile.FlingAllStatus=flingReports:Paragraph({Title="All-player progress",Desc=State.FlingQueue.Status})
+            mobile.FlingAllStatus=flingReports:Paragraph({Title="Fling all",Desc=State.FlingQueue.Status})
         end
         flingTab:Button({Title = "Stop fling / return", Callback = function() if State.StopFlingAll then State.StopFlingAll() end; State.StopFling() end})
         mobile.FlingSummary=flingTab:Paragraph({Title="Status",Desc=State.Fling.Status})
         mobile.RoleFlingSummary=roleFling:Paragraph({Title="Status",Desc=State.Fling.Status})
-        mobile.FlingStatus = flingReports:Paragraph({Title = "Fling status", Desc = State.Fling.Status})
+        mobile.FlingStatus = flingReports:Paragraph({Title = "Status", Desc = State.Fling.Status})
         local roleActions=roleFling
         roleActions:Button({Title = "Fling murderer", Callback = function() runFlingAction("Murderer", function() return State.FlingRole("Murderer") end) end})
         roleActions:Button({Title = "Fling sheriff", Callback = function() runFlingAction("Sheriff", function() return State.FlingRole("Sheriff") end) end})
@@ -24644,7 +24729,7 @@ local createMobileUI = function(C)
     if exclusionsTab then
         local addId, removeId, addMap, removeMap = nil, nil, {}, {}
         local addPicker, removePicker
-        mobile.ExclusionsStatus = exclusionsTab:Paragraph({Title = "Exclusion status", Desc = "Choose a player, then press Exclude selected player."})
+        mobile.ExclusionsStatus = exclusionsTab:Paragraph({Title = "Status", Desc = "Pick a player, then Exclude."})
         local function refreshExclusions()
             local addLabels, removeLabels, addLabel, removeLabel = {}, {}, nil, nil
             addMap, removeMap = {}, {}
@@ -24697,57 +24782,109 @@ local createMobileUI = function(C)
             card.ParagraphFrame:SetDesc(text); descriptions[key]=text
         end
     end
+    -- Short wording shared by the menu session line and the status card.
+    local roleLook={Murderer={"MURDERER",Color3.fromRGB(255,90,100)},Sheriff={"SHERIFF",Color3.fromRGB(90,160,255)},
+        Hero={"HERO",Color3.fromRGB(90,160,255)},Innocent={"INNOCENT",Color3.fromRGB(90,220,130)},
+        Lobby={"LOBBY"},Eliminated={"OUT"},["Waiting for character"]={"SPAWNING"}}
+    local weaponWords={["No weapon equipped"]="Unarmed",["Gun reloading / disabled"]="Reloading",["Knife charging"]="Charging"}
+    local resultWords={["No gun feedback yet"]="No shots yet",["Awaiting server shot reply"]="Shot sent",
+        ["Last: server ray hit target"]="Last shot hit",["Last: reported ray hit (heuristic match)"]="Last shot likely hit",
+        ["Last: server ray missed target"]="Last shot missed",["Last: reported miss (heuristic match)"]="Last shot likely missed",
+        ["Last: server reported round victory"]="Round won",["No unique reply matched this shot; outcome unknown"]="Last shot unconfirmed"}
+    local toneColors={confirmed=Color3.fromRGB(110,232,158),warning=Color3.fromRGB(255,140,128),waiting=Color3.fromRGB(255,206,110)}
+    local function weaponWord(weapon) return weaponWords[weapon] or weapon or "" end
     local function updateDashboard()
         if not mobile.MenuOpen then return end
         local data
         if State.GetCombatHUDData then local ok,result=pcall(State.GetCombatHUDData); if ok and type(result)=="table" then data=result end end
         local role=data and data.Role
-        local session=(role and role~="Unknown" and role or "Waiting for round").." · "..(data and data.Weapon or "No weapon equipped")
-        local function flag(value) return value and "ON" or "OFF" end
-        session..="\nGun aim "..flag(State.Config.MagicBullet).." · ESP "..flag(State.Config.ESP).." · Aura "..flag(State.KillAura and State.KillAura.Enabled)
+        local session=(role and role~="Unknown" and role or "Waiting for round").."  ·  "..weaponWord(data and data.Weapon or "No weapon equipped")
+        local function flag(value) return value and "on" or "off" end
+        session..="\nGun aim "..flag(State.Config.MagicBullet).."  ·  ESP "..flag(State.Config.ESP).."  ·  Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
-        if mobile.GuidanceStatus then updateDescription(mobile.GuidanceStatus,"Guidance",State.Guidance and State.Guidance.Instruction or "Guidance waiting for a round") end
+        if mobile.GuidanceStatus then updateDescription(mobile.GuidanceStatus,"Guidance",State.Guidance and State.Guidance.Instruction or "Waiting for a round") end
+        if mobile.RevealStatus and State.GetRoleReveal then
+            local message,reason=State.GetRoleReveal()
+            updateDescription(mobile.RevealStatus,"Reveal",mobile.RevealResult or message or reason)
+        end
+    end
+    if State.RevealRolesInChat then
+        chatSection:Button({Title="Reveal roles",Desc="Posts the murderer and sheriff in chat. Never names you.",Callback=function()
+            suppressInput()
+            local ok,sent,message=pcall(State.RevealRolesInChat)
+            local text=ok and tostring(message) or "Reveal failed: "..tostring(sent)
+            mobile.RevealResult=text
+            updateDescription(mobile.RevealStatus,"Reveal",text)
+            task.delay(4,function() if mobile.RevealResult==text then mobile.RevealResult=nil end end)
+        end})
+        mobile.RevealStatus=chatSection:Paragraph({Title="Message",Desc="Available during a round"})
     end
     mobile.UpdateDashboard=updateDashboard
     updateDashboard()
 
-    local function button(text, size, parent)
+    -- One visual system for every overlay: near-black surface, white hairline, menu accent, menu font.
+    local look={Surface=Color3.fromRGB(14,16,21),Text=Color3.fromRGB(233,237,244),Muted=Color3.fromRGB(146,155,171),
+        Accent=Color3.fromRGB(116,153,255),Medium=Font.new("rbxassetid://12187365364",Enum.FontWeight.Medium),
+        Bold=Font.new("rbxassetid://12187365364",Enum.FontWeight.SemiBold)}
+    local function hairline(object,color,transparency)
+        local stroke=Instance.new("UIStroke")
+        stroke.ApplyStrokeMode=Enum.ApplyStrokeMode.Border -- the default strokes a button's letters, not its edge
+        stroke.Color=color or Color3.new(1,1,1); stroke.Transparency=transparency or .88; stroke.Thickness=1
+        stroke.Parent=object
+        return stroke
+    end
+    local function button(name, size, parent)
         local b = Instance.new("TextButton")
-        b.Name = text
+        b.Name = name
         b.Size = size
-        b.Text = text
-        b.TextColor3 = Color3.new(1, 1, 1)
+        b.Text = name
+        b.TextColor3 = look.Text
         b.TextSize = 14
-        b.Font = Enum.Font.GothamBold
-        b.BackgroundColor3 = Color3.fromRGB(35, 48, 75)
-        b.BackgroundTransparency = 0.12
+        b.FontFace = look.Bold
+        b.BackgroundColor3 = look.Surface
+        b.BackgroundTransparency = 0.06
         b.Active = true
         b.AutoButtonColor = true
         b.Parent = parent
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 14)
-        local outline = Instance.new("UIStroke", b)
-        outline.Color = Color3.fromRGB(107, 171, 255)
-        outline.Thickness = 1.5
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 12)
+        hairline(b)
         return b
     end
-    local icon = button("MM2", UDim2.fromOffset(54, 54), canvas)
+    local icon = button("MM2", UDim2.fromOffset(48, 48), canvas)
     icon.Name = "FloatingMenuIcon"
+    icon.TextSize = 12
     icon.Visible = mobile.Mode == "Mobile"
     icon.ZIndex = 10
     icon.UICorner.CornerRadius = UDim.new(1, 0)
     mobile.Icon = icon
     local pad = Instance.new("Frame")
     pad.Name = "WeaponTouchPad"
-    pad.Size = UDim2.fromOffset(128, 133)
+    pad.Size = UDim2.fromOffset(128, 122)
     pad.BackgroundTransparency = 1
     pad.Parent = canvas
-    local handle = button("MOVE", UDim2.fromOffset(128, 27), pad)
-    handle.TextSize = 11
-    handle.BackgroundTransparency = 0.4
+    -- Drag grip: a short bar instead of a labelled MOVE button.
+    local handle = button("MOVE", UDim2.fromOffset(128, 18), pad)
+    handle.Text = ""
+    handle.BackgroundTransparency = 1
+    handle.UIStroke:Destroy()
+    do
+        local grip = Instance.new("Frame")
+        grip.AnchorPoint = Vector2.new(0.5, 0.5)
+        grip.Position = UDim2.fromScale(0.5, 0.5)
+        grip.Size = UDim2.fromOffset(36, 4)
+        grip.BackgroundColor3 = look.Text
+        grip.BackgroundTransparency = 0.6
+        grip.Parent = handle
+        Instance.new("UICorner", grip).CornerRadius = UDim.new(1, 0)
+    end
     local fire = button("FIRE / STAB", UDim2.fromOffset(128, 46), pad)
-    fire.Position = UDim2.fromOffset(0, 32)
+    fire.Text = "Fire"
+    fire.Position = UDim2.fromOffset(0, 24)
+    fire.BackgroundColor3 = Color3.fromRGB(26, 34, 58)
+    fire.UIStroke.Color, fire.UIStroke.Transparency = look.Accent, 0.4
     local throw = button("THROW", UDim2.fromOffset(128, 46), pad)
-    throw.Position = UDim2.fromOffset(0, 85)
+    throw.Text = "Throw"
+    throw.Position = UDim2.fromOffset(0, 76)
     mobile.Buttons = {Fire = fire, Throw = throw}
     mobile.Pad = pad
     pad.Visible = false
@@ -24799,10 +24936,12 @@ local createMobileUI = function(C)
     draggable(handle, pad)
     local emergencyButton
     if State.EmergencyStop then
-        emergencyButton=button("STOP / RETURN",UDim2.fromOffset(146,42),canvas)
+        emergencyButton=button("STOP / RETURN",UDim2.fromOffset(112,40),canvas)
         emergencyButton.Name="EmergencyStop"
-        emergencyButton.Size=UDim2.fromOffset(146,42)
-        emergencyButton.BackgroundColor3=Color3.fromRGB(145,34,44)
+        emergencyButton.Text="Stop"
+        emergencyButton.BackgroundColor3=Color3.fromRGB(46,16,20)
+        emergencyButton.TextColor3=Color3.fromRGB(255,150,156)
+        emergencyButton.UIStroke.Color,emergencyButton.UIStroke.Transparency=Color3.fromRGB(255,90,100),.45
         emergencyButton.Visible=false
         mobile.EmergencyButton=emergencyButton
         draggable(emergencyButton,emergencyButton,mobile.TriggerEmergencyStop)
@@ -24846,47 +24985,77 @@ local createMobileUI = function(C)
     connect(throw.InputBegan, suppressInput)
     local notice = Instance.new("TextLabel")
     notice.Name = "MobileStatus"
-    notice.BackgroundColor3 = Color3.fromRGB(18, 23, 34)
-    notice.BackgroundTransparency = 0.2
+    notice.BackgroundColor3 = look.Surface
+    notice.BackgroundTransparency = 0.06
     notice.Position = UDim2.new(0.5, -150, 0, 8)
     notice.Size = UDim2.fromOffset(300, 36)
-    notice.TextColor3 = Color3.new(1, 1, 1)
-    notice.TextSize = 11
-    notice.Font = Enum.Font.Gotham
-    notice.TextWrapped = true
+    notice.TextColor3 = look.Text
+    notice.TextSize = 13
+    notice.FontFace = look.Medium
+    notice.TextTruncate = Enum.TextTruncate.AtEnd
     notice.Parent = canvas
-    Instance.new("UICorner", notice).CornerRadius = UDim.new(0, 8)
+    Instance.new("UICorner", notice).CornerRadius = UDim.new(0, 12)
+    hairline(notice)
+    do
+        local padding = Instance.new("UIPadding")
+        padding.PaddingLeft, padding.PaddingRight = UDim.new(0, 14), UDim.new(0, 14)
+        padding.Parent = notice
+    end
     mobile.StatusLabel = notice
-    local combatHUD,combatHUDText
+    -- Status card: role chip and weapon, one primary line, and shot feedback when not compact.
+    -- The whole card is the drag handle, so it carries no "drag" label.
+    local combatHUD,hudChip,hudRole,hudWeapon,hudPrimary,hudDetail,hudDot,hudResult
+    local function label(parent,font,size,color)
+        local l=Instance.new("TextLabel")
+        l.BackgroundTransparency=1; l.FontFace=font; l.TextSize=size; l.TextColor3=color
+        l.TextXAlignment=Enum.TextXAlignment.Left; l.TextTruncate=Enum.TextTruncate.AtEnd
+        l.Parent=parent
+        return l
+    end
     if State.GetCombatHUDData then
         combatHUD=Instance.new("Frame")
-        combatHUD.Name="CombatHUD"; combatHUD.Size=UDim2.fromOffset(340,108)
+        combatHUD.Name="CombatHUD"; combatHUD.Size=UDim2.fromOffset(260,64)
         combatHUD.Position=UDim2.fromOffset(8,8)
-        combatHUD.BackgroundColor3=Color3.fromRGB(18,23,34); combatHUD.BackgroundTransparency=.12
+        combatHUD.BackgroundColor3=look.Surface; combatHUD.BackgroundTransparency=.06
         combatHUD.Active=true; combatHUD.Visible=false; combatHUD.Parent=canvas
-        Instance.new("UICorner",combatHUD).CornerRadius=UDim.new(0,10)
-        local header=Instance.new("TextLabel")
-        header.Name="CombatHUDDragHandle"; header.Text="COMBAT  |  drag to move"
-        header.Size=UDim2.new(1,-16,0,20); header.Position=UDim2.fromOffset(8,3)
-        header.BackgroundTransparency=1; header.TextSize=11; header.Font=Enum.Font.GothamBold
-        header.TextColor3=Color3.fromRGB(178,200,230); header.Active=true; header.Parent=combatHUD
-        combatHUDText=Instance.new("TextLabel")
-        combatHUDText.Name="CombatHUDData"; combatHUDText.Size=UDim2.new(1,-16,1,-28)
-        combatHUDText.Position=UDim2.fromOffset(8,24); combatHUDText.BackgroundTransparency=1
-        combatHUDText.TextSize=11; combatHUDText.Font=Enum.Font.Gotham; combatHUDText.TextWrapped=true
-        combatHUDText.TextXAlignment=Enum.TextXAlignment.Left; combatHUDText.TextYAlignment=Enum.TextYAlignment.Top
-        combatHUDText.Parent=combatHUD
-        mobile.CombatHUD,mobile.CombatHUDText,mobile.CombatHUDHandle=combatHUD,combatHUDText,header
-        draggable(header,combatHUD); connect(combatHUD.InputBegan,suppressInput)
+        Instance.new("UICorner",combatHUD).CornerRadius=UDim.new(0,12)
+        hairline(combatHUD)
+        local padding=Instance.new("UIPadding")
+        padding.PaddingLeft,padding.PaddingRight=UDim.new(0,12),UDim.new(0,12)
+        padding.PaddingTop,padding.PaddingBottom=UDim.new(0,10),UDim.new(0,10)
+        padding.Parent=combatHUD
+        hudChip=Instance.new("Frame")
+        hudChip.Name="Role"; hudChip.AutomaticSize=Enum.AutomaticSize.X; hudChip.Size=UDim2.fromOffset(0,18)
+        hudChip.BackgroundTransparency=.82; hudChip.Parent=combatHUD
+        Instance.new("UICorner",hudChip).CornerRadius=UDim.new(1,0)
+        local chipPadding=Instance.new("UIPadding")
+        chipPadding.PaddingLeft,chipPadding.PaddingRight=UDim.new(0,8),UDim.new(0,8)
+        chipPadding.Parent=hudChip
+        hudRole=label(hudChip,look.Bold,11,look.Muted)
+        hudRole.AutomaticSize=Enum.AutomaticSize.X; hudRole.Size=UDim2.fromOffset(0,18); hudRole.TextTruncate=Enum.TextTruncate.None
+        hudWeapon=label(combatHUD,look.Medium,12,look.Muted)
+        hudWeapon.AnchorPoint=Vector2.new(1,0); hudWeapon.Position=UDim2.fromScale(1,0); hudWeapon.Size=UDim2.new(.55,0,0,18)
+        hudWeapon.TextXAlignment=Enum.TextXAlignment.Right
+        hudPrimary=label(combatHUD,look.Medium,14,look.Text)
+        hudPrimary.Position=UDim2.fromOffset(0,26); hudPrimary.Size=UDim2.new(1,0,0,18)
+        hudDetail=Instance.new("Frame")
+        hudDetail.BackgroundTransparency=1; hudDetail.Position=UDim2.fromOffset(0,50); hudDetail.Size=UDim2.new(1,0,0,16)
+        hudDetail.Parent=combatHUD
+        hudDot=Instance.new("Frame")
+        hudDot.AnchorPoint=Vector2.new(0,.5); hudDot.Position=UDim2.fromScale(0,.5); hudDot.Size=UDim2.fromOffset(6,6)
+        hudDot.BorderSizePixel=0; hudDot.Parent=hudDetail
+        Instance.new("UICorner",hudDot).CornerRadius=UDim.new(1,0)
+        hudResult=label(hudDetail,look.Medium,12,look.Muted)
+        hudResult.Position=UDim2.fromOffset(12,0); hudResult.Size=UDim2.new(1,-12,1,0)
+        mobile.CombatHUD,mobile.CombatHUDText,mobile.CombatHUDHandle=combatHUD,hudPrimary,combatHUD
+        draggable(combatHUD,combatHUD); connect(combatHUD.InputBegan,suppressInput)
     end
     local function layoutHUD()
         if not combatHUD then return end
         local compact=State.Config.CompactHUD~=false
-        local width=math.max(120,math.min(compact and 300 or 340,canvas.AbsoluteSize.X-24))
-        combatHUD.Size=UDim2.fromOffset(width,compact and 68 or 108)
-        mobile.CombatHUDHandle.Text=compact and "MM2 · drag" or "COMBAT  |  drag to move"
-        combatHUDText.Position=UDim2.fromOffset(8,compact and 20 or 24)
-        combatHUDText.Size=UDim2.new(1,-16,1,compact and -24 or -28)
+        local width=math.max(160,math.min(compact and 260 or 290,canvas.AbsoluteSize.X-24))
+        combatHUD.Size=UDim2.fromOffset(width,compact and 64 or 86)
+        hudDetail.Visible=not compact
         mobile.LastHUDCompact=compact
         if not userPositioned[combatHUD] then
             local size=canvas.AbsoluteSize
@@ -24895,6 +25064,35 @@ local createMobileUI = function(C)
         clamp(combatHUD)
     end
     mobile.LayoutHUD=layoutHUD
+    local hudShown={}
+    local function setText(l,text) if l.Text~=text then l.Text=text end end
+    local function renderHUD(data)
+        local roleName=tostring(data.Role or "Unknown")
+        if hudShown.Role~=roleName then
+            local role=roleLook[roleName]
+            local color=role and role[2] or look.Muted
+            hudRole.Text,hudRole.TextColor3,hudChip.BackgroundColor3=role and role[1] or roleName:upper(),color,color
+            hudShown.Role=roleName
+        end
+        setText(hudWeapon,weaponWord(data.Weapon))
+        local primary=data.Primary or data.Instruction
+        if not primary and data.Target then
+            primary="@"..data.Target
+            if data.Distance then primary..="  ·  "..math.floor(data.Distance+.5).." studs" end
+            if data.Height and data.Height>5 then primary..="  ·  above" elseif data.Height and data.Height< -5 then primary..="  ·  below" end
+        end
+        if not primary then
+            primary=(data.Role=="Lobby" or data.Role=="Waiting for character") and "Waiting for round"
+                or data.Role=="Eliminated" and "Spectating"
+                or not State.Config.Aim and "Aim off" or "No target"
+        end
+        setText(hudPrimary,primary)
+        setText(hudResult,resultWords[data.Result] or tostring(data.Result or ""))
+        if hudShown.Tone~=data.Tone then
+            hudDot.BackgroundColor3=toneColors[data.Tone] or look.Muted
+            hudShown.Tone=data.Tone
+        end
+    end
     function mobile.ResetPositions()
         table.clear(userPositioned)
         local size = canvas.AbsoluteSize
@@ -24908,7 +25106,7 @@ local createMobileUI = function(C)
         end
         if emergencyButton then
             local y=combatHUD and State.Config.CombatHUD and combatHUD.Position.Y.Offset+combatHUD.Size.Y.Offset+12 or 52
-            emergencyButton.Position=UDim2.fromOffset(size.X/2-73,y); clamp(emergencyButton)
+            emergencyButton.Position=UDim2.fromOffset(size.X/2-emergencyButton.Size.X.Offset/2,y); clamp(emergencyButton)
         end
         clamp(icon); clamp(pad)
     end
@@ -24956,7 +25154,8 @@ local createMobileUI = function(C)
         local item = C.EquippedWeapon()
         mobile.ApplyInputMode()
         pad.Visible = mobile.Mode == "Mobile" and not mobile.MenuOpen and item ~= nil
-        fire.Text = item and item.Name == "Knife" and "STAB" or "FIRE"
+        local fireText = item and item.Name == "Knife" and "Stab" or "Fire"
+        if fire.Text ~= fireText then fire.Text = fireText end
         throw.Visible = item ~= nil and item.Name == "Knife"
         local showHUD=combatHUD and State.Config.CombatHUD and not mobile.MenuOpen
         if combatHUD and mobile.LastHUDCompact~=(State.Config.CompactHUD~=false) then layoutHUD() end
@@ -24967,12 +25166,10 @@ local createMobileUI = function(C)
                 local ok,data=pcall(State.GetCombatHUDData)
                 if ok and type(data)=="table" and type(data.Text)=="string" then
                     mobile.LastCombatHUDData,mobile.LastCombatHUDError=data,nil
-                    combatHUDText.Text=State.Config.CompactHUD~=false and type(data.CompactText)=="string" and data.CompactText or data.Text
-                    combatHUDText.TextColor3=data.Tone=="confirmed" and Color3.fromRGB(110,232,158)
-                        or (data.Tone=="warning" and Color3.fromRGB(255,151,136)
-                        or (data.Tone=="waiting" and Color3.fromRGB(255,221,136) or Color3.fromRGB(230,238,250)))
+                    renderHUD(data)
                 else
-                    mobile.LastCombatHUDError=ok and "Invalid HUD snapshot" or tostring(data); combatHUDText.Text="Combat status unavailable"
+                    mobile.LastCombatHUDError=ok and "Invalid HUD snapshot" or tostring(data)
+                    renderHUD({Role="Unknown",Weapon="",Primary="Status unavailable",Tone="warning",Result=""})
                 end
             end
         end

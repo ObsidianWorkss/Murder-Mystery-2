@@ -56,4 +56,53 @@ do
     local ok,message=pcall(boot)
     check(not ok and tostring(message):find("does not provide loadstring",1,true)~=nil,"loader reports unsupported environment")
 end
+do
+    -- Role reveal: a fake Send records messages, so nothing reaches a real chat.
+    local now=100
+    local me,killer,cop,lobbyKiller={Name="Me"},{Name="Killer"},{Name="Cop"},{Name="OldKiller"}
+    local roles={[me]="Innocent",[killer]="Murderer",[cop]="Sheriff",[lobbyKiller]="Murderer"}
+    local inRound={[me]=true,[killer]=true,[cop]=true,[lobbyKiller]=false}
+    local excluded,sent,sendResult={},{},{true}
+    local State={IsPlayerExcluded=function(p) return excluded[p]==true end}
+    local C={State=State,Player=me,Clock=function() return now end,
+        Players={GetPlayers=function() return {me,lobbyKiller,cop,killer} end},
+        RoleFor=function(p) return roles[p] end,InRound=function(p) return inRound[p]==true end,
+        ViewerInRound=function() return false end,
+        Send=function(message) table.insert(sent,message); return table.unpack(sendResult) end}
+    -- INSERT_REVEAL
+    installRoleReveal(C)
+    check(State.GetRoleReveal()=="Murderer: @Killer • Sheriff: @Cop","reveal names the round murderer and sheriff")
+    inRound[cop]=false
+    check(State.GetRoleReveal()=="Murderer: @Killer • Sheriff: dead","reveal reports a dead sheriff")
+    inRound[cop]=true; roles[cop],roles[me]="Innocent","Sheriff"
+    check(State.GetRoleReveal()=="Murderer: @Killer","reveal never names you as sheriff")
+    roles[me],roles[killer]="Murderer","Innocent"; inRound[lobbyKiller]=false
+    local message,reason=State.GetRoleReveal()
+    check(message==nil and reason=="You are the murderer","reveal refuses when you are the murderer")
+    roles[me],roles[killer],roles[cop]="Innocent","Murderer","Sheriff"
+    excluded[killer]=true
+    message,reason=State.GetRoleReveal()
+    check(message==nil and reason=="The murderer is protected","reveal skips a protected murderer")
+    excluded[killer],excluded[cop]=nil,true
+    check(State.GetRoleReveal()=="Murderer: @Killer","reveal omits a protected sheriff")
+    excluded[cop]=nil; inRound[killer]=false
+    message,reason=State.GetRoleReveal()
+    check(message==nil and reason=="Murderer not known yet","lobby leftovers are not revealed as murderer")
+    inRound[killer],inRound[me]=true,false
+    message,reason=State.GetRoleReveal()
+    check(message==nil and reason=="Available during a round","reveal waits for a round")
+    inRound[me]=true
+    check(#sent==0,"previews never send a chat message")
+    local ok,result=State.RevealRolesInChat()
+    check(ok and #sent==1 and sent[1]=="Murderer: @Killer • Sheriff: @Cop" and result:find("Sent",1,true),"reveal sends one message")
+    now+=1
+    ok,result=State.RevealRolesInChat()
+    check(not ok and #sent==1 and result=="Wait 3 s","reveal cooldown blocks repeat messages")
+    now+=4; sendResult={false,"Chat send failed: mock"}
+    ok,result=State.RevealRolesInChat()
+    check(not ok and result=="Chat send failed: mock" and State.RoleReveal.Sent==1,"failed send is reported and not counted")
+    sendResult={true}
+    ok=State.RevealRolesInChat()
+    check(ok and #sent==3 and State.RoleReveal.Sent==2,"a failed send does not start the cooldown")
+end
 print(string.format("%d release assertions passed",passed))

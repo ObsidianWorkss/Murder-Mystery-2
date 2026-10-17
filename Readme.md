@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.2 · Release candidate · PC + mobile**
+**v1.0.0-rc.3 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -32,7 +32,7 @@ For clearer startup errors, execute the included [`loader.lua`](loader.lua) file
 | Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
 | Clicked stab assist | Attempts contact with the nearest clear opponent within 6.5 studs when the murderer clicks to stab. Enabled by default. |
 | Stab sweep | Checks blade overlaps and movement during a stab. |
-| Murderer kill aura | Optional automatic stab attempts. Disabled by default. |
+| Kill aura | Optional automatic stab attempts. Disabled by default. |
 
 Clicking with a knife stabs; it does not automatically throw. Turn off **Knife throw prediction** for manual cursor throws. To keep prediction while allowing cursor fallback when no target is available, turn off **Require clear throw target**.
 
@@ -44,10 +44,10 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 | Action | PC | Mobile |
 | --- | --- | --- |
-| Open / close menu | Right Shift | Draggable MM2 icon |
-| Fire gun / stab | Left click | FIRE / STAB |
-| Throw knife | E or right click | THROW |
-| Stop active actions / return | End | STOP |
+| Open / close menu | Right Shift | Draggable MM2 button |
+| Fire gun / stab | Left click | Fire / Stab |
+| Throw knife | E or right click | Throw |
+| Stop active actions / return | End | Stop |
 | Toggle aim assistance | F6 | Aim assist setting |
 | Toggle gun aim | F7 | Gun aim setting |
 | Repair camera input | F10 | Repair camera input button |
@@ -58,6 +58,7 @@ The layout follows the active input device. Touch-capable PCs can continue using
 
 - Role and dropped-gun ESP, threat warnings, and compact combat status.
 - Player exclusions shared by script-controlled targeting and player actions.
+- Players → Chat → **Reveal roles** posts the round's murderer and sheriff in chat, for example `Murderer: @name • Sheriff: @name`. It previews the message first, never names you, skips protected players, and waits 4 seconds between messages.
 - Optional gun pickup, knife dodge, tactical hints, selected-player attacks, teleports, and fling attempts.
 - R15 animation options, display presets, camera repair, and unload controls.
 
