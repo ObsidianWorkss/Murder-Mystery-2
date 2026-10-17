@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.13 — 2026-10-17
+
+### Triggerbot
+
+- Sheriff → Gun Aim → **Triggerbot**, off by default: automatically fires your gun when your crosshair or cursor aims at the murderer. It pauses while the menu or chat is open, while flinging or invisible, enforces weapon ready and cooldown checks, and skips protected or non-murderer players.
+- PC keybind: bound to **T** by default, rebindable or clearable in Settings → Keybinds. Confirms with `Triggerbot on` / `Triggerbot off` toasts.
+
 ## 1.0.0-rc.12 — 2026-10-17
 
 ### Keybinds

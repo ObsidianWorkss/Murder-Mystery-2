@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.12 · Release candidate · PC + mobile**
+**v1.0.0-rc.13 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -26,6 +26,7 @@ For clearer startup errors, execute the included [`loader.lua`](loader.lua) file
 | --- | --- |
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
 | Gun aim | Redirects a fired shot toward a clear body point on the known murderer, including targets outside the camera view. |
+| Triggerbot | Automatically fires when your crosshair or cursor aims at the murderer with a ready gun. Disabled by default. |
 | Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
@@ -61,7 +62,7 @@ Settings → **Keybinds** lists every bindable action. Click a key box, press a 
 | --- | --- |
 | Aim assist / Gun aim / Invisibility / Repair camera | F6 / F7 / F8 / F10 |
 | Fly / Noclip / Speed boost / Infinite jump | F / N / G / J |
-| Kill aura / Player ESP / X-ray | K / V / X |
+| Kill aura / Player ESP / X-ray / Triggerbot | K / V / X / T |
 | Jump boost, Animation pack, Reveal roles, Teleport to map or lobby | Unbound |
 
 Movement keys, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11 and F12 stay reserved for Roblox, MM2 and this script.

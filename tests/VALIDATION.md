@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.13
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 109 release assertions pass (167 total).
+- 13 new release assertions cover Triggerbot: starts off, stays off until enabled, enables aim and gun aim, waits for target, ignores innocent players, skips protected murderers, fires at the murderer and increments shot counter, enforces cooldown, reports missing gun, stops cleanly on disable or emergency stop, defaults to T keybind, toggles via keybind, and confirms with toasts.
+- Triggerbot has not been tested in a live server.
+
 ## Release candidate 1.0.0-rc.12
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 96 release assertions pass (154 total).
