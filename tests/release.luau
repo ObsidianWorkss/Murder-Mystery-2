@@ -490,8 +490,35 @@ do
     State.SetKeybind("RevealRoles","R")
     check(press("R")=="Available during a round" and tones[#tones]=="warn","a refused reveal shows why as a warning")
     check(press("F10"):find("Repair camera failed",1,true)==1 and tones[#tones]=="warn","an action error is reported instead of breaking input")
+    check(cfg.Keybinds.Menu=="RightShift" and cfg.Keybinds.Stop=="End","menu and stop keys default to Right Shift and End")
+    ok,message=State.SetKeybind("Menu","Backspace")
+    check(not ok and message=="Open / close menu needs a key" and cfg.Keybinds.Menu=="RightShift","the menu key can never be cleared")
+    ok,message=State.SetKeybind("Fly","End")
+    check(not ok and message=="End is used by Emergency stop","the stop key cannot be taken by another action")
+    ok,message=State.SetKeybind("Menu","H")
+    check(ok and message=="H moved from Player ESP to Open / close menu" and cfg.Keybinds.ESP=="None","the menu key can move to a new key")
+    check(press("H")==nil,"menu and stop keys are left to the menu's own binding")
+    local options={}
+    State.MobileUI.SetOption=function(key,enabled)
+        table.insert(options,key.."="..tostring(enabled))
+        if key=="AutoPickup" then return false,"Your executor lacks firetouchinterest" end
+        cfg[key]=enabled
+        return enabled
+    end
+    local everything={"KnifeTriggerbot","StabSweep","GunESP","Toasts","AutoKnifeDodge","InvisibleKnife","TacticalGuide",
+        "FlingMurderer","FlingAll","StopFling","RepairCharacter","Unload"}
+    local listed=0
+    for _,id in ipairs(everything) do if cfg.Keybinds[id]=="None" then listed+=1 end end
+    check(listed==#everything,"every menu toggle and action has an unbound keybind")
+    State.SetKeybind("StabSweep","U")
+    check(press("U")=="Stab sweep on" and options[#options]=="StabSweep=true" and tones[#tones]=="on",
+        "a toggle key goes through the same path as its menu toggle")
+    State.SetKeybind("AutoPickup","Y")
+    check(press("Y")=="Your executor lacks firetouchinterest" and tones[#tones]=="warn","a toggle key shows its menu toggle's refusal")
+    State.MobileUI.SetOption=nil
     State.ResetKeybinds()
-    check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None","reset restores default keys")
+    check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None" and cfg.Keybinds.Menu=="RightShift",
+        "reset restores default keys")
 end
 do
     -- X-ray robustness: Terrain and a part that refuses writes must never break switching off or unloading.

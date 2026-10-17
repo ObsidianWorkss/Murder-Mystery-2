@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.15 · Release candidate · PC + mobile**
+**v1.0.0-rc.16 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -46,10 +46,10 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 | Action | PC | Mobile |
 | --- | --- | --- |
-| Open / close menu | Right Shift | Draggable MM2 button |
+| Open / close menu | Right Shift (rebindable) | Draggable MM2 button |
 | Fire gun / stab | Left click | Fire / Stab |
 | Throw knife | E or right click | Throw |
-| Stop active actions / return | End | Stop |
+| Stop active actions / return | End (rebindable) | Stop |
 | Fly up / down | Space or jump / Ctrl | Jump or Up / Down |
 | Toggle aim assistance | F6 (rebindable) | Aim assist setting |
 | Toggle gun aim | F7 (rebindable) | Gun aim setting |
@@ -57,16 +57,17 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 ### PC keybinds
 
-Settings → **Keybinds** lists every bindable action. Click a key box and press a new key; Esc cancels and Backspace clears it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
+Settings → **Keybinds**, **Combat keys**, **Movement keys**, **Visual keys** and **Action keys** give every menu toggle and action its own key, including the menu and emergency-stop keys (these can move but never be cleared). Click a key box and press a new key; Esc cancels and Backspace clears it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
 
 | Action | Default |
 | --- | --- |
 | Aim assist / Gun aim / Invisibility / Repair camera | F6 / F7 / F8 / F10 |
 | Fly / Noclip / Speed boost / Infinite jump | F / N / G / J |
 | Kill aura / Player ESP / X-ray / Triggerbot | K / V / X / T |
-| Jump boost, Animation pack, Reveal roles, Teleport to map or lobby | Unbound |
+| Open menu / Emergency stop | Right Shift / End |
+| Every other toggle and action (jump boost, animation pack, reveal roles, teleports, fling actions, HUD and ESP options, unload and more) | Unbound |
 
-Movement keys, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11 and F12 stay reserved for Roblox, MM2 and this script.
+Movement keys, Space, Left Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, F9, F11 and F12 stay reserved for Roblox and MM2.
 
 The layout follows the active input device. Touch-capable PCs can continue using mouse and keyboard controls.
 

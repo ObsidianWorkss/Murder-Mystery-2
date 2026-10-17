@@ -1,5 +1,27 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.16
+
+- `main.lua` and `loader.lua` compile with Luau 0.739 (0.07 s, 1.07 MB bytecode); 58 combat and 129 release assertions pass (187 total) in 0.5 s.
+- 8 new keybind assertions: menu and stop defaults, the menu key cannot be cleared, the stop key cannot be taken, the menu key can move, menu and stop keys are left to the menu, every toggle and action is listed, a toggle key uses the menu toggle path, and its refusal is shown.
+
+### Offline benchmarks
+
+Shipped modules run against plain-table fakes with Luau `-O2`. These numbers cover the script's own Luau work only; real property writes, rendering and physics cost extra and need a live client to measure.
+
+| Benchmark | rc.14 | rc.16 |
+| --- | --- | --- |
+| X-ray on, 20,000-part map: frames to fill in | 14 | 63 (about 1 s at 60 FPS) |
+| X-ray on: worst single frame | 22.9 ms | 7.0 ms (first frame includes the one-time map scan) |
+| X-ray strength change (all parts) | 4.4 ms | 6.5 ms |
+| X-ray off / unload restore | 3.8 ms | 5.6 ms |
+| X-ray idle per frame (on / off) | 0.34 / 0.06 µs | 0.47 / 0.06 µs |
+| Movement per frame, all assists on / off | — | 5.4 / 0.9 µs |
+| Key press dispatch, 48 actions (bound / unbound key) | — | 2.5 / 2.3 µs |
+| Reveal roles preview, 12 players | — | 5.7 µs |
+
+- The rc.15 crash fix (protected writes) made strength change and switch-off slower than rc.14; rc.16 removes the per-part closures, keeping the protection at a smaller cost.
+
 ## Release candidate 1.0.0-rc.15
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 121 release assertions pass (179 total).

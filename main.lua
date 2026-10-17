@@ -17741,7 +17741,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.15"
+State.Version = "1.0.0-rc.16"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -24447,15 +24447,26 @@ local installXRay=function(C)
         end
         return node==world
     end
+    -- Shared helpers run under pcall without building a closure for every part.
+    local function readModifier(part) return part.LocalTransparencyModifier end
+    local function writeModifier(part,value) part.LocalTransparencyModifier=value; return part.LocalTransparencyModifier end
+    local function restoreModifier(part,record)
+        -- A value the game changed since our write is left alone.
+        if part.Parent and math.abs(part.LocalTransparencyModifier-record.Applied)<1e-4 then
+            part.LocalTransparencyModifier=record.Before
+        end
+    end
     -- A part that refuses the write is never tracked, so switching off and unloading cannot trip on it.
     local function apply(part,value)
-        return pcall(function()
-            local before=part.LocalTransparencyModifier
-            part.LocalTransparencyModifier=value
-            local record=tracked[part] or {Before=before}
-            record.Applied=part.LocalTransparencyModifier
-            tracked[part]=record
-        end)
+        local ok,before=pcall(readModifier,part)
+        if not ok then return false end
+        local written
+        ok,written=pcall(writeModifier,part,value)
+        if not ok then return false end
+        local record=tracked[part] or {Before=before}
+        record.Applied=written
+        tracked[part]=record
+        return true
     end
     function xray.Count()
         local count=0
@@ -24465,13 +24476,7 @@ local installXRay=function(C)
     function State.StopXRay()
         local failed=0
         for part,record in pairs(tracked) do
-            -- A value the game changed since our write is left alone.
-            local ok=pcall(function()
-                if part.Parent and math.abs(part.LocalTransparencyModifier-record.Applied)<1e-4 then
-                    part.LocalTransparencyModifier=record.Before
-                end
-            end)
-            if not ok then failed+=1 end
+            if not pcall(restoreModifier,part,record) then failed+=1 end
         end
         table.clear(tracked); table.clear(queue)
         queueIndex,applied,xray.Active=1,nil,false
@@ -24493,16 +24498,20 @@ local installXRay=function(C)
         if value~=applied and clock()-appliedAt>=.2 then
             applied,appliedAt=value,clock()
             for part,record in pairs(tracked) do
-                pcall(function()
-                    if part.Parent then part.LocalTransparencyModifier=value; record.Applied=part.LocalTransparencyModifier end
-                end)
+                if part.Parent then
+                    local ok,written=pcall(writeModifier,part,value)
+                    if ok then record.Applied=written end
+                end
             end
         end
         -- Large maps are spread across frames so switching on never freezes the game.
+        -- At most 1500 parts and about 4 ms of work per frame, so even a huge map never causes a hitch.
         local last=math.min(#queue,queueIndex+(C.Batch or 1500)-1)
+        local started=os.clock()
         for i=queueIndex,last do
             local part=queue[i]
             if part.Parent and not tracked[part] and eligible(part) then apply(part,applied) end
+            if os.clock()-started>(C.Budget or .004) then last=i; break end
         end
         queueIndex=last+1
         if queueIndex>#queue and #queue>0 then table.clear(queue); queueIndex=1 end
@@ -24744,10 +24753,24 @@ local installKeybinds=function(C)
     local State,UIS=C.State,C.UIS
     local cfg=State.Config
     local reserved={}
-    for _,name in ipairs({"W","A","S","D","Space","LeftShift","RightShift","LeftControl","End","E","Slash","Tab","Escape",
+    for _,name in ipairs({"W","A","S","D","Space","LeftShift","LeftControl","E","Slash","Tab","Escape",
         "Return","Backspace","Delete","Backquote","I","O","Up","Down","Left","Right","F9","F11","F12","Unknown",
         "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton"}) do reserved[name]=true end
     local function flip(key) cfg[key]=not cfg[key]; return cfg[key] end
+    -- A key and its menu toggle share one path (State.MobileUI.SetOption), so both behave the same.
+    local function toggle(key)
+        local ui=State.MobileUI
+        if ui and ui.SetOption then
+            local on,refusal=ui.SetOption(key,not cfg[key])
+            if refusal then return nil,tostring(refusal),true end
+            return on
+        end
+        return flip(key)
+    end
+    local function perform(call,done)
+        local ok,message=call()
+        return nil,ok~=false and done or tostring(message),ok==false
+    end
     local actions={
         {Id="Aim",Title="Aim assist",Default="F6",Run=function() flip("Aim"); C.RefreshAim(); C.SyncWeapons(); return cfg.Aim end},
         {Id="MagicBullet",Title="Gun aim",Default="F7",Run=function() State.SetMagicBullet(not cfg.MagicBullet); return cfg.MagicBullet end},
@@ -24782,6 +24805,52 @@ local installKeybinds=function(C)
         {Id="TeleportLobby",Title="Teleport to lobby",Default="None",Run=function() local ok,message=State.TeleportToArea("Lobby"); return nil,ok and "Teleported to lobby" or tostring(message),not ok end},
         {Id="RepairCamera",Title="Repair camera",Default="F10",Run=function() local ok,message=State.FixCamera(); return nil,ok and "Camera repaired" or tostring(message),not ok end},
     }
+    -- Every other menu toggle and action can have a key too; they start unbound.
+    for _,entry in ipairs({
+        {"Combat","ConservativeGun","Conservative gun shots"},{"Combat","TargetContinuity","Stable target choice"},
+        {"Combat","KnifeTriggerbot","Knife triggerbot"},{"Combat","KnifeAim","Knife throw prediction"},
+        {"Combat","KnifeAllDirections","All-direction knife aim"},{"Combat","RequireClearKnifeTarget","Require clear throw target"},
+        {"Combat","StabAssist","Clicked stab assist"},{"Combat","StabSweep","Stab sweep"},
+        {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
+        {"Combat","AutoKnifeDodge","Dodge incoming knives"},{"Combat","AutoPickup","Auto gun pickup"},
+        {"Movement","InvisibleKnife","Knife while invisible"},
+        {"Visuals","GunESP","Dropped gun ESP"},{"Visuals","CombatHUD","Combat HUD"},{"Visuals","CompactHUD","Compact HUD"},
+        {"Visuals","ThreatWarning","Nearby murderer warning"},{"Visuals","AimMarker","Gun aim marker"},
+        {"Visuals","CleanVisuals","Clean role visuals"},{"Visuals","StableBodyESP","Stable body colors"},
+        {"Visuals","Toasts","Toasts"},{"Visuals","LearnedSheriffGuide","Learned Sheriff guidance"},
+    }) do
+        local group,key,title=entry[1],entry[2],entry[3]
+        table.insert(actions,{Id=key,Title=title,Default="None",Group=group,Run=function() return toggle(key) end})
+    end
+    for _,action in ipairs({
+        {Id="TacticalGuide",Title="Tactical hints",Group="Visuals",Run=function()
+            if State.SetTacticalGuide then State.SetTacticalGuide(not cfg.TacticalGuide) else flip("TacticalGuide") end
+            return cfg.TacticalGuide end},
+        {Id="FlingMurderer",Title="Fling murderer",Group="Actions",Run=function()
+            if State.StopFlingAll then State.StopFlingAll("Manual fling selected") end
+            return perform(function() return State.FlingRole("Murderer") end,"Flinging the murderer") end},
+        {Id="FlingSheriff",Title="Fling sheriff",Group="Actions",Run=function()
+            if State.StopFlingAll then State.StopFlingAll("Manual fling selected") end
+            return perform(function() return State.FlingRole("Sheriff") end,"Flinging the sheriff") end},
+        {Id="FlingAll",Title="Fling all",Group="Actions",Run=function() return perform(State.FlingAll,"Flinging everyone") end},
+        {Id="StopFling",Title="Stop fling",Group="Actions",Run=function()
+            if State.StopFlingAll then State.StopFlingAll() end
+            if State.StopFling then State.StopFling() end
+            return nil,"Fling stopped" end},
+        {Id="RepairCharacter",Title="Repair character",Group="Actions",Run=function() return perform(State.RepairCharacter,"Repairing character") end},
+        {Id="Unload",Title="Unload script",Group="Actions",Run=function() return perform(State.Destroy,"Unloaded") end},
+    }) do
+        action.Default="None"
+        table.insert(actions,action)
+    end
+    -- The menu and emergency-stop keys are bound by the menu itself; they can move but never be cleared.
+    table.insert(actions,1,{Id="Menu",Title="Open / close menu",Default="RightShift",Group="Menu",Special=true})
+    table.insert(actions,2,{Id="Stop",Title="Emergency stop",Default="End",Group="Menu",Special=true})
+    local groupOf={Aim="Combat",MagicBullet="Combat",Triggerbot="Combat",KillAura="Combat",ESP="Visuals",XRay="Visuals",
+        Fly="Movement",Noclip="Movement",SpeedBoost="Movement",JumpBoost="Movement",InfiniteJump="Movement",
+        Invisibility="Movement",AnimationPack="Movement",TeleportMap="Movement",TeleportLobby="Movement",
+        RevealRoles="Actions",RepairCamera="Actions"}
+    for _,action in ipairs(actions) do action.Group=action.Group or groupOf[action.Id] or "Actions" end
     local byId={}
     for _,action in ipairs(actions) do byId[action.Id]=action end
     -- Saved binds survive reloads; anything missing, reserved or duplicated falls back cleanly.
@@ -24791,6 +24860,7 @@ local installKeybinds=function(C)
     for _,action in ipairs(actions) do
         local key=type(saved[action.Id])=="string" and saved[action.Id] or action.Default
         if key~="None" and (reserved[key] or taken[key]) then key="None" end
+        if action.Special and key=="None" then key=action.Default end
         cfg.Keybinds[action.Id]=key
         if key~="None" then taken[key]=action.Id end
     end
@@ -24800,7 +24870,11 @@ local installKeybinds=function(C)
         local action=byId[id]
         if not action then return false,"Unknown keybind" end
         if key==nil or key=="" or key=="Backspace" or key=="Delete" then key="None" end
+        if key=="None" and action.Special then return false,action.Title.." needs a key" end
         if key~="None" and reserved[key] then return false,key.." is reserved" end
+        for otherId,otherKey in pairs(cfg.Keybinds) do
+            if otherId~=id and otherKey==key and byId[otherId].Special then return false,key.." is used by "..byId[otherId].Title end
+        end
         local message=action.Title..(key=="None" and " unbound" or ": "..key)
         if key~="None" then
             for otherId,otherKey in pairs(cfg.Keybinds) do
@@ -24823,6 +24897,7 @@ local installKeybinds=function(C)
         local name=input.KeyCode.Name
         for _,action in ipairs(actions) do
             if cfg.Keybinds[action.Id]==name then
+                if action.Special then return nil end -- the menu binds these itself
                 local ok,on,message,refused=pcall(action.Run)
                 local text=not ok and (action.Title.." failed: "..tostring(on))
                     or message or (action.Title..(on and " on" or " off"))
@@ -24949,6 +25024,12 @@ local createMobileUI = function(C)
     local function suppressInput()
         mobile.InputUntil = os.clock() + 0.25
     end
+    -- Enum lookups by name are wrapped: a name that is not a KeyCode must give nil, never stop the menu loading.
+    local function keyCode(name)
+        local ok, code = pcall(function() return Enum.KeyCode[name] end)
+        return ok and code or nil
+    end
+    local function keyLabel(name) return (tostring(name):gsub("(%l)(%u)", "%1 %2")) end
     function mobile.TriggerEmergencyStop()
         if mobile.Destroyed or not State.Running or not State.EmergencyStop then return false end
         suppressInput()
@@ -25056,6 +25137,9 @@ local createMobileUI = function(C)
     local settingsPage=tab("Settings","settings")
     local settings=page("Settings",settingsPage,"General","settings",true)
     local keybindsCard=page("Keybinds",settingsPage,"Keybinds","keyboard")
+    local keyCards={Menu=keybindsCard,Combat=page("KeysCombat",settingsPage,"Combat keys","swords"),
+        Movement=page("KeysMovement",settingsPage,"Movement keys","footprints"),
+        Visuals=page("KeysVisuals",settingsPage,"Visual keys","eye"),Actions=page("KeysActions",settingsPage,"Action keys","zap")}
     local appearance=page("Appearance",settingsPage,"Appearance","palette")
     function mobile.OpenPage(key)
         local target=mobile.Pages[key]
@@ -25078,32 +25162,38 @@ local createMobileUI = function(C)
         syncing = false
     end
     mobile.Refresh = refresh
+    -- One path for menu toggles and their keybinds. Returns the new value, plus a reason when refused.
+    local function setOption(key, enabled)
+        State.Config[key] = enabled == true
+        -- Setters that refuse return false and a reason; the toast shows that reason.
+        local accepted,reason=true,nil
+        if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
+        elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
+        elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
+        elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
+        elseif key == "AuraExtendedReach" then accepted,reason=State.SetAuraExtendedReach(enabled)
+        elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
+        elseif key == "ExperimentalInvisibility" then accepted,reason=State.SetExperimentalInvisibility(enabled)
+        elseif key == "Invisibility" then accepted,reason=State.SetInvisibility(enabled)
+        elseif key == "MageAnimations" then accepted,reason=State.SetMageAnimations(enabled) end
+        if key == "TargetContinuity" then State.SetTargetContinuity(enabled) end
+        if key == "LearnedSheriffGuide" then State.SetLearnedSheriffGuide(enabled) end
+        C.SyncWeapons()
+        C.UpdateVisuals()
+        refresh()
+        return State.Config[key], accepted == false and reason or nil
+    end
+    mobile.SetOption = setOption
     local function option(tab, title, key, desc)
         local toggle = tab:Toggle({
             Title = title, Desc = desc, Value = State.Config[key],
             Callback = function(enabled)
                 if syncing or not State.Running or State.Config[key] == enabled then return end
                 suppressInput()
-                State.Config[key] = enabled == true
-                -- Setters that refuse return false and a reason; the toast shows that reason.
-                local accepted,reason=true,nil
-                if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
-                elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
-                elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
-                elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
-                elseif key == "AuraExtendedReach" then accepted,reason=State.SetAuraExtendedReach(enabled)
-                elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
-                elseif key == "ExperimentalInvisibility" then accepted,reason=State.SetExperimentalInvisibility(enabled)
-                elseif key == "Invisibility" then accepted,reason=State.SetInvisibility(enabled)
-                elseif key == "MageAnimations" then accepted,reason=State.SetMageAnimations(enabled) end
-                if key == "TargetContinuity" then State.SetTargetContinuity(enabled) end
-                if key == "LearnedSheriffGuide" then State.SetLearnedSheriffGuide(enabled) end
-                C.SyncWeapons()
-                C.UpdateVisuals()
-                refresh()
+                local on, refusal = setOption(key, enabled)
                 if mobile.Toast then
-                    if accepted==false and reason then mobile.Toast(tostring(reason), "warn")
-                    else mobile.Toast(title .. (State.Config[key] and " on" or " off"), State.Config[key] and "on" or "off") end
+                    if refusal then mobile.Toast(tostring(refusal), "warn")
+                    else mobile.Toast(title .. (on and " on" or " off"), on and "on" or "off") end
                 end
             end,
         })
@@ -25125,7 +25215,7 @@ local createMobileUI = function(C)
         option(automation,"Kill aura","KillAura","Stabs nearby players while you are murderer.")
     end
     if State.EmergencyStop then
-        home:Button({Title="Emergency stop",Desc="End key on PC",Callback=mobile.TriggerEmergencyStop})
+        home:Button({Title="Emergency stop",Desc="Stop key on PC",Callback=mobile.TriggerEmergencyStop})
     end
     local advancedCombat=combat
     option(knife, "Stab sweep", "StabSweep", "Counts blade contact through the whole stab.")
@@ -25222,13 +25312,14 @@ local createMobileUI = function(C)
         -- WindUI draws and captures the keys; the keybind module does the acting, so chat typing never fires them.
         local blocked={}
         for name in pairs(State.Keybinds.Reserved) do
-            if name~="Backspace" and name~="Delete" and Enum.KeyCode[name] then table.insert(blocked,name) end
+            if name~="Backspace" and name~="Delete" and keyCode(name) then table.insert(blocked,name) end
         end
-        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key box, then press a new key. Esc cancels, Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
+        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key box, then press a new key. Esc cancels, Backspace clears it. E always throws."})
         mobile.KeybindElements,mobile.KeybindShown={},{}
         for _,action in ipairs(State.Keybinds.Actions) do
             local key=State.Config.Keybinds[action.Id]
-            mobile.KeybindElements[action.Id]=keybindsCard:Keybind({Title=action.Title,Value=key,Blacklist=blocked,Callback=function() end})
+            local card=keyCards[action.Group] or keybindsCard
+            mobile.KeybindElements[action.Id]=card:Keybind({Title=action.Title,Value=key,Blacklist=blocked,Callback=function() end})
             mobile.KeybindShown[action.Id]=key
         end
         keybindsCard:Button({Title="Reset keybinds",Callback=function()
@@ -25236,8 +25327,13 @@ local createMobileUI = function(C)
             local _,message=State.ResetKeybinds()
             if mobile.Toast then mobile.Toast(message,"info",true) end
         end})
-        mobile.KeybindCard=mobile.Pages.Keybinds.Section.ElementFrame
-        mobile.KeybindCard.Visible=mobile.Mode=="PC"
+        -- Keybind cards are PC only.
+        mobile.KeybindCards={}
+        for _,id in ipairs({"Keybinds","KeysCombat","KeysMovement","KeysVisuals","KeysActions"}) do
+            local frame=mobile.Pages[id].Section.ElementFrame
+            frame.Visible=mobile.Mode=="PC"
+            table.insert(mobile.KeybindCards,frame)
+        end
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
@@ -25279,7 +25375,7 @@ local createMobileUI = function(C)
     poses:Button({Title = "Play custom pose", Callback = function() State.SetPose(poseId); refresh() end})
     animations:Button({Title = "Restore default animations", Callback = function() State.StopPose(); State.RestoreMage(); refresh() end})
     local help=home
-    help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying"})
+    mobile.ControlsCard=help:Paragraph({Title="Controls",Desc="PC  Right Shift menu  ·  Click fire or stab  ·  E or right-click throw  ·  End stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying"})
     appearance:Dropdown({Title="Menu theme",Values={"Midnight","Graphite","Light"},Value="Midnight",Multi=false,Callback=function(name)
         local theme=({Midnight="MM2 Midnight",Graphite="Dark",Light="Light"})[name]
         if theme then suppressInput(); library:SetTheme(theme) end
@@ -25518,6 +25614,9 @@ local createMobileUI = function(C)
         local function flag(value) return value and "on" or "off" end
         session..="\nGun aim "..flag(State.Config.MagicBullet).."  ·  ESP "..flag(State.Config.ESP).."  ·  Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
+        local binds=State.Config.Keybinds or {}
+        updateDescription(mobile.ControlsCard,"Controls",("PC  %s menu  ·  Click fire or stab  ·  E or right-click throw  ·  %s stop\nMobile  MM2 button  ·  Fire  ·  Throw  ·  Stop  ·  Up and Down while flying")
+            :format(keyLabel(binds.Menu or "RightShift"),keyLabel(binds.Stop or "End")))
         if mobile.GuidanceStatus then updateDescription(mobile.GuidanceStatus,"Guidance",State.Guidance and State.Guidance.Instruction or "Waiting for a round") end
         if mobile.RevealStatus and State.GetRoleReveal then
             local message,reason=State.GetRoleReveal()
@@ -25700,29 +25799,45 @@ local createMobileUI = function(C)
         mobile.EmergencyButton=emergencyButton
         draggable(emergencyButton,emergencyButton,mobile.TriggerEmergencyStop)
     end
-    if actionService then
-        -- Consume Right Shift before native mouse-lock bindings; Left Shift stays available.
-        actionService:BindActionAtPriority(menuAction, function(_, state)
-            if mobile.Destroyed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then
-                return Enum.ContextActionResult.Pass
-            end
-            if state == Enum.UserInputState.Begin then window:Toggle() end
-            return Enum.ContextActionResult.Sink
-        end, false, Enum.ContextActionPriority.High.Value + 100, Enum.KeyCode.RightShift)
-        menuBound = true
-        if State.EmergencyStop then
-            actionService:BindActionAtPriority(emergencyAction,function(_,state)
-                if mobile.Destroyed or not State.Running or getMode()~="PC" or UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
-                if state==Enum.UserInputState.Begin then mobile.TriggerEmergencyStop() end
-                return Enum.ContextActionResult.Sink
-            end,false,Enum.ContextActionPriority.High.Value+110,Enum.KeyCode.End)
-            emergencyBound=true
+    -- The menu and stop keys come from Settings -> Keybinds (Right Shift and End by default).
+    local function menuKey() return keyCode(State.Config.Keybinds and State.Config.Keybinds.Menu) or Enum.KeyCode.RightShift end
+    local function stopKey() return keyCode(State.Config.Keybinds and State.Config.Keybinds.Stop) or Enum.KeyCode.End end
+    local function menuPressed(_, state)
+        if mobile.Destroyed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then
+            return Enum.ContextActionResult.Pass
         end
+        if state == Enum.UserInputState.Begin then window:Toggle() end
+        return Enum.ContextActionResult.Sink
+    end
+    local function stopPressed(_, state)
+        if mobile.Destroyed or not State.Running or getMode() ~= "PC" or UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+        if state == Enum.UserInputState.Begin then mobile.TriggerEmergencyStop() end
+        return Enum.ContextActionResult.Sink
+    end
+    local boundMenuKey, boundStopKey
+    -- Rebinds only when a key actually changed; called again whenever the keybind cards sync.
+    function mobile.BindMenuKeys()
+        if not actionService or mobile.Destroyed then return end
+        local wantedMenu, wantedStop = menuKey(), stopKey()
+        if wantedMenu ~= boundMenuKey then
+            if menuBound then actionService:UnbindAction(menuAction) end
+            -- High priority so the menu key wins over native mouse-lock bindings.
+            actionService:BindActionAtPriority(menuAction, menuPressed, false, Enum.ContextActionPriority.High.Value + 100, wantedMenu)
+            menuBound, boundMenuKey = true, wantedMenu
+        end
+        if State.EmergencyStop and wantedStop ~= boundStopKey then
+            if emergencyBound then actionService:UnbindAction(emergencyAction) end
+            actionService:BindActionAtPriority(emergencyAction, stopPressed, false, Enum.ContextActionPriority.High.Value + 110, wantedStop)
+            emergencyBound, boundStopKey = true, wantedStop
+        end
+    end
+    if actionService then
+        mobile.BindMenuKeys()
     else
         connect(UIS.InputBegan, function(input, processed)
             if processed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then return end
-            if input.KeyCode == Enum.KeyCode.RightShift then window:Toggle() end
-            if input.KeyCode == Enum.KeyCode.End and State.EmergencyStop then mobile.TriggerEmergencyStop() end
+            if input.KeyCode == menuKey() then window:Toggle() end
+            if input.KeyCode == stopKey() and State.EmergencyStop then mobile.TriggerEmergencyStop() end
         end)
     end
     local function action(callback)
@@ -25963,7 +26078,7 @@ local createMobileUI = function(C)
         mobile.Mode = mode
         State.InputMode = mode
         icon.Visible = mode == "Mobile"
-        if mobile.KeybindCard then mobile.KeybindCard.Visible = mode == "PC" end
+        for _, frame in ipairs(mobile.KeybindCards or {}) do frame.Visible = mode == "PC" end
         if emergencyButton and mode~="Mobile" then emergencyButton.Visible=false end
         pad.Visible = mode == "Mobile" and not mobile.MenuOpen and C.EquippedWeapon() ~= nil
         suppressInput()
@@ -26078,6 +26193,7 @@ local createMobileUI = function(C)
                     mobile.KeybindShown[id]=key
                 end
             end
+            if mobile.BindMenuKeys then mobile.BindMenuKeys() end
         end
         if State.Config.Toasts~=false and State.GetCombatHUDData then
             local ok,data=pcall(State.GetCombatHUDData)

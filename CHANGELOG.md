@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.0-rc.16 — 2026-10-17
+
+### Keybinds for everything
+
+- Every menu toggle and action can have a key, grouped into Keybinds, Combat keys, Movement keys, Visual keys and Action keys in Settings. New entries start unbound.
+- The menu key (Right Shift) and the emergency-stop key (End) are rebindable and take effect immediately; they can move but never be cleared, and no other action can take them.
+- A key and its menu toggle now run the same code, so a key behaves exactly like clicking the switch, including its refusal reason.
+- The Home → Controls card shows your current menu and stop keys.
+
+### Fixes
+
+- Key names are looked up safely when the key cards are built. Two reserved names are not keyboard keys, and an unguarded lookup of them could stop the whole menu from opening.
+
+### Performance
+
+- X-ray works at most about 4 ms per frame while it fills in a map, so switching it on no longer causes a hitch; changing strength and switching off are cheaper again.
+
 ## 1.0.0-rc.15 — 2026-10-17
 
 ### Fixes
