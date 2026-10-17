@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.28
+
+- Luau 0.739 compiles main.lua and loader.lua; 81 combat, 170 release, 58 triggerbot and 92 aura assertions pass (401 total).
+- Extracted controller, burst adapter and real contact reporter verify two targets receive requests on the first ready frame through one native swing, no second burst occurs during cooldown, survivors are revisited together, and requests do not count as kills. Two distant fake players at 800 and 999 studs are contacted in that same swing; no throw charges. Range 1000 is accepted and 1001 refused.
+- Each contact is rechecked after the previous contact: new protection, respawn, death, allied role, obstruction and range changes skip later targets. One failed contact does not prevent another player from receiving a request. A stop during delivery prevents remaining contacts and preserves the stop status. Existing queue deadlines, feedback and recovery tests remain.
+- Live startup smoke: loaded rc.28 into the current MM2 public client; running state, the menu range control, 1000-stud migrated radius, zero bursts and rejection of 1001 were verified. The console reported rc.28 loaded. No combat request was sent during this smoke check. Server acceptance of multiple contacts in one swing and actual extended damage distance remain unverified.
+
 ## Release candidate 1.0.0-rc.27
 
 - Luau 0.739 compiles main.lua and loader.lua; 81 combat, 170 release, 58 triggerbot and 88 aura assertions pass (397 total). Tests extract shipped code into mocked clients; they do not establish real server damage or fire rate.

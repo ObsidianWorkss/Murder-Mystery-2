@@ -17704,7 +17704,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
-    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 60, AuraReachVersion = "", KillAura = false, KillAuraRange = 60, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 1000, AuraReachVersion = "", KillAura = false, KillAuraRange = 1000, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17818,12 +17818,13 @@ if previousConfig then
     end
 end
 if previousMode == "CameraAndCursorLock" then State.Config.Aim = true end
-if State.Config.AuraReachVersion~="Unified200" then
-    if State.Config.AuraReachVersion~="Extended200" and State.Config.AuraReachRange==30 then State.Config.AuraReachRange=60 end
+if State.Config.AuraReachVersion~="Burst1000" then
+    if State.Config.AuraReachVersion~="Extended200" and State.Config.AuraReachVersion~="Unified200"
+        and State.Config.AuraReachRange==30 then State.Config.AuraReachRange=60 end
     local radius=State.Config.AuraExtendedReach~=false and State.Config.AuraReachRange or State.Config.KillAuraRange
-    if radius==6 then radius=60 end
+    if radius==6 or radius==60 or radius==200 then radius=1000 end
     State.Config.KillAuraRange,State.Config.AuraReachRange=radius,radius
-    State.Config.AuraReachVersion="Unified200"
+    State.Config.AuraReachVersion="Burst1000"
 end
 if previousConfig and previousConfig.MagicBullet == nil then State.Config.Aim = true end
 State.Config.Invisibility = false
@@ -17840,7 +17841,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.27"
+State.Version = "1.0.0-rc.28"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20201,7 +20202,6 @@ local function startThrow(record, preferred, strict, canRelease)
         State.Stats.SkippedKnifeThrows += 1
         knifeFeedback("No clear throw target"); return false
     end
-    record.AuraAutoThrow=nil
     record.Charging=true
     record.ThrowToken+=1
     local token=record.ThrowToken
@@ -23038,24 +23038,24 @@ local installKillAura=function(C)
     local focused=true
     local aura={Enabled=false,Status="Off",Attempts=0,Contacts=0,TargetId=nil,LastAttempt=-math.huge}
     State.KillAura=aura
-    local batch={Active=false,Status="Kill all off",Attempts=0,Contacts=0,Throws=0,Observed=0,Skipped=0,Index=1,Targets={}}
+    local batch={Active=false,Status="Kill all off",Attempts=0,Contacts=0,Bursts=0,Observed=0,Skipped=0,Index=1,Targets={}}
     State.KillAll=batch
     State.Config.KillAura=false
     if State.Config.AuraEquipKnife==nil then State.Config.AuraEquipKnife=true end
     local function range(value)
         local n=tonumber(value)
-        return n and n==n and n>=1 and n<=200 and n or nil
+        return n and n==n and n>=1 and n<=1000 and n or nil
     end
-    State.Config.KillAuraRange=range(State.Config.KillAuraRange) or 60
+    State.Config.KillAuraRange=range(State.Config.KillAuraRange) or 1000
     local function reach(value)
         local n=tonumber(value)
-        return n and n==n and n>=1 and n<=200 and n or nil
+        return n and n==n and n>=1 and n<=1000 and n or nil
     end
     State.Config.AuraExtendedReach=State.Config.AuraExtendedReach~=false
-    State.Config.AuraReachRange=reach(State.Config.AuraReachRange) or 60
+    State.Config.AuraReachRange=reach(State.Config.AuraReachRange) or 1000
     function State.GetKillAuraRange()
-        return State.Config.AuraExtendedReach and (reach(State.Config.AuraReachRange) or 60)
-            or (range(State.Config.KillAuraRange) or 60)
+        return State.Config.AuraExtendedReach and (reach(State.Config.AuraReachRange) or 1000)
+            or (range(State.Config.KillAuraRange) or 1000)
     end
     function State.GetAuraContactPart(target,origin)
         local char=target and target.Character
@@ -23089,7 +23089,7 @@ local installKillAura=function(C)
     end
     function State.SetAuraReachRange(value)
         local n=reach(value)
-        if not n then return false,"Extended reach must be between 1 and 200 studs" end
+        if not n then return false,"Extended reach must be between 1 and 1000 studs" end
         State.Config.AuraReachRange=n
         local ok,message=State.CancelKillAuraContacts("Range updated")
         return ok,ok and n or message
@@ -23156,13 +23156,14 @@ local installKillAura=function(C)
         if not ok then return false,message end
         batch.Active,batch.RestoreAura,batch.Character=true,restore,player.Character
         batch.Targets,batch.Index,batch.Total,batch.Remaining=targets,1,#targets,#targets
-        batch.Attempts,batch.Contacts,batch.Skipped,batch.Throws,batch.Observed,batch.Elapsed=0,0,0,0,0,0
-        batch.Status="Kill all started; close the menu. Retries surviving targets for up to 30 active seconds."
+        batch.Attempts,batch.Contacts,batch.Skipped,batch.Bursts,batch.Observed,batch.Elapsed=0,0,0,0,0,0
+        batch.NextBurstAt=-math.huge
+        batch.Status="Kill all ready; close the menu for a contact burst at all clear targets."
         return true,batch.Status
     end
     function State.SetKillAuraRange(value)
         local n=reach(value)
-        if not n then return false,"Aura range must be between 1 and 200 studs" end
+        if not n then return false,"Aura range must be between 1 and 1000 studs" end
         -- The main slider always controls the active range, including extended mode.
         State.Config.KillAuraRange=n
         State.Config.AuraReachRange=n
@@ -23230,12 +23231,13 @@ local installKillAura=function(C)
             local attackReady,readinessReason=C.CanStab(item)
             local canAttack=attackReady and clock()-aura.LastAttempt>=.85
             if not batch.Active and not canAttack then aura.Status=readinessReason or "Knife cooling down"; return end
-            local best,bestChar,bestPart,bestDistance,bestEntry
+            local best,bestChar,bestPart,bestDistance
             local radius=State.GetKillAuraRange()
             if batch.Active then
                 local present={}
                 for _,p in ipairs(C.Players:GetPlayers()) do present[p]=true end
                 local remaining=0
+                local candidates={}
                 -- Scan the whole queue so a blocked player cannot stall clear targets.
                 for offset=0,#batch.Targets-1 do
                     local index=(batch.Index+offset-1)%#batch.Targets+1
@@ -23253,11 +23255,11 @@ local installKillAura=function(C)
                     if not entry.Done then
                         remaining+=1
                         local targetRoot=targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-                        if canAttack and not best and entry.Attempts<3 and clock()>=entry.NextAttempt and targetRoot and C.IsAlive(p) then
+                        if canAttack and clock()>=batch.NextBurstAt and entry.Attempts<3 and clock()>=entry.NextAttempt and targetRoot and C.IsAlive(p) then
                             local distance=(targetRoot.Position-root.Position).Magnitude
                             if distance<=radius then
                                 local part=State.GetAuraContactPart(p,root.Position)
-                                if part then best,bestChar,bestPart,bestDistance,bestEntry=p,targetChar,part,distance,entry end
+                                if part then table.insert(candidates,{Entry=entry,Player=p,Character=targetChar,Part=part}) end
                             end
                         end
                     end
@@ -23268,12 +23270,30 @@ local installKillAura=function(C)
                         :format(batch.Observed,remaining,batch.Skipped,batch.Attempts))
                     return
                 end
-                if not best then
+                if #candidates==0 then
                     batch.Status=not canAttack and (readinessReason or "Knife cooling down")
                         or ("Kill all: %d remaining; waiting for a clear target / feedback (%.0fs left)"):format(remaining,30-batch.Elapsed)
                     aura.Status=batch.Status
                     return
                 end
+                local generation=batch.Targets
+                local accepted,why,results=C.Burst(item,candidates)
+                if not batch.Active or batch.Targets~=generation then return end
+                batch.NextBurstAt=clock()+(accepted and .85 or .15)
+                if accepted then
+                    aura.Attempts+=1; aura.LastAttempt=clock(); aura.TargetId=nil
+                    batch.Bursts+=1
+                    for _,result in ipairs(results or {}) do
+                        result.Entry.Attempts+=1
+                        result.Entry.NextAttempt=clock()+.85
+                        batch.Attempts+=1
+                        if result.Contact then batch.Contacts+=1; aura.Contacts+=1 end
+                    end
+                end
+                aura.Status=why or "Waiting for a ready knife"
+                batch.Status=("Kill all: %d contacts, %d bursts, %d observed eliminated · %s")
+                    :format(batch.Contacts,batch.Bursts,batch.Observed,aura.Status)
+                return
             else
             for _,p in ipairs(C.Players:GetPlayers()) do
                 if p~=player and not State.IsPlayerExcluded(p) and C.IsAlive(p) then
@@ -23293,10 +23313,7 @@ local installKillAura=function(C)
             end
             if not best then aura.TargetId=nil; aura.Status="No clear target in range"; return end
             if best.Character~=bestChar or State.IsPlayerExcluded(best) or not C.IsAlive(best) then return end
-            local ranged=batch.Active and bestDistance>6.5 and C.Throw~=nil
-            local accepted,why,contact
-            if ranged then accepted,why=C.Throw(item,best)
-            else accepted,why,contact=C.Stab(item,best,bestPart) end
+            local accepted,why,contact=C.Stab(item,best,bestPart)
             aura.TargetId=accepted and best.UserId or nil
             if accepted then
                 aura.Attempts+=1; aura.LastAttempt=clock()
@@ -23304,15 +23321,7 @@ local installKillAura=function(C)
                 aura.LastDistance=bestDistance
                 aura.Status=(why or "Swing sent; damage unconfirmed")..("  ·  @%s  ·  %.1f studs"):format(best.Name,bestDistance)
             else aura.Status=why or "Waiting for a ready knife" end
-            if batch.Active then
-                if accepted then bestEntry.Attempts+=1 end
-                bestEntry.NextAttempt=clock()+(accepted and .85 or .25)
-                for index,entry in ipairs(batch.Targets) do if entry==bestEntry then batch.Index=index%#batch.Targets+1; break end end
-                if accepted then batch.Attempts+=1 end
-                if contact==true then batch.Contacts+=1 end
-                if ranged and accepted then batch.Throws+=1 end
-                batch.Status=("Kill all: %d remaining, %d observed eliminated · %s"):format(batch.Remaining,batch.Observed,aura.Status)
-            end
+
         end)
         if not ok then State.StopKillAura("Stopped: "..tostring(message)) end
     end)
@@ -23358,21 +23367,35 @@ local function auraStab(item,target,part)
     local contact=State.Stats.StabContactReports>before
     return true,contact and "Contact sent; damage unconfirmed" or "Swing sent; contact report unavailable",contact
 end
-local function auraThrow(item,target)
-    local batch=State.KillAll
-    if not batch or not batch.Active or not State.CanAuraContact() then return false,"Kill all paused" end
-    if not State.Config.KnifeAim then return false,"Turn on Knife throw prediction for distant targets" end
+local function auraBurst(item,candidates)
+    if not State.CanAuraContact() or not auraKnifeReady(item) then return false,"Knife unavailable" end
     local record=State.WeaponHandlers[item]
-    if not record or not auraKnifeReady(item) then return false,"Knife cooling down" end
-    local targets=batch.Targets
-    local sent=startThrow(record,target,true,function()
+    -- A single native swing window can report several distinct body contacts.
+    -- Do not sleep or start another swing between players in this burst.
+    if not stabKnife(record,nil) then return false,"Knife did not start a swing" end
+    record.AuraStab=true
+    local results={}
+    local contacts=0
+    for _,candidate in ipairs(candidates) do
+        local target,part=candidate.Player,candidate.Part
+        local char=target.Character
         local own=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local root=target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        return batch.Active and batch.Targets==targets and State.CanAuraContact() and own and root
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if State.CanAuraContact() and target~=player and char==candidate.Character and alive(target)
+            and roleFor(target)~="Murderer" and not State.IsPlayerExcluded(target) and own and root
             and (root.Position-own.Position).Magnitude<=State.GetKillAuraRange()
-    end)
-    record.AuraAutoThrow=sent and record.Charging or nil
-    return sent,sent and "Aimed throw charging; damage unconfirmed" or State.KnifeFeedback and State.KnifeFeedback.Message or "No clear throw"
+            and part and part:IsA("BasePart") and part:IsDescendantOf(char)
+            and clearPath(own.Position,part.Position,char) then
+            record.StabTarget=target
+            local before=State.Stats.StabContactReports
+            reportStabContact(record,part,"KillAllBurst")
+            local contact=State.Stats.StabContactReports>before
+            table.insert(results,{Entry=candidate.Entry,Contact=contact})
+            if contact then contacts+=1 end
+        end
+    end
+    record.StabTarget=nil
+    return true,("%d/%d contact requests sent in one swing; damage unconfirmed"):format(contacts,#candidates),results
 end
 installKillAura({State=State,Player=player,Players=Players,RunService=RunService,UIS=UIS,Connect=connect,
     RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,BodyPartNames=hitPartNames.Knife,
@@ -23390,18 +23413,11 @@ installKillAura({State=State,Player=player,Players=Players,RunService=RunService
     end,
     CancelStab=function()
         for _,record in pairs(State.WeaponHandlers) do
-            if record.AuraAutoThrow then
-                record.AuraAutoThrow=nil
-                if record.Charging then
-                    record.ThrowToken+=1; record.Charging=false; record.LastThrow=-math.huge
-                    pcall(stopTracks,record)
-                end
-            end
             if record.AuraStab then record.StabbingUntil,record.StabTarget,record.AuraStab=0,nil,false end
         end
         if State.FlushAuraTouches then return State.FlushAuraTouches() end
     end,
-    Stab=auraStab,Throw=auraThrow})
+    Stab=auraStab,Burst=auraBurst})
 end
 
 
@@ -25582,7 +25598,7 @@ local createMobileUI = function(C)
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
     if State.SetKillAura then
         option(automation,"Kill aura","KillAura","Automatically swings and reports clear nearby body contact as murderer. No physical blade overlap needed.")
-        automation:Button({Title="Kill all",Desc="Retries living targets for up to 30 active seconds. Uses aimed throws beyond stab reach; respects protected players.",Callback=function()
+        automation:Button({Title="Kill all",Desc="One swing reports all clear targets together. Retries respect knife cooldown; server validates damage.",Callback=function()
             suppressInput()
             local ok,message=State.StartKillAll()
             mobile.Toast(message,ok and "info" or "warn")
@@ -25607,7 +25623,7 @@ local createMobileUI = function(C)
         local auraOptions=automation
         option(auraOptions,"Equip knife for aura","AuraEquipKnife","Equips your knife while aura runs.")
         mobile.Sliders.KillAuraRange=auraOptions:Slider({Title="Aura range",Desc="Active radius in studs. Distant contact attempts can be rejected by the server.",Step=1,
-            Value={Min=1,Max=200,Default=State.GetKillAuraRange()},Callback=function(value)
+            Value={Min=1,Max=1000,Default=State.GetKillAuraRange()},Callback=function(value)
             if syncing or not State.Running then return end
             local ok,message=State.SetKillAuraRange(value)
             if not ok then State.KillAura.Status=tostring(message) end

@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.27 · Release candidate · PC + mobile**
+**v1.0.0-rc.28 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -56,15 +56,15 @@ Gun requests are bounded to one per **150 ms**, including manual assisted shots,
 
 Enable **Murderer → Kill Aura → Kill aura**, or press **K** after closing the menu. **Equip knife for aura** equips your knife automatically. While you are murderer, aura selects a clear nearby body part, swings, and sends its contact report without waiting for your blade to touch the player. It checks alternative body parts when the target's center is behind cover.
 
-**Aura range** directly controls the active radius from **1–200 studs, default 60**. The old 6-stud default upgrades to 60; other active custom ranges are retained. A separate extended-range slider is no longer needed. Increasing this radius does not change server damage validation. Distant aura contacts can still be rejected.
+**Aura range** controls the active attempted radius from **1–1,000 studs, default 1,000**. Previous default ranges of 6 or 60 and the old 200-stud maximum upgrade once; other custom active ranges are preserved. This is a client selection radius, not a measured server damage limit. Distant aura contacts can still be rejected.
 
 The aura stays enabled while waiting through normal death, respawn, or innocent rounds, and resumes when you have a ready murderer knife. It pauses for menus, typing, lost focus, fling, and unavailable weapon states. Emergency stop, unload/reload, and actions that explicitly stop aura turn it off. Its status distinguishes a successful contact request from a swing with no contact report; neither proves a kill.
 
 ### Kill all
 
-**Murderer → Kill Aura → Kill all** keeps eligible players queued for up to **30 active seconds**, with at most **three attempts per player**. Close the menu to run it. It stabs nearby targets and uses target-locked predicted throws beyond 6.5 studs, within Aura range. Enable Knife throw prediction for ranged attacks. Blocked and out-of-range players stay queued so they can be attempted when a path opens. Surviving players are revisited instead of being marked finished after one contact request.
+**Murderer → Kill Aura → Kill all** starts one native knife swing and sends contact attempts for **all clear, eligible players in the same frame**. There is no per-player cooldown wait or automatic throw charge. Close the menu to run it. Each contact is rechecked for the same living character, protection, role, range and a clear path. The server can reject distant or additional contacts; simultaneous kills are not guaranteed.
 
-**Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the queue and pending automatic throws. Menu/focus pauses also pause the active deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Status separates observed eliminations (not attributed kills), unresolved targets, skips and attack starts. Protected, departed, respawned and newly allied players are removed without attacking. Optional action keys are in **Settings → Combat keys**, initially unbound.
+Survivors can receive up to three attempts each, with the native stab/throw cooldown between bursts, during a maximum 30 active seconds. Blocked or out-of-range targets remain queued. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Status separates sent contacts, bursts, observed eliminations (not attributed kills), unresolved targets and skips. Optional action keys are in **Settings → Combat keys**, initially unbound.
 
 ## Controls
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.28 — 2026-10-17
+
+- Kill all reports contact attempts for every clear, eligible player during one native swing, on the same heartbeat. It no longer waits for each player or charges a throw between targets. Every contact rechecks protection, character identity, role, range and line of sight. Contact failures do not block other eligible players; stopping during delivery prevents further contacts.
+- Surviving players retain the existing three-attempt budget and 30-active-second deadline; native knife cooldowns apply between bursts. Status counts bursts and sent contacts separately from observed eliminations. Server acceptance and simultaneous kills are not guaranteed.
+- Aura range cap and default raised to 1,000 attempted studs. Old defaults (6/60) and the previous 200-stud maximum migrate once; other custom active ranges remain. This is a client target radius, not a discovered server damage limit. Triggerbot is unchanged.
+
 ## 1.0.0-rc.27 — 2026-10-17
 
 - Kill all revisits surviving targets instead of ending after one request each. Temporarily blocked or out-of-range targets remain queued while clear targets can be attacked. Attempts are capped at three per player and 30 active seconds. Status separates observed eliminations, unresolved players, skips and attack starts.
