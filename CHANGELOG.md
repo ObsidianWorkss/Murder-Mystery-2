@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.31 — 2026-10-18
+
+- Kill all finishes exhausted retry budgets after a bounded feedback grace instead of waiting out the full 30 seconds. Ranged mode includes charge and estimated flight time. Stalled frames count their full active time.
+- Results show unresolved reason counts and five recent session summaries. Snapshots remain independent of live state. These reasons do not claim server rejection or attributed kills.
+- Added Retry unresolved in Kill Aura and Combat results, with an optional unbound Combat key. It only retries eligible survivors of the last run; protection, departure, elimination, respawn and round-end checks prevent stale retries. A refused retry never starts a full queue.
+- Successful menu starts and retries close the menu automatically; refusals preserve it and their reason text.
+- Locked knife contacts use a direct player lookup and one candidate rather than repeatedly fetching/scanning the whole roster. Player departure is still checked. Ordinary aura backs off idle ray checks to 50 ms (100 ms under Low effects); trigger timing remains per heartbeat.
+
 ## 1.0.0-rc.30 — 2026-10-18
 
 - Added Home → Combat results with session weapon totals and last-run Kill all contacts, bursts, started throws, observed eliminations, unresolved targets, skips and current status. Snapshots do not expose mutable counters or claim attributed kills.

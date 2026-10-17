@@ -38,7 +38,10 @@ local function fixture()
         WeaponHandlers={[knife]=record},Stats={StabRequests=0,StabContactReports=0},
         IsPlayerExcluded=function(p) return p.Excluded==true end}
     f.Players={player,target}
-    local Players={GetPlayers=function() return f.Players end}
+    local Players={GetPlayers=function() f.ReportRosterScans=(f.ReportRosterScans or 0)+1; return f.Players end}
+    function Players:FindFirstChild(name)
+        for _,p in ipairs(f.Players) do if p.Name==name then return p end end
+    end
     local bodyPartSet={UpperTorso=true,Head=true,Torso=true,LowerTorso=true}
     knife.Events=node("Events","Folder",knife)
     knife.Events.HandleTouched=node("HandleTouched","RemoteEvent",knife.Events)
@@ -74,8 +77,9 @@ local function fixture()
     f.Player,f.Target,f.Knife,f.Record,f.State=player,target,knife,record,State
     local UIS={WindowFocusReleased={},WindowFocused={}}
     local heartbeat={}
+    f.RoundEnd={}
     local C={State=State,Player=player,Players={GetPlayers=function() return f.Players end},UIS=UIS,
-        RunService={Heartbeat=heartbeat},Clock=function() return f.Now end,
+        RunService={Heartbeat=heartbeat},RoundEnd=f.RoundEnd,Clock=function() return f.Now end,
         Connect=function(signal,callback) f.Callbacks[signal]=callback end,
         RoleFor=roleFor,IsAlive=alive,ClearPath=clearPath,
         InputBlocked=function() return f.InputBlocked==true end,
@@ -412,5 +416,86 @@ for _,case in ipairs({
     f=fixture(); f.State.SetKillAuraRange(1000); table.insert(f.Players,far)
     f.State.PlayerActions={SelectedId=case[2]}; f.State.SetTargetPriority(case[1]); f.Enable(); f.Step()
     check(f.Record.StabTarget.Name==case[3],"ordinary aura applies "..case[1].." priority with nearest fallback")
+end
+do
+    local f=fixture(); f.State.StartKillAll()
+    for _=1,18 do f.Step(.25) end
+    check(not f.State.KillAll.Active and f.State.KillAll.Elapsed<5 and f.State.KillAll.Attempts==3,
+        "exhausted burst retries finish after feedback grace instead of idling for 30 seconds")
+    local result=f.State.GetCombatResults()
+    check(result.Unresolved==1 and result.Reasons["Retry budget used"]==1,"results retain the unresolved retry-budget reason")
+    result.Reasons["Retry budget used"]=999
+    check(f.State.GetCombatResults().Reasons["Retry budget used"]==1,"editing reason snapshots cannot change live results")
+    check(f.State.RetryKillAll() and f.State.KillAll.Total==1 and f.State.KillAll.Attempts==0,"explicit retry starts a fresh budget only for unresolved players")
+    f.Step(); f.Target.ServerDead=true; f.Step()
+    check(not f.State.RetryKillAll(),"observed eliminated players cannot be retried")
+    local history,text=f.State.GetRecentCombatRuns()
+    check(#history==2 and type(text)=="string" and text:find("Burst",1,true),"recent-run history retains independent summaries")
+    history[1].Contacts=999
+    check(select(1,f.State.GetRecentCombatRuns())[1].Contacts~=999,"editing history snapshots cannot change retained summaries")
+end
+
+for _,case in ipairs({
+    {"protection",function(f) f.Target.Excluded=true end},
+    {"departure",function(f) f.Players={f.Player} end},
+    {"target respawn",function(f) f.Target.Character=f.Character(5) end},
+    {"server elimination",function(f) f.Target.ServerDead=true end},
+    {"own respawn",function(f) f.Callbacks[f.Player.CharacterRemoving]() end},
+    {"round end",function(f) f.Callbacks[f.RoundEnd]() end},
+}) do
+    local f=fixture(); f.State.StartKillAll(); f.Step(); f.State.StopKillAll()
+    case[2](f)
+    check(not f.State.RetryKillAll(),"retry refuses stale players after "..case[1])
+end
+
+do
+    local f=fixture()
+    for _=1,7 do f.State.StartKillAll(); f.Step(1); f.State.StopKillAll() end
+    check(#select(1,f.State.GetRecentCombatRuns())==5,"recent-run history is bounded to five summaries")
+    f=fixture(); f.Target.Character.HumanoidRootPart.Position=vec(200); f.State.StartKillAll(); f.Step()
+    check(f.State.GetCombatResults().Reasons["Out of range"]==1,"results explain targets outside the current radius")
+    f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.BlockAll=true; f.State.StartKillAll(); f.Step()
+    check(f.State.GetCombatResults().Reasons["Clear path blocked"]==1,"aimed-mode results explain obstructed paths")
+    f=fixture(); f.Equipped=false; f.EquipFail=true; f.State.StartKillAll(); f.Step()
+    check(f.State.GetCombatResults().Reasons["Knife unavailable"]==1,"results explain a missing knife")
+    f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.State.SetKillAuraRange(1000)
+    f.Target.Character=f.Character(40); f.State.Config.KnifeAim=false; f.State.StartKillAll(); f.Step()
+    check(f.State.GetCombatResults().Reasons["Knife prediction disabled"]==1,"results explain disabled ranged prediction")
+    f.Step(.01)
+    check(f.State.GetCombatResults().Reasons["Knife prediction disabled"]==1,"disabled prediction reason persists between retry checks")
+end
+
+do
+    local f=fixture(); f.State.SetKillAuraRange(1000)
+    for index=3,24 do table.insert(f.Players,{Name="Player"..index,UserId=index,Character=f.Character(index*5),Role="Innocent",Alive=true}) end
+    f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Contacts==23 and (f.ReportRosterScans or 0)==0,
+        "target-locked contacts avoid repeated full roster scans while preserving the whole burst")
+    f=fixture(); local second={Name="Second",UserId=3,Character=f.Character(6),Role="Innocent",Alive=true}
+    table.insert(f.Players,second)
+    f.AfterContact=function() f.Players={f.Player,f.Target} end
+    f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Contacts==1,"a player leaving mid-burst cannot receive a locked contact")
+    f=fixture(); f.State.StartKillAll(); f.Callbacks[f.RoundEnd]()
+    check(not f.State.KillAll.Active and not f.State.RetryKillAll(),"round end stops active attacks and clears retry eligibility")
+end
+do
+    local f=fixture(); f.State.SetKillAllMode("Aimed throws"); f.State.SetKillAuraRange(1000)
+    f.State.Config.KnifeAim=true; f.Target.Character=f.Character(400)
+    f.State.StartKillAll(); f.Step(.1); f.Record.Charging=false
+    f.Step(2.01); f.Record.Charging=false
+    f.Step(2.01); f.Record.Charging=false
+    f.Step(1.3)
+    check(f.State.KillAll.Active and f.State.KillAll.Throws==3,"distant throws retain charge and flight feedback grace after retry exhaustion")
+    f.Step(5)
+    check(not f.State.KillAll.Active and f.State.KillAll.Elapsed<30,"ranged retries finish after their bounded flight grace")
+    f=fixture(); f.State.StartKillAll(); f.Step(31)
+    check(not f.State.KillAll.Active and f.State.KillAll.Elapsed==31 and f.State.KillAll.Attempts==0,
+        "a stalled frame counts its full active time and cannot prolong the deadline")
+    f=fixture(); f.Enable(); f.BlockAll=true; f.Step(.01); local before=f.VisibilityChecks
+    f.Step(.005)
+    check(f.VisibilityChecks==before,"idle ordinary aura does not repeat expensive rays every heartbeat")
+    f.BlockAll=false; f.Step(.051)
+    check(f.Aura.Contacts==1,"idle scan backoff still resumes with fresh visible target checks")
 end
 print(passed.." aura assertions passed")

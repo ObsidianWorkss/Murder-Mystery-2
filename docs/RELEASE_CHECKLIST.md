@@ -1,12 +1,12 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.30**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.31**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings and anti-fling regression suites pass locally (440 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings and anti-fling regression suites pass locally (471 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
@@ -49,3 +49,6 @@ Record device, executor, place version, test date, result, and any observed erro
 
 - [x] rc.30 startup/settings smoke: result panel and selectors exist; mode/priority/preset changes synchronize their controls; Low effects changes visuals/cadence while preserving combat switches; new choices serialize.
 - [ ] rc.30 active combat: both modes, aimed-throw cancellation, selected-player/sheriff priorities, observed results, and measured performance on PC/mobile.
+
+- [x] rc.31 extracted tests: early completion and flight grace, full stalled-frame deadline, survivor-only retries and invalidation, bounded independent history/reason snapshots, direct contact lookup, idle scan backoff, and menu start/retry dispatch.
+- [ ] rc.31 live combat: server outcomes, survivor retry after a real run, measured CPU cost, and automatic menu close after a successful murderer action.

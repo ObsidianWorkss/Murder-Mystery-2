@@ -1,5 +1,13 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.31
+
+- Luau 0.739 compiles both scripts; 83 combat, 185 release, 58 triggerbot and 145 aura assertions pass (471 total).
+- New extracted-source checks cover early completion of spent burst retries, extra ranged charge/flight feedback grace, full active time on stalled frames, independent unresolved reasons and bounded recent-run history, and survivor-only retry budgets. Retry filters protection, departure, target/server elimination, own/target respawn and round-end invalidation.
+- A 23-target mock burst sends every contact without repeated full-roster queries from the reporter; a player leaving mid-burst is rejected by the direct lookup. No-target ordinary aura avoids ray queries on intervening heartbeats and resumes with fresh checks after its idle interval. These operation checks are not measured live speedups.
+- Menu dispatch tests prove a failed retry never falls back to Start Kill all, failures preserve their messages/menu, and successful starts/retries close the menu exactly once.
+- Live startup smoke: rc.31 running, 1000-stud radius, results/recent-history controls present. A retry refused because the local role was inactive preserved the menu and sent no knife attacks. The Retry key is None (unbound), and Burst / Nearest / Balanced preferences remain. No active-round kill-rate, through-wall damage, live CPU gain or successful murderer auto-close was measured.
+
 ## Release candidate 1.0.0-rc.30
 
 - Luau 0.739 compiles both scripts; 83 combat, 181 release, 58 triggerbot and 118 aura assertions pass (440 total).

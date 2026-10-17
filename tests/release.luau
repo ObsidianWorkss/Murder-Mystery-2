@@ -750,4 +750,23 @@ do
     installPerformancePreset(C)
     check(not State.Config.AimMarker and not State.Config.TacticalGuide,"saved low-effects preset is reapplied on startup")
 end
+do
+    local starts,retries,closes=0,0,0
+    local accepted=false
+    local State={StartKillAll=function() starts+=1; return accepted,"Start result" end,
+        RetryKillAll=function() retries+=1; return accepted,"Retry result" end}
+    local window={Close=function() closes+=1 end}
+    local mobile={Toast=function() end}
+    local function suppressInput() end
+    -- INSERT_RUN_KILLALL
+    local ok,message=mobile.RunKillAll(true)
+    check(not ok and message=="Retry result" and retries==1 and starts==0 and closes==0,
+        "refused retry never falls back to attacking everyone or closes the menu")
+    ok,message=mobile.RunKillAll(false)
+    check(not ok and message=="Start result" and starts==1 and closes==0,"refused start preserves its message and menu")
+    accepted=true; ok,message=mobile.RunKillAll(false)
+    check(ok and message=="Start result" and starts==2 and closes==1,"successful start closes the menu exactly once")
+    ok,message=mobile.RunKillAll(true)
+    check(ok and message=="Retry result" and retries==2 and starts==2 and closes==2,"successful retry closes menu without starting a full queue")
+end
 print(string.format("%d release assertions passed",passed))

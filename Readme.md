@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.30 · Release candidate · PC + mobile**
+**v1.0.0-rc.31 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -67,17 +67,23 @@ The aura stays enabled while waiting through normal death, respawn, or innocent 
 - **Burst** (default): one native swing sends contact attempts for all eligible players in the same frame, including off-screen or obstructed players. Range, protection, role and character checks remain. The server can reject those requests.
 - **Aimed throws**: attacks one player at a time, using ordinary assisted stabs within 6.5 studs and target-locked predicted throws farther away. Requires a clear path and Knife throw prediction for ranged attacks. Native charge and cooldown times apply. This mode does not guarantee damage.
 
-Close the menu to run either mode. Changing mode stops the current queue and cancels its pending automatic throw. Survivors can receive up to three attempts each during at most 30 active seconds. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Optional action keys are in **Settings → Combat keys**, initially unbound.
+Starting Kill all from its menu button now closes the menu automatically. Changing mode stops the current queue and cancels its pending automatic throw. Survivors can receive up to three attempts each during at most 30 active seconds. When all remaining retry budgets are spent, Burst finishes after a 1.25-second feedback grace instead of sitting idle until the deadline. Aimed throws allow extra bounded charge/flight time before completion. A stalled frame counts its full active time toward the deadline. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Optional action keys are in **Settings → Combat keys**, initially unbound.
 
 **Target priority**, in the same Kill Aura section, offers **Nearest**, **Sheriff first** (including the current hero), and **Selected player**. Select that player in **Players → Player Actions → Specific player**. Missing, protected or unavailable preferred players fall back to eligible nearby players. Priority selects the next player for ordinary aura and aimed mode; in Burst it orders contact delivery without excluding other eligible targets.
 
 ### Combat results
 
-Open **Home → Combat results** for session weapon totals and the last Kill all run: gun requests, matched replies, target ray hits, unanswered requests, knife swings, sent throws and contacts, bursts, throws started, observed eliminations, unresolved targets, skips and the current status. A throw that only started charging is counted separately from one actually sent. Observed deaths are not attributed kills; unmatched requests have an unknown outcome. The panel does not label contact reports as confirmed damage.
+Open **Home → Combat results** for session weapon totals and the last Kill all run: gun requests, matched replies, target ray hits, unanswered requests, knife swings, sent throws and contacts, bursts, throws started, observed eliminations, unresolved targets, skips and the current status. A throw that only started charging is counted separately from one actually sent. Observed deaths are not attributed kills; unmatched requests have an unknown outcome. The panel does not label contact reports as confirmed damage. Unresolved targets have reason counts such as out of range, character loading, missing knife, blocked aimed path, disabled prediction, unavailable contact report or spent retry budget. Reasons are observations of client state, not server rejection codes.
+
+**Retry unresolved**, in Kill Aura and Combat results, starts a new bounded pass only for eligible survivors of the last run. It filters fresh protection, departure, elimination and character changes; own respawn and round end clear retry eligibility. Refused retries never fall back to attacking everyone. Successful retries close the menu automatically. Its optional Combat key starts unbound.
+
+**Recent runs** retains up to five session summaries with mode, active duration, sent contacts, observed eliminations and unresolved counts. Changing a returned snapshot does not modify the live counters. History clears when the script reloads.
 
 ### Performance preset
 
 Choose **Settings → General → Performance preset → Low effects** to suppress the aim marker, nearby threat notice, stable body fills and tactical/learned guidance, while using clean labels and a compact HUD. Background ESP/status visuals update every 0.4 seconds instead of 0.2; menu/HUD updates use 0.6 instead of 0.3 seconds; visual aim previews can be reused for 1 second instead of 0.5. Actual assisted attacks still calculate fresh aim, and trigger acquisition, weapon cooldowns, motion tracking, protection and damage checks retain their existing timing.
+
+Contact reports for a locked target use a direct player lookup rather than fetching and scanning the full roster for each contact. When ordinary aura has no clear target, idle ray checks back off to 50 ms (100 ms under Low effects), with fresh validation on the next attempt. Triggerbot remains per heartbeat.
 
 **Balanced** restores these visual settings to their defaults. Mode, target priority and performance preset are saved between runs. Selected player identity is session-only. Performance gains depend on the client and enabled features; no frame-rate improvement is guaranteed.
 
