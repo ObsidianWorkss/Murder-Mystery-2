@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.14 · Release candidate · PC + mobile**
+**v1.0.0-rc.15 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -57,7 +57,7 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 ### PC keybinds
 
-Settings → **Keybinds** lists every bindable action. Click a key box, press a new key, or press Backspace to clear it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
+Settings → **Keybinds** lists every bindable action. Click a key box and press a new key; Esc cancels and Backspace clears it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
 
 | Action | Default |
 | --- | --- |

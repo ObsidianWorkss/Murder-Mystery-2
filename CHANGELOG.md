@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-rc.15 — 2026-10-17
+
+### Fixes
+
+- Fly no longer blocks teleports (map, lobby, selected player), invisibility or fling. Fly held the character's PlatformStand, which those features treat as "not free to move"; they now release fly first, and fly resumes after a teleport.
+- Refused actions show their reason as an amber toast instead of a grey "off". Pressing F8 when invisibility cannot start used to say `Invisibility off`; menu toggles do the same now.
+- X-ray skips Terrain, and a part that refuses the change no longer breaks switching X-ray off, unloading or reloading.
+- Toasts no longer overlap the status card on PC or the Up/Down and Fire buttons on phones; on phones they sit in the top strip.
+- Esc or a mouse click cancels picking a key in Settings → Keybinds and keeps the current key.
+- A refused unload no longer switches movement and X-ray off while the script keeps running.
+- A custom pose that fails to load shows the real loading error.
+
 ## 1.0.0-rc.14 — 2026-10-17
 
 ### Murderer knife triggerbot

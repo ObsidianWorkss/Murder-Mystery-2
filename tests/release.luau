@@ -210,6 +210,10 @@ do
     hum.Jump=false; move.Vertical=1
     now+=1; move.JumpRequested()
     check(#states==2,"infinite jump stays off while flying")
+    State.ReleaseFly()
+    check(created[1].Destroyed and created[2].Destroyed and not hum.PlatformStand,"teleports and invisibility can release fly's hold")
+    move.Step()
+    check(#created==4 and created[3].Parent==root and hum.PlatformStand,"fly resumes on the next frame")
     cfg.SpeedBoost,cfg.Noclip=true,true; move.Step(); move.StepNoclip()
     State.StopMovement()
     check(created[1].Destroyed and created[2].Destroyed and not hum.PlatformStand and move.Vertical==0,
@@ -477,11 +481,62 @@ do
         "binding a used key moves it to the new action")
     ok,message=State.SetKeybind("Noclip","Backspace")
     check(ok and message=="Noclip unbound" and cfg.Keybinds.Noclip=="None","Backspace clears a keybind")
-    check(press("K")=="Waiting until you are murderer" and not cfg.KillAura,"a refused action shows why")
+    check(press("K")=="Waiting until you are murderer" and not cfg.KillAura and tones[#tones]=="warn","a refused action shows why as a warning")
+    local setInvisibility=State.SetInvisibility
+    function State.SetInvisibility() cfg.Invisibility=false; return false,"A living, unseated character with its original root is required" end
+    check(press("F8")=="A living, unseated character with its original root is required" and tones[#tones]=="warn",
+        "refused invisibility shows its reason instead of off")
+    State.SetInvisibility=setInvisibility
     State.SetKeybind("RevealRoles","R")
-    check(press("R")=="Available during a round" and tones[#tones]=="info","reveal roles reports its result")
+    check(press("R")=="Available during a round" and tones[#tones]=="warn","a refused reveal shows why as a warning")
     check(press("F10"):find("Repair camera failed",1,true)==1 and tones[#tones]=="warn","an action error is reported instead of breaking input")
     State.ResetKeybinds()
     check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None","reset restores default keys")
+end
+do
+    -- X-ray robustness: Terrain and a part that refuses writes must never break switching off or unloading.
+    local function node(class,name,parent,props)
+        local n={ClassName=class,Name=name,Parent=parent,Children={}}
+        for key,value in pairs(props or {}) do n[key]=value end
+        function n:IsA(kind) return self.ClassName==kind or (kind=="BasePart" and (self.ClassName=="Part" or self.ClassName=="Terrain")) end
+        function n:FindFirstChildOfClass() return nil end
+        if parent then table.insert(parent.Children,n) end
+        return n
+    end
+    local world=node("Workspace","Workspace",nil)
+    function world:GetDescendants()
+        local list={}
+        local function walk(n) for _,child in ipairs(n.Children) do table.insert(list,child); walk(child) end end
+        walk(self)
+        return list
+    end
+    world.DescendantAdded="DescendantAdded"
+    local writes=0
+    local function locked(class,name)
+        local part=setmetatable({ClassName=class,Name=name,Parent=world,Children={},Transparency=0},{
+            __index=function(_,key) if key=="LocalTransparencyModifier" then return 0 end return nil end,
+            __newindex=function(t,key,value)
+                if key=="LocalTransparencyModifier" then writes+=1; error("Unable to assign property") end
+                rawset(t,key,value)
+            end})
+        function part:IsA(kind) return kind=="BasePart" or kind==class end
+        table.insert(world.Children,part)
+        return part
+    end
+    local terrain=locked("Terrain","Terrain")
+    local stubborn=locked("Part","LockedWall")
+    local wall=node("Part","Wall",world,{Transparency=0,LocalTransparencyModifier=0})
+    local State={Running=true,Config={XRay=true,XRayAmount=60}}
+    local C={State=State,Workspace=world,Clock=function() return 0 end,RunService={Heartbeat="Heartbeat"},Connect=function() end}
+    -- INSERT_XRAY
+    installXRay(C)
+    local stepped=pcall(State.XRay.Step)
+    check(stepped and wall.LocalTransparencyModifier==.6,"x-ray keeps working when a part refuses the change")
+    check(writes==1 and State.XRay.Count()==1,"Terrain is skipped and a refusing part is not tracked")
+    State.Config.XRay=false
+    local stopped=pcall(State.XRay.Step)
+    check(stopped and wall.LocalTransparencyModifier==0 and not State.XRay.Active,"x-ray switches off cleanly after a refused part")
+    State.Config.XRay=true; State.XRay.Step()
+    check(pcall(State.StopXRay) and wall.LocalTransparencyModifier==0,"unload restores the map after a refused part")
 end
 print(string.format("%d release assertions passed",passed))

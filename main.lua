@@ -9811,6 +9811,15 @@ ak.UIElements.Keybind.Frame.Frame.TextLabel.Text="..."
 local ao
 ao=__MM2Connect(ac.InputBegan,function(ap)
 local aq
+-- MM2: Esc or a mouse click cancels picking and keeps the current key.
+if ap.KeyCode==Enum.KeyCode.Escape or ap.UserInputType==Enum.UserInputType.MouseButton1
+or ap.UserInputType==Enum.UserInputType.MouseButton2 then
+ak.Picking=false
+ak.UIElements.Keybind.Frame.Frame.TextLabel.Text=ak.Value
+ao:Disconnect()
+if an then an:Disconnect() end
+return
+end
 
 if ap.UserInputType==Enum.UserInputType.Keyboard then
 if table.find(al,ap.KeyCode)then
@@ -17732,7 +17741,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.14"
+State.Version = "1.0.0-rc.15"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20401,6 +20410,7 @@ local installSeatVisibility=function(C)
         local function reject(message) State.Config.Invisibility=false; mode.Status=message; refresh(); return false,message end
         if not State.Running or State.RepairRequired then return reject("Restore your normal character first") end
         if State.Fling and State.Fling.Active then return reject("Stop fling before enabling invisibility") end
+        if State.ReleaseFly then State.ReleaseFly() end -- fly holds PlatformStand; release it before the free-to-move check
         local char=player.Character
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         local root=char and char:FindFirstChild("HumanoidRootPart")
@@ -21272,7 +21282,7 @@ do
             if not State.Running or pose.Token ~= token or player.Character ~= char then animation:Destroy(); return end
             if not ok or not fetched then
                 animation:Destroy()
-                pose.Status = "Animation unavailable or not permitted here"
+                pose.Status = ok and "Animation unavailable or not permitted here" or ("Animation failed to load: " .. tostring(message))
                 return
             end
             local loaded, track = pcall(animator.LoadAnimation, animator, animation)
@@ -21580,8 +21590,6 @@ function State.Destroy()
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
-    if State.StopMovement then State.StopMovement() end
-    if State.StopXRay then State.StopXRay() end
     if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
     if State.FlushAuraTouches and not State.FlushAuraTouches() then
         warn("Unload stopped: blade touch cleanup incomplete; retry unload")
@@ -21592,6 +21600,9 @@ function State.Destroy()
         warn("Unload stopped: character restoration is incomplete; retry Restore character")
         return false
     end
+    -- Only now can unload no longer be refused, so a refused unload keeps movement and X-ray as they were.
+    if State.StopMovement then State.StopMovement() end
+    if State.StopXRay then State.StopXRay() end
     if not State.Running then return end
     State.Running = false
     if State.StopScreenESP then State.StopScreenESP() end
@@ -22342,6 +22353,7 @@ local installPlayerFling = function(C)
         if targetRoot.Position.Y < C.Workspace.FallenPartsDestroyHeight + 80 then
             describe("Target is near the void; contact cannot start safely"); return false, fling.Status
         end
+        if State.ReleaseFly then State.ReleaseFly() end -- fly holds PlatformStand; release it before the free-to-move check
         if anchored(root) or anchored(targetRoot) or hum.Sit or hum.PlatformStand then
             describe("Fling unavailable while a character is anchored, seated, or disabled"); return false, fling.Status
         end
@@ -22776,6 +22788,7 @@ local installPlayerActions = function(C)
         if State.Invis and (State.Invis.Active or State.Invis.Busy) then return false, status("Turn invisibility off before teleporting") end
         if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack() then return false, status("Restore your character before teleporting") end
         local char, hum, root = parts(player)
+        if State.ReleaseFly then State.ReleaseFly() end -- fly holds PlatformStand; release it before the free-to-move check
         if not char or root.Anchored or hum.Sit or hum.PlatformStand then return false, status("Your character must be alive and free to move") end
         local destination = landing(char,hum,root,targetChar,targetRoot)
         if not destination then return false, status("No clear landing space beside this player") end
@@ -24119,6 +24132,7 @@ local installWorldTeleports=function(C)
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         local root=char and char:FindFirstChild("HumanoidRootPart")
         if not root or not hum or hum.Health<=0 then return fail("Wait for your living character") end
+        if State.ReleaseFly then State.ReleaseFly() end -- fly holds PlatformStand; release it before the free-to-move check
         if root.Anchored or hum.Sit or hum.PlatformStand then return fail("Your character must be free to move") end
         if C.Typing and C.Typing() then return fail("Finish typing before teleporting") end
         local ok,frame,why=pcall(C.ResolveDestination or destination,kind,char,hum,root)
@@ -24343,6 +24357,9 @@ local installMovement=function(C)
         if cfg.Fly then table.insert(active,"Fly "..cfg.FlySpeed) end
         return #active>0 and table.concat(active,"  ·  ") or "Off"
     end
+    -- Teleports, invisibility and fling need a free character: drop fly's movers now. Fly comes back on
+    -- the next frame unless that feature pauses movement while it runs (fling, invisibility).
+    function State.ReleaseFly() stopFly() end
     function State.StopMovement()
         cfg.SpeedBoost,cfg.JumpBoost,cfg.InfiniteJump,cfg.Noclip,cfg.Fly=false,false,false,false,false
         stopFly(); release(walk); release(jump); restoreCollisions()
@@ -24421,7 +24438,7 @@ local installXRay=function(C)
         return name=="GunDrop" or name:sub(1,3)=="MM2" or name:sub(1,4)=="Coin"
     end
     local function eligible(part)
-        if not part:IsA("BasePart") or part.Transparency>=1 or skipped(part) then return false end
+        if not part:IsA("BasePart") or part:IsA("Terrain") or part.Transparency>=1 or skipped(part) then return false end
         local node=part.Parent
         while node and node~=world do
             if skipped(node) or node:IsA("Tool") or node:IsA("Camera")
@@ -24430,11 +24447,15 @@ local installXRay=function(C)
         end
         return node==world
     end
+    -- A part that refuses the write is never tracked, so switching off and unloading cannot trip on it.
     local function apply(part,value)
-        local record=tracked[part]
-        if not record then record={Before=part.LocalTransparencyModifier}; tracked[part]=record end
-        part.LocalTransparencyModifier=value
-        record.Applied=part.LocalTransparencyModifier
+        return pcall(function()
+            local before=part.LocalTransparencyModifier
+            part.LocalTransparencyModifier=value
+            local record=tracked[part] or {Before=before}
+            record.Applied=part.LocalTransparencyModifier
+            tracked[part]=record
+        end)
     end
     function xray.Count()
         local count=0
@@ -24442,14 +24463,19 @@ local installXRay=function(C)
         return count
     end
     function State.StopXRay()
+        local failed=0
         for part,record in pairs(tracked) do
             -- A value the game changed since our write is left alone.
-            if part.Parent and math.abs(part.LocalTransparencyModifier-record.Applied)<1e-4 then
-                part.LocalTransparencyModifier=record.Before
-            end
+            local ok=pcall(function()
+                if part.Parent and math.abs(part.LocalTransparencyModifier-record.Applied)<1e-4 then
+                    part.LocalTransparencyModifier=record.Before
+                end
+            end)
+            if not ok then failed+=1 end
         end
         table.clear(tracked); table.clear(queue)
         queueIndex,applied,xray.Active=1,nil,false
+        xray.LastError=failed>0 and (failed.." parts could not be restored") or nil
         return true
     end
     function xray.Step()
@@ -24467,7 +24493,9 @@ local installXRay=function(C)
         if value~=applied and clock()-appliedAt>=.2 then
             applied,appliedAt=value,clock()
             for part,record in pairs(tracked) do
-                if part.Parent then part.LocalTransparencyModifier=value; record.Applied=part.LocalTransparencyModifier end
+                pcall(function()
+                    if part.Parent then part.LocalTransparencyModifier=value; record.Applied=part.LocalTransparencyModifier end
+                end)
             end
         end
         -- Large maps are spread across frames so switching on never freezes the game.
@@ -24733,7 +24761,7 @@ local installKeybinds=function(C)
         end},
         {Id="KillAura",Title="Kill aura",Default="K",Run=function()
             local ok,message=State.SetKillAura(not cfg.KillAura)
-            if ok==false then return nil,tostring(message) end
+            if ok==false then return nil,tostring(message),true end
             return cfg.KillAura end},
         {Id="ESP",Title="Player ESP",Default="V",Run=function() flip("ESP"); C.UpdateVisuals(); return cfg.ESP end},
         {Id="XRay",Title="X-ray",Default="X",Run=function() return flip("XRay") end},
@@ -24742,14 +24770,17 @@ local installKeybinds=function(C)
         {Id="SpeedBoost",Title="Speed boost",Default="G",Run=function() return flip("SpeedBoost") end},
         {Id="JumpBoost",Title="Jump boost",Default="None",Run=function() return flip("JumpBoost") end},
         {Id="InfiniteJump",Title="Infinite jump",Default="J",Run=function() return flip("InfiniteJump") end},
-        {Id="Invisibility",Title="Invisibility",Default="F8",Run=function() State.SetInvisibility(not cfg.Invisibility); return cfg.Invisibility end},
+        {Id="Invisibility",Title="Invisibility",Default="F8",Run=function()
+            local ok,message=State.SetInvisibility(not cfg.Invisibility)
+            if ok==false then return nil,tostring(message),true end
+            return cfg.Invisibility end},
         {Id="AnimationPack",Title="Animation pack",Default="None",Run=function() State.SetMageAnimations(not cfg.MageAnimations); return cfg.MageAnimations end},
         {Id="RevealRoles",Title="Reveal roles in chat",Default="None",Run=function()
             local ok,message=State.RevealRolesInChat()
-            return nil,ok and "Roles sent" or tostring(message) end},
-        {Id="TeleportMap",Title="Teleport to map",Default="None",Run=function() local ok,message=State.TeleportToArea("Map"); return nil,ok and "Teleported to map" or tostring(message) end},
-        {Id="TeleportLobby",Title="Teleport to lobby",Default="None",Run=function() local ok,message=State.TeleportToArea("Lobby"); return nil,ok and "Teleported to lobby" or tostring(message) end},
-        {Id="RepairCamera",Title="Repair camera",Default="F10",Run=function() local ok,message=State.FixCamera(); return nil,ok and "Camera repaired" or tostring(message) end},
+            return nil,ok and "Roles sent" or tostring(message),not ok end},
+        {Id="TeleportMap",Title="Teleport to map",Default="None",Run=function() local ok,message=State.TeleportToArea("Map"); return nil,ok and "Teleported to map" or tostring(message),not ok end},
+        {Id="TeleportLobby",Title="Teleport to lobby",Default="None",Run=function() local ok,message=State.TeleportToArea("Lobby"); return nil,ok and "Teleported to lobby" or tostring(message),not ok end},
+        {Id="RepairCamera",Title="Repair camera",Default="F10",Run=function() local ok,message=State.FixCamera(); return nil,ok and "Camera repaired" or tostring(message),not ok end},
     }
     local byId={}
     for _,action in ipairs(actions) do byId[action.Id]=action end
@@ -24792,10 +24823,10 @@ local installKeybinds=function(C)
         local name=input.KeyCode.Name
         for _,action in ipairs(actions) do
             if cfg.Keybinds[action.Id]==name then
-                local ok,on,message=pcall(action.Run)
+                local ok,on,message,refused=pcall(action.Run)
                 local text=not ok and (action.Title.." failed: "..tostring(on))
                     or message or (action.Title..(on and " on" or " off"))
-                local tone=not ok and "warn" or (message and "info") or (on and "on" or "off")
+                local tone=(not ok or refused) and "warn" or (message and "info") or (on and "on" or "off")
                 if State.MobileUI and State.MobileUI.Refresh then State.MobileUI.Refresh() end
                 if State.MobileUI and State.MobileUI.Toast then State.MobileUI.Toast(text,tone) end
                 return text
@@ -25054,21 +25085,26 @@ local createMobileUI = function(C)
                 if syncing or not State.Running or State.Config[key] == enabled then return end
                 suppressInput()
                 State.Config[key] = enabled == true
-                if key == "MagicBullet" then State.SetMagicBullet(enabled)
-                elseif key == "Triggerbot" then State.SetTriggerbot(enabled)
-                elseif key == "KnifeTriggerbot" then State.SetKnifeTriggerbot(enabled)
-                elseif key == "KillAura" then State.SetKillAura(enabled)
-                elseif key == "AuraExtendedReach" then State.SetAuraExtendedReach(enabled)
-                elseif key == "AutoKnifeDodge" then State.SetAutoKnifeDodge(enabled)
-                elseif key == "ExperimentalInvisibility" then State.SetExperimentalInvisibility(enabled)
-                elseif key == "Invisibility" then State.SetInvisibility(enabled)
-                elseif key == "MageAnimations" then State.SetMageAnimations(enabled) end
+                -- Setters that refuse return false and a reason; the toast shows that reason.
+                local accepted,reason=true,nil
+                if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
+                elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
+                elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
+                elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
+                elseif key == "AuraExtendedReach" then accepted,reason=State.SetAuraExtendedReach(enabled)
+                elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
+                elseif key == "ExperimentalInvisibility" then accepted,reason=State.SetExperimentalInvisibility(enabled)
+                elseif key == "Invisibility" then accepted,reason=State.SetInvisibility(enabled)
+                elseif key == "MageAnimations" then accepted,reason=State.SetMageAnimations(enabled) end
                 if key == "TargetContinuity" then State.SetTargetContinuity(enabled) end
                 if key == "LearnedSheriffGuide" then State.SetLearnedSheriffGuide(enabled) end
                 C.SyncWeapons()
                 C.UpdateVisuals()
                 refresh()
-                if mobile.Toast then mobile.Toast(title .. (State.Config[key] and " on" or " off"), State.Config[key] and "on" or "off") end
+                if mobile.Toast then
+                    if accepted==false and reason then mobile.Toast(tostring(reason), "warn")
+                    else mobile.Toast(title .. (State.Config[key] and " on" or " off"), State.Config[key] and "on" or "off") end
+                end
             end,
         })
         toggles[key] = toggle
@@ -25188,7 +25224,7 @@ local createMobileUI = function(C)
         for name in pairs(State.Keybinds.Reserved) do
             if name~="Backspace" and name~="Delete" and Enum.KeyCode[name] then table.insert(blocked,name) end
         end
-        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key box, then press a new key. Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
+        keybindsCard:Paragraph({Title="How to bind",Desc="Click a key box, then press a new key. Esc cancels, Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
         mobile.KeybindElements,mobile.KeybindShown={},{}
         for _,action in ipairs(State.Keybinds.Actions) do
             local key=State.Config.Keybinds[action.Id]
@@ -25763,6 +25799,19 @@ local createMobileUI = function(C)
     end
     local toastToken = 0
     local toastSlide = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    -- PC: above the status card. Phones: the top strip, clear of the buttons at the bottom right.
+    local function toastPosition(lift)
+        local card = mobile.CombatHUD
+        local cardShown = card ~= nil and card.Visible
+        if mobile.Mode == "Mobile" then
+            toast.AnchorPoint = Vector2.new(0.5, 0)
+            return UDim2.new(0.5, 0, 0, (cardShown and 8 or 52) - lift)
+        end
+        local bottom = 96
+        if cardShown and not userPositioned[card] then bottom = math.max(bottom, card.Size.Y.Offset + 22) end
+        toast.AnchorPoint = Vector2.new(0.5, 1)
+        return UDim2.new(0.5, 0, 1, lift - bottom)
+    end
     -- tone: "on", "off", "warn", "info" or a Color3. force shows it even with Toasts switched off.
     function mobile.Toast(text, tone, force)
         if mobile.Destroyed or (not force and State.Config.Toasts == false) then return end
@@ -25770,10 +25819,12 @@ local createMobileUI = function(C)
         local token = toastToken
         toastText.Text = tostring(text)
         toastDot.BackgroundColor3 = typeof(tone) == "Color3" and tone or toastTones[tone] or toastTones.info
-        if not toast.Visible then
-            toast.Position = UDim2.new(0.5, 0, 1, -88)
+        if toast.Visible then
+            toast.Position = toastPosition(0)
+        else
+            toast.Position = toastPosition(8)
             toast.Visible = true
-            game:GetService("TweenService"):Create(toast, toastSlide, {Position = UDim2.new(0.5, 0, 1, -96)}):Play()
+            game:GetService("TweenService"):Create(toast, toastSlide, {Position = toastPosition(0)}):Play()
         end
         task.delay(1.8, function()
             if toastToken == token and not mobile.Destroyed then toast.Visible = false end

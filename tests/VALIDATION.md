@@ -1,5 +1,13 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.15
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 121 release assertions pass (179 total).
+- 7 new regression assertions: releasing and resuming fly, refused kill aura, invisibility and reveal toasts with their reasons and a warning tone, and X-ray surviving Terrain and a part that refuses the change through switch-off and unload.
+- The reproduction from the review now passes: the shipped X-ray module no longer errors when a part refuses the write, and F8 shows the refusal reason.
+- `luau-analyze` reports one note fewer than rc.14 (the discarded pose error is now used); the menu control list is unchanged.
+- Toast placement, Esc and click cancel while picking a key, and fly with teleports or invisibility have not been tried in a live server.
+
 ## Release candidate 1.0.0-rc.14
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 114 release assertions pass (172 total).
