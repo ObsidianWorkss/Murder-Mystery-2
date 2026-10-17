@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.22
+
+- Luau 0.739 compiles both scripts; 80 combat, 118 release, 56 triggerbot and 46 aura assertions pass (300 total). Obsolete cursor-ray and dwell cases were replaced with screen-policy and fast-acquisition regressions.
+- Tests exercise viewport edges, camera line of sight, behind-camera points, invalid vectors, sample filtering before prediction, policy forwarding, cancellation when the body or lead point is off screen at send time, visible knife selection, cooldowns, pause handling and 50 ms retries.
+- Kill aura is unchanged; the user reported that rc.21 aura works in their live test. This does not establish a particular extended server range or kill rate.
+- The responsive Roblox client disconnected during development. Live reaction time and combat accuracy for this version remain unverified; the configured scheduling interval is not a measured latency or accuracy improvement.
+
 ## Release candidate 1.0.0-rc.21
 
 - Luau 0.739 compiles both scripts; 58 combat, 118 release, 80 triggerbot and 46 aura assertions pass (302 total).

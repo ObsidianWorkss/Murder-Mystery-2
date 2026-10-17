@@ -7,12 +7,56 @@ end
 local vectorMeta = {}
 local function vec(x) return setmetatable({X=x,Y=0,Z=0,Kind="Vector3"},vectorMeta) end
 vectorMeta.__sub = function(a,b) return vec(a.X-b.X) end
+vectorMeta.__add = function(a,b) return vec(a.X+b.X) end
+vectorMeta.__mul = function(a,b) return vec(a.X*b.X) end
 vectorMeta.__eq = function(a,b) return a.X==b.X end
 vectorMeta.__index = function(v,k) if k=="Magnitude" then return math.abs(v.X) end end
 local function frame(x) return {Position=vec(x),Kind="CFrame"} end
 local function typeof(v) return type(v)=="table" and v.Kind or type(v) end
 local now=10
 local os={clock=function() return now end}
+
+do
+    local projected,visible={X=30,Y=40,Z=1},true
+    local camera={CFrame={Position=vec(0)},ViewportSize={X=800,Y=600},WorldToViewportPoint=function() return projected,visible end}
+    local workspace={CurrentCamera=camera}
+    local State={}
+    local cameraBlocked=false
+    local function clearPath() return not cameraBlocked end
+    -- INSERT_SCREEN
+    check(State.IsAimPointOnScreen(vec(1)),"visible forward point is accepted")
+    check(State.IsAimPointOnScreen(vec(1),{}),"camera line of sight accepts a visible clear body point")
+    cameraBlocked=true
+    check(not State.IsAimPointOnScreen(vec(1),{}),"a body point hidden from the camera is rejected")
+    cameraBlocked=false
+    visible=false; check(not State.IsAimPointOnScreen(vec(1)),"offscreen projection is rejected")
+    visible=true; projected.Z=-1; check(not State.IsAimPointOnScreen(vec(1)),"behind-camera point is rejected")
+    projected.Z=1; projected.X=800; check(not State.IsAimPointOnScreen(vec(1)),"right viewport edge is outside")
+    projected.X=30; projected.Y=600; check(not State.IsAimPointOnScreen(vec(1)),"bottom viewport edge is outside")
+    projected.Y=40; projected.X=-1; check(not State.IsAimPointOnScreen(vec(1)),"negative viewport coordinates are rejected")
+    check(not State.IsAimPointOnScreen(vec(0/0)),"nonfinite aim point is rejected")
+    check(not State.IsAimPointOnScreen(vec(math.huge)),"infinite aim point is rejected")
+    workspace.CurrentCamera=nil; check(not State.IsAimPointOnScreen(vec(1)),"missing camera fails closed")
+end
+
+do
+    local State={Config={MaxRange=1000}}
+    local player={}
+    local hitPartNames={Gun={"Torso"},Knife={"Torso"}}
+    local hitOffsets={vec(0),vec(1)}
+    local Vector3={zero=vec(0)}
+    local part={CFrame={Position=vec(10),VectorToWorldSpace=function(_,v) return v end},Size=vec(1),IsA=function() return true end}
+    local char={FindFirstChild=function(_,name) if name=="Torso" then return part end end}
+    local camera={WorldToViewportPoint=function(_,v) return {X=v.X,Y=0,Z=1},v.X==10 end}
+    -- INSERT_VISIBLE
+    local _,normal=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=false},true)
+    local _,screen=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=false},true,true)
+    check(#normal.Torso.Samples==2,"manual sampling keeps its existing offscreen option")
+    check(#screen.Torso.Samples==1 and screen.Torso.Samples[1].Visible,
+        "screen-only policy filters samples before target prediction even with all-direction selection")
+    local _,missing=visibleBodySamples(char,"Gun",vec(0),nil,nil,{Core=false},true,true)
+    check(#missing.Torso.Samples==0,"screen-only selection cannot acquire without a camera")
+end
 
 do
     local State={Config={ConservativeGun=true}}
@@ -72,7 +116,8 @@ do
     State.IsPlayerExcluded=function(p) return p.Excluded end
     State.RememberAimTarget=function() end
     local selected,scans=nil,0
-    local function chooseTarget() scans+=1; return selected end
+    local seenScreenPolicy
+    local function chooseTarget(_,_,_,_,_,onScreenOnly) scans+=1; seenScreenPolicy=onScreenOnly; return selected end
     local item={}
     local function snapshot() return {Player=targetPlayer,Character=targetPlayer.Character,Position=vec(10)} end
     selected=snapshot()
@@ -103,6 +148,8 @@ do
     -- INSERT_AIMPOINT
     local _,name=aimPoint({Kind="Gun",Item=item})
     check(scans==8 and name=="Target" and forced,"attack bypasses stale empty HUD cache and forces fresh motion")
+    aimPoint({Kind="Gun",Item=item},nil,false,vec(0),true)
+    check(seenScreenPolicy==true,"aim point forwards screen-only selection policy")
     now=10
 end
 
@@ -160,6 +207,13 @@ do
     check(State.SelectStabAssistTarget()==nil,"clicked stab assist requires murderer role")
     player.Role="Murderer"; State.Config.StabAssist=false
     check(State.SelectStabAssistTarget()==nil,"clicked stab assist toggle works")
+    State.IsAimPointOnScreen=function(point) return point.X==6 end
+    check(State.SelectStabAssistTarget(true,true)==far,"automatic stab selects a visible target without requiring the click-assist toggle")
+    far.Role="Murderer"
+    check(State.SelectStabAssistTarget(true,true)==nil,"automatic stab skips other murderers instead of blocking eligible selection")
+    far.Role=nil
+    State.IsAimPointOnScreen=function() return false end
+    check(State.SelectStabAssistTarget(true,true)==nil,"automatic stab never selects an offscreen body part")
     State.Config.StabAssist=true
     local r=record()
     failRemote=true
@@ -267,11 +321,15 @@ do
     local payloadOrigin,predictionOrigin
     local calls,move=0,0
     local coverage,passes=1,5
-    local function aimPoint(_,_,_,origin)
+    local seenScreenPolicy
+    local bodyVisible,leadVisible=true,true
+    State.IsAimPointOnScreen=function(point) return point and (point.X==9 and bodyVisible or point.X==10 and leadVisible) end
+    local function aimPoint(_,_,_,origin,onScreenOnly)
+        seenScreenPolicy=onScreenOnly
         calls+=1; predictionOrigin=origin
         attachment.WorldPosition=vec(attachment.WorldPosition.X+move)
         attachment.WorldCFrame=frame(attachment.WorldPosition.X)
-        return frame(10),target.Name,{Player=target,Character=target.Character,TimingCoverage=coverage,TimingPassed=passes}
+        return frame(10),target.Name,{Player=target,Character=target.Character,BodyPoint=vec(9),TimingCoverage=coverage,TimingPassed=passes}
     end
     local remote={IsA=function(_,kind) return kind=="RemoteEvent" end,
         FireServer=function(_,origin) payloadOrigin=origin.Position end}
@@ -294,5 +352,12 @@ do
     check(not sendGun(record()),"final firing gate rejects incomplete conservative sampling")
     passes=5
     check(sendGun(record()),"fully sampled conservative gun solution sends")
+    check(sendGun(record(),nil,false,true) and seenScreenPolicy==true and State.LastRequest.Mode=="OnScreenAssist",
+        "screen-only shot uses the assisted pipeline and records its policy")
+    bodyVisible=false; payloadOrigin=nil
+    check(not sendGun(record(),nil,false,true) and payloadOrigin==nil,"final send cancels when body point leaves the screen")
+    bodyVisible=true; leadVisible=false
+    check(not sendGun(record(),nil,false,true) and payloadOrigin==nil,"final send cancels when predicted lead point leaves the screen")
+    check(sendGun(record()),"screen-only rejection does not change manual shot behavior")
 end
 print(string.format("%d combat assertions passed",passed))

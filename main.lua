@@ -17742,7 +17742,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.21"
+State.Version = "1.0.0-rc.22"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18812,7 +18812,17 @@ local function bodyWeight(name)
     if name:find("Hand") or name:find("Foot") then return 0.25 end
     return 0.45
 end
-local function visibleBodySamples(char, kind, origin, camera, cursor, profileOverride, allowOffscreen)
+function State.IsAimPointOnScreen(position,char)
+    local camera=workspace.CurrentCamera
+    if not camera or typeof(position)~="Vector3" then return false end
+    if position.X~=position.X or position.Y~=position.Y or position.Z~=position.Z then return false end
+    if math.abs(position.X)>=1e8 or math.abs(position.Y)>=1e8 or math.abs(position.Z)>=1e8 then return false end
+    local point,visible=camera:WorldToViewportPoint(position)
+    local size=camera.ViewportSize
+    if not (visible==true and point.Z>0 and point.X>=0 and point.Y>=0 and point.X<size.X and point.Y<size.Y) then return false end
+    return not char or clearPath(camera.CFrame.Position,position,char)
+end
+local function visibleBodySamples(char, kind, origin, camera, cursor, profileOverride, allowOffscreen, onScreenOnly)
     if not camera and kind ~= "Gun" then return nil, {} end
     local minimum, body = nil, {}
     local names = hitPartNames[kind]
@@ -18840,7 +18850,7 @@ local function visibleBodySamples(char, kind, origin, camera, cursor, profileOve
                 if worldDistance <= State.Config.MaxRange then
                     local screen, visible = Vector3.zero, false
                     if camera then screen, visible = camera:WorldToViewportPoint(sample) end
-                    if visible or kind == "Gun" or allowOffscreen then
+                    if (visible or kind == "Gun" or allowOffscreen) and (not onScreenOnly or visible) then
                         local cursorScore
                         if cursor then
                             cursorScore = visible and (Vector2.new(screen.X, screen.Y) - cursor).Magnitude
@@ -18895,9 +18905,9 @@ function State.GunTimingShifts(positionAt, lead, position)
     end
     return shifts
 end
-local function exposedSolution(char, root, kind, origin, item, camera, bodySamples)
+local function exposedSolution(char, root, kind, origin, item, camera, bodySamples, onScreenOnly)
     if not camera and kind ~= "Gun" then return nil end
-    if not bodySamples then local _, body = visibleBodySamples(char, kind, origin, camera); bodySamples = body end
+    if not bodySamples then local _, body = visibleBodySamples(char, kind, origin, camera,nil,nil,nil,onScreenOnly); bodySamples = body end
     local names = hitPartNames[kind]
     if kind == "Gun" and bodySamples.HumanoidRootPart then names = table.clone(names); table.insert(names, 1, "HumanoidRootPart") end
     local queryParts = {}
@@ -18923,7 +18933,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                 local exposedSamples, partBest, partBestQuality = 0, nil, 0
                 for _, candidate in ipairs(info.Samples) do
                     local offset, worldOffset, sample, screen = candidate.Offset, candidate.WorldOffset, candidate.Position, candidate.Screen
-                    if clearPath(origin, sample, char) then
+                    if clearPath(origin, sample, char) and (not onScreenOnly or State.IsAimPointOnScreen(sample,char)) then
                             -- Solve once per body part; apply its interior sample offsets.
                             if not predictionChecked then
                                 predicted, lead, airborne, source, positionAt, knifeSpeed = predict(part, root, origin, kind, item, info.Frame.Position, bodySamples._GunProfile)
@@ -18940,7 +18950,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                             end
                             -- Translate the ray back into the current body geometry
                             -- rather than accepting an empty corner of a mesh's box.
-                            if point and clearPath(origin, point, char, true)
+                            if point and (not onScreenOnly or State.IsAimPointOnScreen(point)) and clearPath(origin, point, char, true)
                                 and (kind~="Gun" or not State.GunPathClear
                                     or State.GunPathClear(State.GunPathSnapshot,origin,point,char))
                                 and sampleRayHitsBody(origin - (point - sample), sample, bodyQuery) then
@@ -19081,7 +19091,7 @@ end
 
 installTargetContinuity({State=State,Player=player})
 end
-local function chooseTarget(kind, origin, item, preferred, strict)
+local function chooseTarget(kind, origin, item, preferred, strict, onScreenOnly)
     if not origin then return nil end
     local started = os.clock()
     local camera = workspace.CurrentCamera
@@ -19094,7 +19104,7 @@ local function chooseTarget(kind, origin, item, preferred, strict)
             local char = other.Character
             local root = char:FindFirstChild("HumanoidRootPart")
             local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil,
-                strict or (kind == "Knife" and State.Config.KnifeAllDirections))
+                strict or (kind == "Knife" and State.Config.KnifeAllDirections),onScreenOnly)
             if lower then
                 local bias = State.TargetContinuityBias(kind,other,char,preferred,strict,started)
                 table.insert(candidates, {Player = other, Character = char, Root = root, Order = order,
@@ -19117,7 +19127,7 @@ local function chooseTarget(kind, origin, item, preferred, strict)
         end
         local other, char, root = candidate.Player, candidate.Character, candidate.Root
         State.Performance.CandidateEvaluations += 1
-            local solution = exposedSolution(char, root, kind, origin, item, camera, candidate.Body)
+            local solution = exposedSolution(char, root, kind, origin, item, camera, candidate.Body,onScreenOnly)
             if solution then
                 local screen = solution.Screen
                 local score = solution.CursorScore or (Vector2.new(screen.X, screen.Y) - cursor).Magnitude
@@ -19603,11 +19613,11 @@ function State.ExcludedPlayerInShotPath(origin, destination)
     end
     return false
 end
-local function aimPoint(record, preferred, strict, origin)
+local function aimPoint(record, preferred, strict, origin, onScreenOnly)
     sampleMotion(os.clock(), true)
     State.Stats.AimCalls += 1
     if record.Kind == "Knife" and not State.Config.KnifeAim then return weapon:GetMouseTargetCFrame(), nil end
-    local target = chooseTarget(record.Kind, origin or shotOrigin(record.Kind, record.Item), record.Item, preferred, strict)
+    local target = chooseTarget(record.Kind, origin or shotOrigin(record.Kind, record.Item), record.Item, preferred, strict,onScreenOnly)
     if target then
         State.Stats.Redirects += 1
         if record.Kind == "Knife" then State.Stats.KnifeRedirects += 1 end
@@ -19735,7 +19745,7 @@ end
 installGunPathGuard({State=State,Player=player,Players=Players,Intersects=segmentHitsBox,
     GetPassthrough=function() return CollectionService:GetTagged("WeaponPassthrough") end})
 end
-local function sendGun(record, preferred, strict)
+local function sendGun(record, preferred, strict, onScreenOnly)
     if not record or record.GunSending or not State.Config.MagicBullet then return end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Gun") then return end
     if not State.Config.MagicBullet or not ready(record) or os.clock()-record.LastGun<0.1 then return end
@@ -19760,7 +19770,7 @@ local function sendGun(record, preferred, strict)
     local snapshot=State.CreateGunPathSnapshot and State.CreateGunPathSnapshot()
     local function selectAim()
         State.GunPathSnapshot=snapshot
-        local ok,frame,name,found=pcall(aimPoint,record,preferred,strict,originFrame.Position)
+        local ok,frame,name,found=pcall(aimPoint,record,preferred,strict,originFrame.Position,onScreenOnly)
         State.GunPathSnapshot=nil
         if not ok then return nil,nil,nil,tostring(frame) end
         return frame,name,found
@@ -19819,6 +19829,10 @@ local function sendGun(record, preferred, strict)
     if State.ExcludedPlayerInShotPath(origin,targetFrame.Position) then
         return skip("Shot skipped: excluded player in firing path")
     end
+    if onScreenOnly and (not solution or not State.IsAimPointOnScreen(solution.BodyPoint,targetCharacter)
+        or not State.IsAimPointOnScreen(targetFrame.Position)) then
+        return skip("Shot skipped: assisted target left the screen")
+    end
     local previousLastGun,previousSentAt=record.LastGun,State.LastGunSentAt
     local now=os.clock()
     record.LastGun=now
@@ -19835,7 +19849,7 @@ local function sendGun(record, preferred, strict)
         VelocitySource=solution and solution.VelocitySource,TargetMode=solution and solution.TargetMode,
         ExposureQuality=solution and solution.ExposureQuality,ClearNeighbours=solution and solution.ClearNeighbours,
         TimingCoverage=solution and solution.TimingCoverage,TimingPassed=solution and solution.TimingPassed,
-        CursorDistance=solution and solution.CursorDistance}
+        CursorDistance=solution and solution.CursorDistance,OnScreenOnly=onScreenOnly==true}
     table.insert(State.PendingGun,pending)
     record.GunSending=true
     local sent,why=pcall(function() remote:FireServer(originFrame,targetFrame) end)
@@ -19854,7 +19868,7 @@ local function sendGun(record, preferred, strict)
     while #State.PendingGun>8 do table.remove(State.PendingGun,1) end
     State.Stats.GunRequests+=1
     State.LastRequest={Weapon="Gun",Target=targetName,Position=targetFrame.Position,
-        Offscreen=solution and solution.Offscreen,Mode="MagicBullet",AimPart=solution and solution.AimPart,
+        Offscreen=solution and solution.Offscreen,Mode=onScreenOnly and "OnScreenAssist" or "MagicBullet",AimPart=solution and solution.AimPart,
         TargetMode=solution and solution.TargetMode}
     return true
 end
@@ -19997,20 +20011,22 @@ local function scanStabContacts(record)
     end
 end
 -- Select one nearby body point for a manual click; no automatic attack loop.
-function State.SelectStabAssistTarget()
-    if not State.Config.StabAssist or roleFor(player) ~= "Murderer" then return nil end
+function State.SelectStabAssistTarget(onScreenOnly,automated)
+    if (not automated and not State.Config.StabAssist) or roleFor(player) ~= "Murderer" then return nil end
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not ownRoot then return nil end
     local best, bestPart, bestDistance
     for _, other in ipairs(Players:GetPlayers()) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if other ~= player and root and alive(other) and not State.IsPlayerExcluded(other) then
+        if other ~= player and root and alive(other) and not State.IsPlayerExcluded(other)
+            and (not automated or roleFor(other)~="Murderer") then
             local distance = (root.Position - ownRoot.Position).Magnitude
             if distance <= 6.5 and (not bestDistance or distance < bestDistance) then
                 for _, name in ipairs({"UpperTorso", "Torso", "Head", "LowerTorso"}) do
                     local part = char:FindFirstChild(name)
-                    if part and part:IsA("BasePart") and clearPath(ownRoot.Position, part.Position, char) then
+                    if part and part:IsA("BasePart") and (not onScreenOnly or State.IsAimPointOnScreen(part.Position,char))
+                        and clearPath(ownRoot.Position, part.Position, char) then
                         best, bestPart, bestDistance = other, part, distance
                         break
                     end
@@ -24547,8 +24563,8 @@ end
 
 
 do
--- Guns use the same fresh aim-assisted shot path as a manual click. Knives keep
--- crosshair acquisition and normal stab reach. No delayed shots or setting changes.
+-- Automatic weapon assistance only uses visible on-screen targets. Every send
+-- recalculates and revalidates its solution; no cursor hit or queued click is needed.
 local installTriggerbot=function(C)
     local State,player,UIS,world=C.State,C.Player,C.UIS,C.World
     local clock=C.Clock or os.clock
@@ -24557,15 +24573,10 @@ local installTriggerbot=function(C)
     State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false -- explicit opt-in after every reload
     local focused=true
     local nextScan,nextAttempt=0,0
-    local candidate,candidateCharacter,candidateWeapon,candidateOwn,since,lastSeen
-    local params=RaycastParams.new()
-    params.FilterType=Enum.RaycastFilterType.Exclude
-    params.IgnoreWater=true
     local function reset(message)
         if message:sub(1,6)=="Paused" then
             if bot.Status:sub(1,6)~="Paused" then bot.BeforePause=bot.Status end
         else bot.BeforePause=nil end
-        candidate,candidateCharacter,candidateWeapon,candidateOwn,since,lastSeen=nil,nil,nil,nil,nil,nil
         bot.Active=false
         bot.Status=message
     end
@@ -24576,7 +24587,7 @@ local installTriggerbot=function(C)
     end
     function State.SetKnifeTriggerbot(enabled)
         State.Config.KnifeTriggerbot=enabled==true
-        reset(enabled and "Waiting for crosshair target" or "Knife triggerbot off")
+        reset(enabled and "Waiting for a clear on-screen knife target" or "Knife triggerbot off")
         return true
     end
     function State.StopTriggerbot(message)
@@ -24584,57 +24595,14 @@ local installTriggerbot=function(C)
         reset(message or "Off")
         return true
     end
-    local function aimHit()
-        local camera=world.CurrentCamera
-        if not camera then return nil,nil,"Waiting for camera" end
-        local locked=C.MouseLocked()
-        if C.InputMode()=="Mobile" and not locked then return nil,nil,"Enable mouse lock for touch triggerbot" end
-        -- Matches MM2 WeaponService: GetMouseLocation uses viewport coordinates;
-        -- the game's mouse-lock crosshair uses the center of the viewport.
-        local point=locked and camera.ViewportSize/2 or UIS:GetMouseLocation()
-        local size=camera.ViewportSize
-        if point.X<0 or point.Y<0 or point.X>=size.X or point.Y>=size.Y then return nil end
-        local ray=camera:ViewportPointToRay(point.X,point.Y)
-        local ignored={player.Character,camera}
-        for _,part in ipairs(C.GetPassthrough()) do table.insert(ignored,part) end
-        local range=tonumber(State.Config.MaxRange) or 1000
-        if range~=range then range=1000 end
-        range=math.clamp(range,1,1000)
-        -- Bounded transparency traversal, unlike the native unbounded loop. Visible
-        -- walls and other players still block the crosshair; no full roster scan.
-        for _=1,8 do
-            params.FilterDescendantsInstances=ignored
-            local hit=world:Raycast(ray.Origin,ray.Direction*range,params)
-            local part=hit and hit.Instance
-            if not part then return nil end
-            local ancestor=part.Parent
-            while ancestor and ancestor~=world do
-                if ancestor:IsA("Model") then
-                    local target=C.Players:GetPlayerFromCharacter(ancestor)
-                    if target then
-                        -- Hats and carried tools are not body hits. Do not trace through
-                        -- another avatar's accessory to attack somebody behind them.
-                        if part.Parent==ancestor and (C.BodyParts[part.Name] or part.Name=="HumanoidRootPart") then
-                            return target,part
-                        end
-                        return nil
-                    end
-                end
-                ancestor=ancestor.Parent
-            end
-            if not part:IsA("BasePart") or part.Transparency~=1 then return nil end
-            table.insert(ignored,part)
-        end
-        return nil,nil,"Crosshair path is too obstructed"
-    end
     function bot.Step()
         if not State.Running or not (State.Config.Triggerbot or State.Config.KnifeTriggerbot) then
-            if bot.Active or candidate then reset("Off") end
+            if bot.Active then reset("Off") end
             return
         end
         local now=clock()
         if now<nextScan then return end
-        nextScan=now+1/30 -- no catch-up bursts after a slow frame
+        nextScan=now+1/60 -- cheap readiness checks; no catch-up bursts after a slow frame
         if not focused or C.InputBlocked() then reset("Paused: menu, chat or window focus"); return end
         if not State.Config.Aim then reset("Turn on Aim assist"); return end
         if (State.Invis and (State.Invis.Active or State.Invis.Busy))
@@ -24665,12 +24633,11 @@ local installTriggerbot=function(C)
             end
             if not world.CurrentCamera then reset("Waiting for camera"); return end
             if now<nextAttempt then return end
-            nextAttempt=now+.25
+            nextAttempt=now+.05
             bot.AimChecks+=1
-            -- Exactly the same call used by this gun's Activated handler. It finds
-            -- the murderer, predicts a body point, and rechecks timing and paths.
-            -- The cursor can be off target; no stale preview is used to send shots.
-            local sent=C.SendGun(record)
+            -- Reuse gun prediction and path validation with an explicit screen-only
+            -- policy. Both the visible body point and the lead point must stay on screen.
+            local sent=C.SendGun(record,nil,false,true)
             if sent==true then
                 bot.Shots+=1
                 bot.LastShot=now
@@ -24691,14 +24658,17 @@ local installTriggerbot=function(C)
             speed=type(speed)=="number" and speed==speed and speed>0 and speed<math.huge and speed or 1
             if now-(record.LastThrow or -math.huge)<2*speed then reset("Waiting for thrown knife"); return end
         else reset("Equip a gun or knife"); return end
-        local target,part,reason=aimHit()
+        if not world.CurrentCamera then reset("Waiting for camera"); return end
+        if now<nextAttempt then return end
+        nextAttempt=now+.05
+        local target,part=C.ScreenKnifeTarget()
         if not target or target==player or not C.Alive(target) or State.IsPlayerExcluded(target) then
-            reset(reason or "Aim at a clear opponent's body"); return
+            reset("No clear on-screen opponent within knife reach"); return
         end
         local role=C.Role(target)
         if role=="Murderer" then reset("Aim at an opponent"); return end
         local character=target.Character
-        if not character or part.Parent~=character then reset("Target changed"); return end
+        if not character or not part or part.Parent~=character then reset("Target changed"); return end
         if kind=="Knife" then
             local ownRoot=player.Character:FindFirstChild("HumanoidRootPart")
             local targetRoot=character:FindFirstChild("HumanoidRootPart")
@@ -24708,14 +24678,6 @@ local installTriggerbot=function(C)
             end
         end
         bot.Active=true
-        if target~=candidate or character~=candidateCharacter or item~=candidateWeapon
-            or player.Character~=candidateOwn or not lastSeen or now-lastSeen>.2 then
-            candidate,candidateCharacter,candidateWeapon,candidateOwn,since=target,character,item,player.Character,now
-        end
-        lastSeen=now
-        if now-since<.1 then bot.Status="Steady crosshair on target"; return end
-        if now<nextAttempt then return end
-        nextAttempt=now+.25 -- failed prediction is retried at most four times a second
         local sent=C.StabKnife(record,target)
         if sent==true then
             bot.Stabs+=1
@@ -24738,12 +24700,10 @@ local installTriggerbot=function(C)
     end)
 end
 
-installTriggerbot({State=State,Player=player,Players=Players,UIS=UIS,World=workspace,Heartbeat=RunService.Heartbeat,
-    Connect=connect,Equipped=equippedWeapon,Alive=alive,Ready=ready,Role=roleFor,BodyParts=bodyPartSet,
+installTriggerbot({State=State,Player=player,UIS=UIS,World=workspace,Heartbeat=RunService.Heartbeat,
+    Connect=connect,Equipped=equippedWeapon,Alive=alive,Ready=ready,Role=roleFor,
     ClearPath=clearPath,SendGun=sendGun,StabKnife=stabKnife,ReportContact=reportStabContact,
-    InputMode=function() return detectInputMode(UIS) end,
-    MouseLocked=function() return weapon and weapon:IsMouseLockEnabled() and UIS.PreferredInput~=Enum.PreferredInput.Gamepad end,
-    GetPassthrough=function() return CollectionService:GetTagged("WeaponPassthrough") end,
+    ScreenKnifeTarget=function() return State.SelectStabAssistTarget(true,true) end,
     InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end})
 end
 
@@ -25203,9 +25163,9 @@ local createMobileUI = function(C)
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
-    option(combat,"Gun triggerbot","Triggerbot","Auto-fire whenever Gun aim finds a clear assisted shot at the murderer. Requires Aim assist and Gun aim. Off on reload.")
+    option(combat,"Gun triggerbot","Triggerbot","Fast assisted shots at visible on-screen murderers. Cursor contact is not required. Requires Aim assist and Gun aim.")
     mobile.TriggerbotStatus=combat:Paragraph({Title="Triggerbot status",Desc="Off"})
-    option(knife,"Knife triggerbot","KnifeTriggerbot","Auto-stab a clear opponent under your crosshair within 6.5 studs. Off on reload.")
+    option(knife,"Knife triggerbot","KnifeTriggerbot","Fast assisted stabs at clear on-screen opponents within 6.5 studs. Cursor contact is not required.")
     mobile.KnifeTriggerbotStatus=knife:Paragraph({Title="Triggerbot status",Desc="Off"})
     option(knife, "Knife throw prediction", "KnifeAim", "Leads throws to where players will be.")
     option(knife, "All-direction knife aim", "KnifeAllDirections", "Also target players off screen.")

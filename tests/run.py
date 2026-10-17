@@ -14,13 +14,15 @@ root = Path(__file__).resolve().parent.parent
 source = (root / "main.lua").read_text(encoding="utf-8")
 template = (root / "tests" / "combat.luau").read_text(encoding="utf-8")
 sections = {
+    "SCREEN": ("function State.IsAimPointOnScreen(", "local function visibleBodySamples("),
+    "VISIBLE": ("local function visibleBodySamples(", "local function sampleRayHitsBody("),
     "MOTION": ("local function sampleMotion(", "connect(Players.PlayerRemoving, function(other) State.Motion[other] = nil end)"),
     "PREVIEW": ("function State.GetCachedAimPreview(", "-- This executor cannot hook the live script's module cache."),
     "AIMPOINT": ("local function aimPoint(", "\ndo\n-- Predict only other players' possible ray obstruction"),
     "TIMING": ("local function gunTimingCoverage(", "local function exposedSolution("),
-    "STAB": ("function State.SelectStabAssistTarget()", "local function knifeFeedback(message)"),
+    "STAB": ("function State.SelectStabAssistTarget(", "local function knifeFeedback(message)"),
     "THROW": ("local function knifeFeedback(message)", "local function takeOver(item)"),
-    "GUN": ("local function sendGun(record, preferred, strict)", "local installAuraTouch=function(C)"),
+    "GUN": ("local function sendGun(record, preferred, strict, onScreenOnly)", "local installAuraTouch=function(C)"),
 }
 for name, (start, end) in sections.items():
     code = source[source.index(start):source.index(end, source.index(start))]

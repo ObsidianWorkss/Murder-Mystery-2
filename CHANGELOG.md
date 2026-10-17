@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.22 — 2026-10-17
+
+- Automatic gun shots now use visible on-screen targets only. The policy filters body samples before prediction, filters predicted points, and rechecks both the current body point and the selected lead point before sending. It cannot fall back to an offscreen target. Manual Gun aim keeps its existing behavior.
+- Ready-weapon aim checks run at a 50 ms minimum interval instead of 250 ms, with cheap readiness polling at most 60 Hz. Gun, stab and throw cooldowns still apply; this is a reaction scheduling change, not a server fire-rate change.
+- Knife triggerbot now selects a clear nearby on-screen opponent without requiring direct cursor contact or a 0.1-second dwell. It uses the same body-point selection as clicked stab assistance, with an enforced screen filter and the normal 6.5-stud reach.
+- Universal T and the working kill aura remain available. Aura code is unchanged from rc.21.
+
 ## 1.0.0-rc.21 — 2026-10-17
 
 - Normal and extended kill aura now explicitly report the selected body contact after starting a swing. Normal aura previously relied on blade overlap; physical contact is no longer required to send its report. Server damage validation remains unchanged.

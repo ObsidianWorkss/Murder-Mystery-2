@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.21 · Release candidate · PC + mobile**
+**v1.0.0-rc.22 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -27,8 +27,8 @@ For clearer startup errors, execute the included [`loader.lua`](loader.lua) file
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
 | Gun aim | Redirects a fired shot toward a clear body point on the known murderer, including targets outside the camera view. |
 | Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
-| Gun triggerbot | Automatically attempts the same assisted shot as a manual click whenever Gun aim finds a clear shot at the known murderer, including offscreen targets. Requires Aim assist and Gun aim. Off by default. |
-| Knife triggerbot | Automatically attempts a stab at the clear opponent under your crosshair within 6.5 studs, while you are murderer. Independent of gun triggerbot; off by default. |
+| Gun triggerbot | Automatically aims at a clear visible on-screen murderer. Both the body sample and predicted aim point must remain on screen. Requires Aim assist and Gun aim. Off by default. |
+| Knife triggerbot | Automatically stabs a clear on-screen opponent within 6.5 studs while you are murderer. No crosshair contact or dwell needed. Independent of gun triggerbot; off by default. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
 | Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
@@ -45,12 +45,12 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 ### Using the triggerbot
 
 1. Equip your weapon. Enable **Sheriff → Gun Aim → Gun triggerbot** or **Murderer → Knife Aim → Knife triggerbot**. Keep **Aim assist** on; the gun also needs **Gun aim**.
-2. Close the menu. The gun automatically checks for an assisted shot at the known murderer; your cursor does not need to touch their body. For knife triggerbot, keep the crosshair on a nearby opponent's body for at least 0.1 seconds. Mobile knife triggerbot requires the game's mouse lock and center crosshair; gun triggerbot does not.
+2. Close the menu and keep your opponent visible on screen. The gun automatically checks for a clear assisted shot at the known murderer. Knife triggerbot selects a clear on-screen opponent within 6.5 studs. Neither mode needs your cursor directly on the player, a crosshair dwell, or mobile mouse lock.
 3. Press **T** to toggle both triggerbot modes together. Rebind **Universal triggerbot** in **Settings → Combat keys**. Independent gun and knife keys remain available and start unbound. Read **Triggerbot status** in either aim card for missing settings, cooldowns, blocked paths, or rejected shot predictions.
 
-The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. The gun recalculates a fresh assisted shot when it resumes; the knife reacquires its crosshair target. Missed manual clicks are never queued.
+The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. Both modes select a fresh on-screen target when they resume. Missed manual clicks are never queued.
 
-Gun requests have a conservative **3-second minimum interval**, also measured from manual assisted shots, and wait for the tool to be enabled. Knife requests respect the existing stab and throw cooldowns; extended aura range does not extend triggerbot reach. The gun uses the exact manual assisted-shot function, preserving prediction, timing, wall, player-path, and exclusion checks. It checks at most four times per second while ready; rejected checks do not count as sent shots. The status card retains the last gun-check reason even if the next round or a pause changes the current status. Request counters are not hit or kill counters.
+Gun requests have a conservative **3-second minimum interval**, also measured from manual assisted shots, and wait for the tool to be enabled. Knife requests respect the existing stab and throw cooldowns; extended aura range does not extend triggerbot reach. The gun preserves prediction, timing, wall, player-path, and exclusion checks while filtering body samples to the screen and checking visibility again before sending. Ready-weapon aim checks use a **50 ms minimum interval** (previously 250 ms); cheap readiness checks run at most 60 times per second. Frame rate, selection cost and network delay affect actual reaction time. The status card retains the last gun-check reason across pauses. Request counters are not hit or kill counters.
 
 ### Using kill aura and extended reach
 
@@ -110,7 +110,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 
 - **No clear target:** confirm you are in an active round, equip the weapon, and move to an unobstructed position. Gun aim requires an identified murderer.
 - **Timing checks skip a shot:** reposition or wait for steadier movement, then click again. Conservative mode checks a wider timing range and may reject shots that the previous mode would attempt. Skipped clicks are not queued for automatic firing.
-- **Triggerbot does nothing:** check its status card and last gun-check reason, close the menu, equip the weapon, and enable Aim assist and Gun aim. Gun triggerbot fires at a valid assisted target without a direct cursor hit. Knife triggerbot requires a crosshair target in reach and mouse lock on mobile. Both reset to off after reloading the script; press T to enable them.
+- **Triggerbot does nothing:** check its status card, close the menu, equip the weapon, and enable Aim assist and Gun aim. The target must be visible on screen with a clear firing path; predicted gun aim must stay on screen too. Knife triggerbot needs a visible opponent within 6.5 studs. Neither requires a direct cursor hit. Both reset to off after reload; press T to enable them. Kill aura pauses triggerbot while aura runs.
 - **Knife won't throw:** check cooldown and clear-target protection. A cancelled charge releases its local cooldown; press throw again after repositioning.
 - **Stab misses:** the opponent must be nearby and unobstructed. Server validation can still reject contact attempts.
 - **Aura does nothing:** enable Kill aura with K outside the menu, confirm your role is murderer, and check its status. Extended reach requires Kill aura to be on. Teleports and stop controls can switch aura off; normal respawns now keep it enabled.
