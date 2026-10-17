@@ -24,6 +24,7 @@ archive = args.output / f"MM2-Universal-{version}.zip"
 with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
     for name, data in sorted(payloads.items()):
         info = zipfile.ZipInfo(name)
+        info.create_system = 3  # Stable metadata on Windows and Linux.
         info.compress_type = zipfile.ZIP_DEFLATED
         info.external_attr = 0o100644 << 16
         bundle.writestr(info, data)
