@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.29
+
+- Luau 0.739 compiles main.lua and loader.lua; 81 combat, 170 release, 58 triggerbot and 96 aura assertions pass (405 total).
+- The extracted Kill all controller, burst adapter and contact reporter send same-frame contacts for obstructed and distant mock targets without calling the visibility function at any layer. An error-raising visibility stub proves the Kill all path does not use it. New cover during a burst no longer discards the next eligible player; ordinary aura still queries visibility and rejects blocked targets. Request-only counters do not imply confirmed damage.
+- Additional regressions stop a burst while restoring a previously active aura, and replace the queue during its first contact. Neither case allows old remaining contacts or counter writes to continue. Existing range, protection, role, death, respawn, cooldown and trigger visibility regressions pass.
+- Live startup smoke verified rc.29 running, menu readiness, a 1000-stud radius, inactive queue and zero bursts. The console reported rc.29 loaded. No combat requests were sent for this smoke check; actual server acceptance of off-screen/obstructed contacts and through-wall kills remain unverified.
+
 ## Release candidate 1.0.0-rc.28
 
 - Luau 0.739 compiles main.lua and loader.lua; 81 combat, 170 release, 58 triggerbot and 92 aura assertions pass (401 total).

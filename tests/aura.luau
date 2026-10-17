@@ -50,7 +50,11 @@ local function fixture()
     local function roleFor(p) return p.Role end
     local function alive(p) return p.Alive and p.Character and p.Character.Humanoid.Health>0 end
     local function ready(r) return f.Ready and r and r.Active and r.Item.Parent==player.Character and r.Item.Enabled end
-    local function clearPath(_,point) return not f.BlockAll and not f.Blocked[point] end
+    local function clearPath(_,point)
+        f.VisibilityChecks=(f.VisibilityChecks or 0)+1
+        if f.FailVisibilityProbe then error("unexpected visibility query") end
+        return not f.BlockAll and not f.Blocked[point]
+    end
     local function stabKnife(r,p)
         if f.SwingFail then return false end
         r.LastStab=f.Now; r.StabbingUntil=f.Now+.85; r.StabTarget=p; r.AuraStab=false
@@ -239,7 +243,6 @@ for _,case in ipairs({
 end
 
 for _,case in ipairs({
-    {"obstruction",function(f) f.BlockAll=true end,function(f) f.BlockAll=false end},
     {"out of range",function(f) f.Target.Character.HumanoidRootPart.Position=vec(201) end,
         function(f) f.Target.Character.HumanoidRootPart.Position=vec(5) end},
 }) do
@@ -261,7 +264,7 @@ do
     check(f.State.KillAll.Status:find("1 unresolved",1,true)~=nil and f.State.KillAll.Observed==0,"failed damage is reported as unresolved")
     f=fixture(); f.State.StartKillAll(); f.BlockAll=true
     for _=1,125 do f.Step(.25) end
-    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"permanent blockage cannot leave queue running forever")
+    check(not f.State.KillAll.Active and f.State.KillAll.Attempts==3,"walls do not prevent the bounded contact attempts")
     f=fixture(); f.Equipped=false; f.EquipFail=true; f.State.StartKillAll()
     for _=1,125 do f.Step(.25) end
     check(not f.State.KillAll.Active and f.State.KillAll.Attempts==0,"missing knife still reaches the bounded deadline")
@@ -293,7 +296,6 @@ for _,case in ipairs({
     {"respawned",function(f,p) p.Character=f.Character(6) end},
     {"dead",function(f,p) p.Alive=false end},
     {"newly allied",function(f,p) p.Role="Murderer" end},
-    {"behind cover",function(f,p) f.Blocked[p.Character.UpperTorso.Position]=true end},
     {"out of range",function(f,p) p.Character.HumanoidRootPart.Position=vec(1001) end},
 }) do
     local f=fixture(); f.State.SetKillAuraRange(1000)
@@ -313,5 +315,39 @@ do
     f.AfterContact=function() f.State.StopKillAll("Stopped") end
     f.State.StartKillAll(); f.Step()
     check(f.State.Stats.StabContactReports==1 and not f.State.KillAll.Active and f.State.KillAll.Status=="Stopped","stop during contact delivery prevents remaining burst contacts and preserves stop status")
+end
+do
+    local f=fixture(); f.State.SetKillAuraRange(1000)
+    local second={Name="Second",UserId=3,Character=f.Character(800),Role="Innocent",Alive=true}
+    table.insert(f.Players,second)
+    f.BlockAll=true; f.FailVisibilityProbe=true
+    f.State.StartKillAll(); f.Step(1/60)
+    check(f.State.KillAll.Contacts==2 and f.State.Stats.StabRequests==1,"blocked and distant players receive same-frame burst attempts")
+    check((f.VisibilityChecks or 0)==0,"Kill all makes no visibility queries in selection, burst validation or contact reporting")
+    check(f.State.KillAll.Observed==0 and f.State.LastStabContact.DamageConfirmed==false,"ignoring local visibility does not mark server damage as confirmed")
+    f=fixture(); f.Enable(); f.BlockAll=true; f.Step()
+    check(f.State.Stats.StabRequests==0 and (f.VisibilityChecks or 0)>0,"ordinary aura retains its line-of-sight policy")
+    f=fixture(); table.insert(f.Players,{Name="Second",UserId=3,Character=f.Character(6),Role="Innocent",Alive=true})
+    f.AfterContact=function() f.BlockAll=true end
+    f.State.StartKillAll(); f.Step()
+    check(f.State.KillAll.Contacts==2,"new cover during a burst does not discard the next eligible player")
+end
+
+do
+    local f=fixture(); f.Enable()
+    table.insert(f.Players,{Name="Second",UserId=3,Character=f.Character(6),Role="Innocent",Alive=true})
+    f.AfterContact=function() f.State.StopKillAll("Stopped") end
+    f.State.StartKillAll(); f.Step()
+    check(f.State.Stats.StabContactReports==1 and not f.State.KillAll.Active and f.Aura.Enabled,
+        "stopping during a burst prevents further contacts even when ordinary aura is restored")
+    f=fixture(); f.Enable()
+    table.insert(f.Players,{Name="Second",UserId=3,Character=f.Character(6),Role="Innocent",Alive=true})
+    local replaced=false
+    f.AfterContact=function()
+        if not replaced then replaced=true; f.State.StopKillAll(); f.State.StartKillAll() end
+    end
+    f.State.StartKillAll(); f.Step()
+    check(f.State.Stats.StabContactReports==1 and f.State.KillAll.Active and f.State.KillAll.Attempts==0,
+        "a replacement queue cannot continue the old burst or inherit its counters")
 end
 print(passed.." aura assertions passed")

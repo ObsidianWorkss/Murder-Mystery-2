@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.28 · Release candidate · PC + mobile**
+**v1.0.0-rc.29 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -62,9 +62,9 @@ The aura stays enabled while waiting through normal death, respawn, or innocent 
 
 ### Kill all
 
-**Murderer → Kill Aura → Kill all** starts one native knife swing and sends contact attempts for **all clear, eligible players in the same frame**. There is no per-player cooldown wait or automatic throw charge. Close the menu to run it. Each contact is rechecked for the same living character, protection, role, range and a clear path. The server can reject distant or additional contacts; simultaneous kills are not guaranteed.
+**Murderer → Kill Aura → Kill all** starts one native knife swing and sends contact attempts for **all eligible players in the same frame**, including players off screen or behind walls. There is no per-player cooldown wait or automatic throw charge. Close the menu to run it. Each contact is rechecked for the same living character, protection, role and range. Kill all skips local line-of-sight checks at selection and contact delivery; the server may still enforce its own visibility and distance checks. The server can reject distant or additional contacts; simultaneous kills are not guaranteed.
 
-Survivors can receive up to three attempts each, with the native stab/throw cooldown between bursts, during a maximum 30 active seconds. Blocked or out-of-range targets remain queued. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Status separates sent contacts, bursts, observed eliminations (not attributed kills), unresolved targets and skips. Optional action keys are in **Settings → Combat keys**, initially unbound.
+Survivors can receive up to three attempts each, with the native stab/throw cooldown between bursts, during a maximum 30 active seconds. Out-of-range or unloaded targets remain queued. **Stop Kill all**, **Emergency stop**, stopping aura, losing the murderer role, or respawning cancels the action. Menu/focus pauses also pause the deadline. Existing ordinary aura resumes afterward; otherwise it switches off. Status separates sent contacts, bursts, observed eliminations (not attributed kills), unresolved targets and skips. Optional action keys are in **Settings → Combat keys**, initially unbound.
 
 ## Controls
 

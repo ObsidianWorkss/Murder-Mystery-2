@@ -1,6 +1,6 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.28**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.29**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
@@ -44,3 +44,5 @@ Record device, executor, place version, test date, result, and any observed erro
 - [ ] rc.27 combat: verify Kill all retries survivors, uses predicted ranged throws, retains blocked targets, stops after 30 active seconds, and cancels charged throws. Measure server acceptance and trigger reaction during an active weapon round.
 
 - [ ] rc.28: observe whether the server accepts several contacts in one swing, measure effective damage distance, and check unresolved results. Same-frame request tests do not establish simultaneous kills.
+
+- [ ] rc.29: distinguish sent obstructed/off-screen Kill all contacts from actual server eliminations; verify ordinary aura and triggerbot still retain their visibility checks.

@@ -17841,7 +17841,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.28"
+State.Version = "1.0.0-rc.29"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20039,6 +20039,8 @@ end
 local function reportStabContact(record, hit, source)
     if not ready(record) or os.clock() > record.StabbingUntil or not hit or not hit:IsA("BasePart") then return end
     if record.AuraStab and (not State.CanAuraContact or not State.CanAuraContact()) then return end
+    local burst=source=="KillAllBurst"
+    if burst and (not record.AuraStab or not State.KillAll or not State.KillAll.Active) then return end
     record.StabContacts = record.StabContacts or {}
     if record.StabContacts[hit] then return end
     local ownRoot = player.Character:FindFirstChild("HumanoidRootPart")
@@ -20049,7 +20051,7 @@ local function reportStabContact(record, hit, source)
         if other ~= player and root and not State.IsPlayerExcluded(other) and alive(other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
             and (hit.Transparency < 1 or (hit.Parent == char and bodyPartSet[hit.Name]))
             and (root.Position - ownRoot.Position).Magnitude <= (record.AuraStab and State.GetKillAuraRange and State.GetKillAuraRange() or 7)
-            and clearPath(ownRoot.Position, hit.Position, char) then
+            and (burst or clearPath(ownRoot.Position, hit.Position, char)) then
             local events = record.Item:FindFirstChild("Events")
             local remote = events and events:FindFirstChild("HandleTouched")
             if remote then
@@ -23057,12 +23059,12 @@ local installKillAura=function(C)
         return State.Config.AuraExtendedReach and (reach(State.Config.AuraReachRange) or 1000)
             or (range(State.Config.KillAuraRange) or 1000)
     end
-    function State.GetAuraContactPart(target,origin)
+    function State.GetAuraContactPart(target,origin,forKillAll)
         local char=target and target.Character
         if not char then return nil end
         for _,name in ipairs(C.BodyPartNames or {"UpperTorso","Torso","LowerTorso","Head"}) do
             local part=char:FindFirstChild(name)
-            if part and part:IsA("BasePart") and C.ClearPath(origin,part.Position,char) then return part end
+            if part and part:IsA("BasePart") and (forKillAll and batch.Active or C.ClearPath(origin,part.Position,char)) then return part end
         end
     end
     local function refresh()
@@ -23158,7 +23160,7 @@ local installKillAura=function(C)
         batch.Targets,batch.Index,batch.Total,batch.Remaining=targets,1,#targets,#targets
         batch.Attempts,batch.Contacts,batch.Skipped,batch.Bursts,batch.Observed,batch.Elapsed=0,0,0,0,0,0
         batch.NextBurstAt=-math.huge
-        batch.Status="Kill all ready; close the menu for a contact burst at all clear targets."
+        batch.Status="Kill all ready; close the menu for a contact burst at all eligible targets."
         return true,batch.Status
     end
     function State.SetKillAuraRange(value)
@@ -23258,7 +23260,7 @@ local installKillAura=function(C)
                         if canAttack and clock()>=batch.NextBurstAt and entry.Attempts<3 and clock()>=entry.NextAttempt and targetRoot and C.IsAlive(p) then
                             local distance=(targetRoot.Position-root.Position).Magnitude
                             if distance<=radius then
-                                local part=State.GetAuraContactPart(p,root.Position)
+                                local part=State.GetAuraContactPart(p,root.Position,true)
                                 if part then table.insert(candidates,{Entry=entry,Player=p,Character=targetChar,Part=part}) end
                             end
                         end
@@ -23272,7 +23274,7 @@ local installKillAura=function(C)
                 end
                 if #candidates==0 then
                     batch.Status=not canAttack and (readinessReason or "Knife cooling down")
-                        or ("Kill all: %d remaining; waiting for a clear target / feedback (%.0fs left)"):format(remaining,30-batch.Elapsed)
+                        or ("Kill all: %d remaining; waiting for range, loading or feedback (%.0fs left)"):format(remaining,30-batch.Elapsed)
                     aura.Status=batch.Status
                     return
                 end
@@ -23368,7 +23370,9 @@ local function auraStab(item,target,part)
     return true,contact and "Contact sent; damage unconfirmed" or "Swing sent; contact report unavailable",contact
 end
 local function auraBurst(item,candidates)
-    if not State.CanAuraContact() or not auraKnifeReady(item) then return false,"Knife unavailable" end
+    local batch=State.KillAll
+    if not batch or not batch.Active or not State.CanAuraContact() or not auraKnifeReady(item) then return false,"Knife unavailable" end
+    local generation=batch.Targets
     local record=State.WeaponHandlers[item]
     -- A single native swing window can report several distinct body contacts.
     -- Do not sleep or start another swing between players in this burst.
@@ -23381,11 +23385,10 @@ local function auraBurst(item,candidates)
         local char=target.Character
         local own=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
         local root=char and char:FindFirstChild("HumanoidRootPart")
-        if State.CanAuraContact() and target~=player and char==candidate.Character and alive(target)
+        if batch.Active and batch.Targets==generation and State.CanAuraContact() and target~=player and char==candidate.Character and alive(target)
             and roleFor(target)~="Murderer" and not State.IsPlayerExcluded(target) and own and root
             and (root.Position-own.Position).Magnitude<=State.GetKillAuraRange()
-            and part and part:IsA("BasePart") and part:IsDescendantOf(char)
-            and clearPath(own.Position,part.Position,char) then
+            and part and part:IsA("BasePart") and part:IsDescendantOf(char) then
             record.StabTarget=target
             local before=State.Stats.StabContactReports
             reportStabContact(record,part,"KillAllBurst")
@@ -25598,7 +25601,7 @@ local createMobileUI = function(C)
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
     if State.SetKillAura then
         option(automation,"Kill aura","KillAura","Automatically swings and reports clear nearby body contact as murderer. No physical blade overlap needed.")
-        automation:Button({Title="Kill all",Desc="One swing reports all clear targets together. Retries respect knife cooldown; server validates damage.",Callback=function()
+        automation:Button({Title="Kill all",Desc="Attempts all eligible players, including off-screen and behind walls, in one swing. Server validates damage.",Callback=function()
             suppressInput()
             local ok,message=State.StartKillAll()
             mobile.Toast(message,ok and "info" or "warn")

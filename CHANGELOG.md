@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-rc.29 — 2026-10-17
+
+- Kill all attempts eligible off-screen or obstructed players without local line-of-sight checks. The change applies to candidate selection, burst delivery and the explicit KillAllBurst contact reporter. Ordinary aura and triggerbot visibility policies remain unchanged. Range, protection, role, character identity, cooldown and cancellation checks remain. Server acceptance and through-wall damage are unverified.
+- Stopping or replacing a queue during contact delivery prevents further contacts from the old burst, including when ordinary aura was already enabled and is restored on stop.
+
 ## 1.0.0-rc.28 — 2026-10-17
 
 - Kill all reports contact attempts for every clear, eligible player during one native swing, on the same heartbeat. It no longer waits for each player or charges a throw between targets. Every contact rechecks protection, character identity, role, range and line of sight. Contact failures do not block other eligible players; stopping during delivery prevents further contacts.
