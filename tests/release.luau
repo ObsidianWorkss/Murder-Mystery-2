@@ -217,4 +217,76 @@ do
     check(not (cfg.SpeedBoost or cfg.JumpBoost or cfg.InfiniteJump or cfg.Noclip or cfg.Fly) and hum.WalkSpeed==16 and head.CanCollide,
         "stopping movement turns every assist off and restores the character")
 end
+do
+    -- X-ray: a fake workspace tree; nothing here touches a real game.
+    local now=0
+    local function node(class,name,parent,props)
+        local n={ClassName=class,Name=name,Parent=parent,Children={}}
+        for key,value in pairs(props or {}) do n[key]=value end
+        function n:IsA(kind) return self.ClassName==kind or (kind=="BasePart" and (self.ClassName=="Part" or self.ClassName=="MeshPart")) end
+        function n:FindFirstChildOfClass(kind) for _,child in ipairs(self.Children) do if child.ClassName==kind then return child end end return nil end
+        if parent then table.insert(parent.Children,n) end
+        return n
+    end
+    local function part(name,parent,props)
+        local p=node("Part",name,parent,props)
+        p.Transparency=p.Transparency or 0
+        p.LocalTransparencyModifier=p.LocalTransparencyModifier or 0
+        return p
+    end
+    local world=node("Workspace","Workspace",nil)
+    function world:GetDescendants()
+        local list={}
+        local function walk(n) for _,child in ipairs(n.Children) do table.insert(list,child); walk(child) end end
+        walk(self)
+        return list
+    end
+    local map=node("Model","Bank",world)
+    local wall,floor=part("Wall",map),part("Floor",map)
+    local tinted=part("Window",map,{LocalTransparencyModifier=.2})
+    local hidden=part("Barrier",map,{Transparency=1})
+    local hero=node("Model","Player1",world); node("Humanoid","Humanoid",hero)
+    local body=part("Torso",hero)
+    local tool=node("Tool","Knife",hero); local blade=part("Handle",tool)
+    local gun=part("GunDrop",world)
+    local coins=node("Model","CoinContainer",map); local coin=part("Coin_Server",coins)
+    local ours=node("Folder","MM2AssistVisuals",world); local marker=part("Marker",ours)
+    local State={Running=true,Config={XRay=false,XRayAmount=60}}
+    local connections={}
+    local C={State=State,Workspace=world,Clock=function() return now end,Batch=3,
+        RunService={Heartbeat="Heartbeat"},Connect=function(signal,callback) connections[signal]=callback end}
+    world.DescendantAdded="DescendantAdded"
+    -- INSERT_XRAY
+    installXRay(C)
+    local xray=State.XRay
+    check(connections.Heartbeat and connections.DescendantAdded,"x-ray hooks frames and new parts")
+    xray.Step()
+    check(wall.LocalTransparencyModifier==0 and not xray.Active,"x-ray stays off until switched on")
+    State.Config.XRay=true
+    xray.Step()
+    check(xray.Active and xray.Count()<4,"x-ray spreads a big map across frames")
+    for _=1,10 do xray.Step() end
+    check(wall.LocalTransparencyModifier==.6 and floor.LocalTransparencyModifier==.6 and tinted.LocalTransparencyModifier==.6,
+        "x-ray makes map parts see-through")
+    check(hidden.LocalTransparencyModifier==0 and body.LocalTransparencyModifier==0 and blade.LocalTransparencyModifier==0,
+        "invisible parts, players and tools stay as they are")
+    check(gun.LocalTransparencyModifier==0 and coin.LocalTransparencyModifier==0 and marker.LocalTransparencyModifier==0,
+        "the dropped gun, coins and the script's own objects stay solid")
+    check(xray.Count()==3,"x-ray tracks only the map parts it changed")
+    State.Config.XRayAmount=80; xray.Step()
+    check(wall.LocalTransparencyModifier==.6,"strength changes wait for the update interval")
+    now+=.3; xray.Step()
+    check(wall.LocalTransparencyModifier==.8 and floor.LocalTransparencyModifier==.8,"strength changes reach every tracked part")
+    local door=part("Door",map); connections.DescendantAdded(door); xray.Step()
+    check(door.LocalTransparencyModifier==.8,"parts that load later become see-through")
+    floor.LocalTransparencyModifier=.35
+    State.Config.XRay=false; xray.Step()
+    check(wall.LocalTransparencyModifier==0 and door.LocalTransparencyModifier==0 and tinted.LocalTransparencyModifier==.2,
+        "switching x-ray off restores each part's original value")
+    check(floor.LocalTransparencyModifier==.35 and not xray.Active and xray.Count()==0,"x-ray leaves values the game changed")
+    State.Config.XRay=true
+    for _=1,10 do xray.Step() end
+    State.StopXRay()
+    check(wall.LocalTransparencyModifier==0 and tinted.LocalTransparencyModifier==.2,"unload restores the map")
+end
 print(string.format("%d release assertions passed",passed))

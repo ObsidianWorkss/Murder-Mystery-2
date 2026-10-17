@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.8
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 68 release assertions pass (126 total).
+- 13 new x-ray assertions use a fake workspace: off until enabled, batching across frames, map parts fade, players, tools, invisible parts, coins, the dropped gun and script objects stay untouched, strength changes are throttled then applied everywhere, late parts are included, and off and unload restore original values without overwriting game changes.
+- X-ray has not been tried in a live server.
+
 ## Release candidate 1.0.0-rc.7
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; all 113 assertions pass.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.8 — 2026-10-17
+
+### New
+
+- Visuals → **X-ray**: walls and the rest of the map turn see-through on your screen only, with a Strength slider from 20 to 90 percent (default 60). Players, tools, coins, the dropped gun and the script's own markers stay solid. Large maps fade in batches across frames, parts that load later are included, and switching off or unloading restores every part unless the game changed it meanwhile.
+
 ## 1.0.0-rc.7 — 2026-10-17
 
 ### Polish

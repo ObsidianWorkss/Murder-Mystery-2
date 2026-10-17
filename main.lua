@@ -17695,7 +17695,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
-    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.7"
+State.Version = "1.0.0-rc.8"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17745,7 +17745,7 @@ function State.GetSupportSnapshot()
     local flags = {}
     for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "KnifeAim", "KnifeAllDirections",
         "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura",
-        "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly"}) do
+        "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly", "XRay"}) do
         flags[name] = State.Config[name] == true
     end
     local stats = {}
@@ -21567,6 +21567,7 @@ function State.Destroy()
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
     if State.StopMovement then State.StopMovement() end
+    if State.StopXRay then State.StopXRay() end
     if State.FlushAuraTouches and not State.FlushAuraTouches() then
         warn("Unload stopped: blade touch cleanup incomplete; retry unload")
         return false
@@ -24387,6 +24388,93 @@ end
 
 
 do
+-- X-ray: map parts turn see-through on your screen only (LocalTransparencyModifier never replicates).
+-- Players, tools, coins, the dropped gun and the script's own objects stay solid. Off restores every part.
+local installXRay=function(C)
+    local State,world=C.State,C.Workspace
+    local clock=C.Clock or os.clock
+    local cfg=State.Config
+    local xray={Active=false}
+    State.XRay=xray
+    local tracked=setmetatable({},{__mode="k"}) -- part -> {Before=original value, Applied=value written}
+    local queue,queueIndex={},1
+    local applied,appliedAt=nil,-math.huge
+    local function amount() return math.clamp((tonumber(cfg.XRayAmount) or 60)/100,.2,.9) end
+    local function skipped(object)
+        local name=object.Name
+        return name=="GunDrop" or name:sub(1,3)=="MM2" or name:sub(1,4)=="Coin"
+    end
+    local function eligible(part)
+        if not part:IsA("BasePart") or part.Transparency>=1 or skipped(part) then return false end
+        local node=part.Parent
+        while node and node~=world do
+            if skipped(node) or node:IsA("Tool") or node:IsA("Camera")
+                or (node:IsA("Model") and node:FindFirstChildOfClass("Humanoid")) then return false end
+            node=node.Parent
+        end
+        return node==world
+    end
+    local function apply(part,value)
+        local record=tracked[part]
+        if not record then record={Before=part.LocalTransparencyModifier}; tracked[part]=record end
+        part.LocalTransparencyModifier=value
+        record.Applied=part.LocalTransparencyModifier
+    end
+    function xray.Count()
+        local count=0
+        for _ in pairs(tracked) do count+=1 end
+        return count
+    end
+    function State.StopXRay()
+        for part,record in pairs(tracked) do
+            -- A value the game changed since our write is left alone.
+            if part.Parent and math.abs(part.LocalTransparencyModifier-record.Applied)<1e-4 then
+                part.LocalTransparencyModifier=record.Before
+            end
+        end
+        table.clear(tracked); table.clear(queue)
+        queueIndex,applied,xray.Active=1,nil,false
+        return true
+    end
+    function xray.Step()
+        if not State.Running then return end
+        if cfg.XRay~=true then
+            if xray.Active then State.StopXRay() end
+            return
+        end
+        if not xray.Active then
+            xray.Active,applied,appliedAt=true,amount(),clock()
+            queue,queueIndex=world:GetDescendants(),1
+        end
+        -- Strength changes from the slider apply at most five times a second.
+        local value=amount()
+        if value~=applied and clock()-appliedAt>=.2 then
+            applied,appliedAt=value,clock()
+            for part,record in pairs(tracked) do
+                if part.Parent then part.LocalTransparencyModifier=value; record.Applied=part.LocalTransparencyModifier end
+            end
+        end
+        -- Large maps are spread across frames so switching on never freezes the game.
+        local last=math.min(#queue,queueIndex+(C.Batch or 1500)-1)
+        for i=queueIndex,last do
+            local part=queue[i]
+            if part.Parent and not tracked[part] and eligible(part) then apply(part,applied) end
+        end
+        queueIndex=last+1
+        if queueIndex>#queue and #queue>0 then table.clear(queue); queueIndex=1 end
+    end
+    function xray.Added(object)
+        if xray.Active and object:IsA("BasePart") then table.insert(queue,object) end
+    end
+    C.Connect(world.DescendantAdded,xray.Added)
+    C.Connect(C.RunService.Heartbeat,xray.Step)
+end
+
+installXRay({State=State,Workspace=workspace,RunService=RunService,Connect=connect})
+end
+
+
+do
 -- Button only: posts the murderer and sheriff of the current round to chat. Never names you,
 -- skips protected players, and waits a few seconds between messages.
 local installRoleReveal=function(C)
@@ -24588,6 +24676,7 @@ local createMobileUI = function(C)
     local animations=page("Animations",movementPage,"Animations","sparkles")
     local visualsPage=tab("Visuals","eye")
     local visuals=page("ESP",visualsPage,"Player ESP","eye",true)
+    local xrayCard=page("XRay",visualsPage,"X-ray","scan-eye")
     local hud=page("HUD",visualsPage,"HUD & Alerts","layout-dashboard")
     local guidance=page("Guidance",visualsPage,"Guidance","route")
     local playersPage=tab("Players","users")
@@ -24738,6 +24827,14 @@ local createMobileUI = function(C)
         option(motion,"Fly","Fly","Fly where you look. Jump or Up to rise, Ctrl or Down to sink.")
         slider("Fly speed","FlySpeed",16,120)
         mobile.MovementStatus=motion:Paragraph({Title="Status",Desc=State.Movement and State.Movement.Status or "Off"})
+    end
+    if State.StopXRay then
+        option(xrayCard,"X-ray","XRay","See through walls and the map. Players and the gun stay solid.")
+        xrayCard:Slider({Title="Strength",Desc="How see-through the map gets, in percent.",Step=5,
+            Value={Min=20,Max=90,Default=State.Config.XRayAmount},Callback=function(value)
+            local n=tonumber(value)
+            if n and State.Running then State.Config.XRayAmount=math.clamp(math.floor(n+.5),20,90) end
+        end})
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
