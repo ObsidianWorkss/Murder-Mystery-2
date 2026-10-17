@@ -64,6 +64,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 
 ## Latest changes
 
+- Matched manual stabs to the live native knife controller's post-throw cooldown (`2 * ThrowSpeed`), with feedback while waiting.
 - Added all-direction knife acquisition and explicit clear-target protection.
 - Added nearby-target assistance for clicked stabs, with normal cooldown and exclusion checks.
 - Revalidate the charged target and weapon before releasing a knife; reject stale targets and blocked paths.

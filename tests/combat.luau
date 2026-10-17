@@ -77,6 +77,14 @@ do
     check(not stabKnife(r,far) and r.StabTarget==near and sends==1,
         "cooldown click preserves active stab target and sends no duplicate")
     failAnimation=false
+    r=record(); r.LastThrow=now-1.99
+    check(not stabKnife(r,near) and sends==1 and r.LastStab==-math.huge,
+        "released knife cooldown prevents premature stab without consuming stab cooldown")
+    r.LastThrow=now-2
+    check(stabKnife(r,near) and sends==2,"stab becomes available at native throw cooldown boundary")
+    r=record(); r.LastThrow=now; r.Charging=true
+    check(stabKnife(r,near) and not r.Charging and r.LastThrow==-math.huge,
+        "click can still cancel an unsent charge and stab")
 
     local jobs={}
     local task={spawn=function(f) table.insert(jobs,f) end,wait=function() end}

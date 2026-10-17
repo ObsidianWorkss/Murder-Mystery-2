@@ -17731,7 +17731,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-17-ClearAttackAssist"
+State.Build = "Universal-WindUI-2026-10-17-NativeKnifeCooldown"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -19920,6 +19920,16 @@ local function stabKnife(record, preferred)
         stopTracks(record)
     end
     if os.clock() - record.LastStab < 0.85 then return false end
+    -- The live KnifeClient gates stabs on the same 2 * ThrowSpeed interval
+    -- as another throw. Avoid sending a stab while a released knife recovers.
+    local throwSpeed = record.Item:GetAttribute("ThrowSpeed")
+    throwSpeed = type(throwSpeed)=="number" and throwSpeed==throwSpeed and throwSpeed>0
+        and throwSpeed<math.huge and throwSpeed or 1
+    local remaining = 2 * throwSpeed - (os.clock() - record.LastThrow)
+    if remaining > 0 then
+        State.KnifeFeedback = {Message = ("Stab waiting for throw cooldown: %.1fs"):format(remaining), Until = os.clock() + 1.8}
+        return false
+    end
     local events = record.Item:FindFirstChild("Events")
     local remote = events and events:FindFirstChild("KnifeStabbed")
     if not remote or not remote:IsA("RemoteEvent") then return false end
