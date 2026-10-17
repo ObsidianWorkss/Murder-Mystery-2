@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.12 — 2026-10-17
+
+### Keybinds
+
+- Removed **Hold Alt**: keybinds act on a single key press again, and Alt can be bound like any other key. Rebind or clear (Backspace) any key you hit by accident in Settings → Keybinds.
+
 ## 1.0.0-rc.11 — 2026-10-17
 
 ### Keybinds

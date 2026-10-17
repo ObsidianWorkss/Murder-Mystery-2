@@ -17695,7 +17695,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
-    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, KeybindAlt = true, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.11"
+State.Version = "1.0.0-rc.12"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -24497,7 +24497,7 @@ local installKeybinds=function(C)
     local reserved={}
     for _,name in ipairs({"W","A","S","D","Space","LeftShift","RightShift","LeftControl","End","E","Slash","Tab","Escape",
         "Return","Backspace","Delete","Backquote","I","O","Up","Down","Left","Right","F9","F11","F12","Unknown",
-        "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton","LeftAlt","RightAlt"}) do reserved[name]=true end
+        "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton"}) do reserved[name]=true end
     local function flip(key) cfg[key]=not cfg[key]; return cfg[key] end
     local actions={
         {Id="Aim",Title="Aim assist",Default="F6",Run=function() flip("Aim"); C.RefreshAim(); C.SyncWeapons(); return cfg.Aim end},
@@ -24560,8 +24560,6 @@ local installKeybinds=function(C)
     function keys.Press(input,processed)
         if processed or not State.Running or input.UserInputType~=Enum.UserInputType.Keyboard then return nil end
         if C.InputMode()~="PC" or UIS:GetFocusedTextBox() or (State.MobileUI and State.MobileUI.MenuOpen) then return nil end
-        -- Hold Alt (on by default): a stray key during play never toggles anything.
-        if cfg.KeybindAlt~=false and not (UIS:IsKeyDown(Enum.KeyCode.LeftAlt) or UIS:IsKeyDown(Enum.KeyCode.RightAlt)) then return nil end
         local name=input.KeyCode.Name
         for _,action in ipairs(actions) do
             if cfg.Keybinds[action.Id]==name then
@@ -24957,7 +24955,6 @@ local createMobileUI = function(C)
         for name in pairs(State.Keybinds.Reserved) do
             if name~="Backspace" and name~="Delete" and Enum.KeyCode[name] then table.insert(blocked,name) end
         end
-        option(keybindsCard,"Hold Alt","KeybindAlt","Keys only work while Alt is held, so normal play never triggers them.")
         keybindsCard:Paragraph({Title="How to bind",Desc="Click a key box, then press a new key. Backspace clears it.\nAlways  ·  Right Shift menu  ·  End stop  ·  E throw"})
         mobile.KeybindElements,mobile.KeybindShown={},{}
         for _,action in ipairs(State.Keybinds.Actions) do

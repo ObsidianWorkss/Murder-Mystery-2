@@ -1,19 +1,19 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.11**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.12**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report and role-reveal, movement, x-ray, animation-pack and keybind regression suites pass locally (157 assertions).
+- [x] Combat, loader, support-report and role-reveal, movement, x-ray, animation-pack and keybind regression suites pass locally (154 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks — pending a connected Roblox client
 
 - [ ] First launch: valid key, invalid key, cancel, and saved-key behavior.
 - [ ] Toasts: every toggle, key press, role start, gun pickup, elimination and gun drop shows one message; the Toasts setting silences them.
-- [ ] Keybinds: Alt + default keys act on PC, plain keys do nothing while Hold Alt is on, nothing fires while chatting or with the menu open, rebinding and Backspace work, the card is hidden on mobile.
+- [ ] Keybinds: default keys act on PC, nothing fires while chatting or with the menu open, rebinding and Backspace work, the card is hidden on mobile.
 - [ ] Animation packs: each pack changes idle, walk, run, jump, fall, climb and swim; switching packs and Default restore cleanly; the choice survives respawn.
 - [ ] X-ray: walls fade on a large map without a freeze, players and the gun stay solid, Strength updates, off restores the map.
 - [ ] Movement: speed, jump, infinite jump, noclip and fly work on PC and mobile, restore on switch-off, and survive respawn without leftovers.

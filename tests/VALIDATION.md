@@ -1,5 +1,10 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.12
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 96 release assertions pass (154 total).
+- The three Hold Alt assertions were removed with the feature; the info-tone check moved onto the reveal-roles key test.
+
 ## Release candidate 1.0.0-rc.11
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 99 release assertions pass (157 total).

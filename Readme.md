@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.11 · Release candidate · PC + mobile**
+**v1.0.0-rc.12 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -49,13 +49,13 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 | Throw knife | E or right click | Throw |
 | Stop active actions / return | End | Stop |
 | Fly up / down | Space or jump / Ctrl | Jump or Up / Down |
-| Toggle aim assistance | Alt + F6 (rebindable) | Aim assist setting |
-| Toggle gun aim | Alt + F7 (rebindable) | Gun aim setting |
-| Repair camera input | Alt + F10 (rebindable) | Repair camera input button |
+| Toggle aim assistance | F6 (rebindable) | Aim assist setting |
+| Toggle gun aim | F7 (rebindable) | Gun aim setting |
+| Repair camera input | F10 (rebindable) | Repair camera input button |
 
 ### PC keybinds
 
-Settings → **Keybinds** lists every bindable action. **Hold Alt** is on by default: hold Alt and press a key, so a stray key during play never toggles anything. Click a key box, press a new key, or press Backspace to clear it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
+Settings → **Keybinds** lists every bindable action. Click a key box, press a new key, or press Backspace to clear it; a key already in use moves to the new action. Keys never fire while you type, while the menu is open, or in the mobile layout, and a short message confirms each press.
 
 | Action | Default |
 | --- | --- |
@@ -64,7 +64,7 @@ Settings → **Keybinds** lists every bindable action. **Hold Alt** is on by def
 | Kill aura / Player ESP / X-ray | K / V / X |
 | Jump boost, Animation pack, Reveal roles, Teleport to map or lobby | Unbound |
 
-Alt, movement keys, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11 and F12 stay reserved for Roblox, MM2 and this script.
+Movement keys, Space, Shift, Ctrl, number keys, Tab, `/`, I, O, arrows, E, Right Shift, End, F9, F11 and F12 stay reserved for Roblox, MM2 and this script.
 
 The layout follows the active input device. Touch-capable PCs can continue using mouse and keyboard controls.
 
