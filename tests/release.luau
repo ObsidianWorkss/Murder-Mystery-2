@@ -337,6 +337,8 @@ do
     local State={Running=true,Config=cfg,MobileUI={MenuOpen=false,Refresh=function() refreshed+=1 end,
         Toast=function(text,tone) table.insert(toasts,text); table.insert(tones,tone) end}}
     function State.SetMagicBullet(enabled) cfg.MagicBullet=enabled end
+    function State.SetTriggerbot(enabled) cfg.Triggerbot=enabled end
+    function State.SetKnifeTriggerbot(enabled) cfg.KnifeTriggerbot=enabled end
     function State.SetKillAura(enabled) if enabled then return false,"Waiting until you are murderer" end cfg.KillAura=false; return true end
     function State.SetInvisibility(enabled) cfg.Invisibility=enabled end
     function State.SetMageAnimations(enabled) cfg.MageAnimations=enabled end
@@ -412,6 +414,17 @@ do
     State.SetKeybind("AutoPickup","Y")
     check(press("Y")=="Your executor lacks firetouchinterest" and tones[#tones]=="warn","a toggle key shows its menu toggle's refusal")
     check(cfg.Keybinds.Triggerbot=="None" and cfg.Keybinds.KnifeTriggerbot=="None","both trigger keys start unbound")
+    local universal
+    for _,action in ipairs(keys.Actions) do if action.Id=="UniversalTriggerbot" then universal=action end end
+    check(cfg.Keybinds.UniversalTriggerbot=="T" and universal and universal.Group=="Combat",
+        "universal triggerbot defaults to T and appears in Combat keys")
+    check(press("T")=="Universal triggerbot on" and cfg.Triggerbot and cfg.KnifeTriggerbot and not cfg.Aim,
+        "universal T enables gun and knife modes without changing master aim")
+    check(press("T")=="Universal triggerbot off" and not cfg.Triggerbot and not cfg.KnifeTriggerbot,
+        "universal T disables both trigger modes")
+    cfg.Triggerbot=true
+    check(press("T")=="Universal triggerbot off" and not cfg.Triggerbot and not cfg.KnifeTriggerbot,
+        "universal T stops both modes when only one was enabled")
     State.SetKeybind("Triggerbot","T")
     check(press("T")=="Gun triggerbot on" and options[#options]=="Triggerbot=true" and not cfg.Aim,
         "gun trigger key uses its menu setter without enabling master aim")
@@ -420,7 +433,8 @@ do
         "knife trigger key uses its independent menu setter")
     State.MobileUI.SetOption=nil
     State.ResetKeybinds()
-    check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None" and cfg.Keybinds.Menu=="RightShift",
+    check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None" and cfg.Keybinds.Menu=="RightShift"
+        and cfg.Keybinds.UniversalTriggerbot=="T",
         "reset restores default keys")
 end
 do

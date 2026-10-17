@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-rc.19 — 2026-10-17
+
+- **T** now toggles gun and knife triggerbots together. If either mode is on, T switches both off; otherwise it switches both on. The equipped weapon and role determine which mode runs.
+- Added **Universal triggerbot** to Settings → Combat keys with a rebindable T default. Independent gun and knife binds remain available. Typing and menu input guards still apply.
+
 ## 1.0.0-rc.18 — 2026-10-17
 
 ### Crosshair triggerbot

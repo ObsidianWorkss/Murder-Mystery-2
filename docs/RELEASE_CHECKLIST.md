@@ -1,12 +1,12 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.18**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.19**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind and triggerbot regression suites pass locally (247 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind and triggerbot regression suites pass locally (251 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks

@@ -17742,7 +17742,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.18"
+State.Version = "1.0.0-rc.19"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -24746,6 +24746,11 @@ local installKeybinds=function(C)
     local actions={
         {Id="Aim",Title="Aim assist",Default="F6",Run=function() flip("Aim"); C.RefreshAim(); C.SyncWeapons(); return cfg.Aim end},
         {Id="MagicBullet",Title="Gun aim",Default="F7",Run=function() State.SetMagicBullet(not cfg.MagicBullet); return cfg.MagicBullet end},
+        {Id="UniversalTriggerbot",Title="Universal triggerbot",Default="T",Group="Combat",Run=function()
+            local enabled=not (cfg.Triggerbot or cfg.KnifeTriggerbot)
+            State.SetTriggerbot(enabled)
+            State.SetKnifeTriggerbot(enabled)
+            return enabled end},
         {Id="KillAura",Title="Kill aura",Default="K",Run=function()
             local ok,message=State.SetKillAura(not cfg.KillAura)
             if ok==false then return nil,tostring(message),true end

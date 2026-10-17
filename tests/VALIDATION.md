@@ -1,5 +1,10 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.19
+
+- Adds four extracted-source keybind assertions: T is the universal default in the Combat group, enables both trigger modes, disables both, and stops a mixed state. Resetting keybinds restores T. Existing input guards and independent binds are exercised by the release suite.
+- Luau 0.739 compiles both scripts; 58 combat, 118 release, and 75 triggerbot assertions pass (251 total).
+
 ## Release candidate 1.0.0-rc.18
 
 - Luau 0.739 compiles `main.lua` and `loader.lua`. The extracted-source suites pass 58 combat, 114 release, and 75 triggerbot assertions (247 total).

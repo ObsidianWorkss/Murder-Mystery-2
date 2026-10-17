@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.18 · Release candidate · PC + mobile**
+**v1.0.0-rc.19 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -46,7 +46,7 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 1. Equip your weapon. Enable **Sheriff → Gun Aim → Gun triggerbot** or **Murderer → Knife Aim → Knife triggerbot**. Keep **Aim assist** on; the gun also needs **Gun aim**.
 2. Close the menu and aim at an opponent's body. The gun only accepts the known murderer. Keep the crosshair on the same opponent for at least 0.1 seconds. On mobile, enable the game's mouse lock and use its center crosshair.
-3. Read **Triggerbot status** in either aim card if nothing fires. It explains missing settings, cooldowns, blocked paths, or rejected shot predictions. Assign optional keys in **Settings → Combat keys**; both start unbound.
+3. Press **T** to toggle both triggerbot modes together. Rebind **Universal triggerbot** in **Settings → Combat keys**. Independent gun and knife keys remain available and start unbound. Read **Triggerbot status** in either aim card for missing settings, cooldowns, blocked paths, or rejected shot predictions.
 
 The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. Resuming requires a fresh crosshair acquisition; missed manual clicks are never queued.
 
@@ -63,6 +63,7 @@ Gun requests have a conservative **3-second minimum interval**, also measured fr
 | Fly up / down | Space or jump / Ctrl | Jump or Up / Down |
 | Toggle aim assistance | F6 (rebindable) | Aim assist setting |
 | Toggle gun aim | F7 (rebindable) | Gun aim setting |
+| Toggle both triggerbots | T (rebindable) | Gun / Knife triggerbot settings |
 | Repair camera input | F10 (rebindable) | Repair camera input button |
 
 ### PC keybinds
@@ -74,6 +75,7 @@ Settings → **Keybinds**, **Combat keys**, **Movement keys**, **Visual keys** a
 | Aim assist / Gun aim / Invisibility / Repair camera | F6 / F7 / F8 / F10 |
 | Fly / Noclip / Speed boost / Infinite jump | F / N / G / J |
 | Kill aura / Player ESP / X-ray | K / V / X |
+| Universal triggerbot (gun + knife) | T |
 | Open menu / Emergency stop | Right Shift / End |
 | Every other toggle and action (jump boost, animation pack, reveal roles, teleports, fling actions, HUD and ESP options, unload and more) | Unbound |
 
