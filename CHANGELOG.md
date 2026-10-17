@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.14 — 2026-10-17
+
+### Murderer knife triggerbot
+
+- Murderer → Knife Aim → **Knife triggerbot**, off by default: automatically swings your knife when aiming at a clear, living player within reach (6.5 studs or extended kill aura reach) while you are Murderer.
+- Enforces an 0.85s knife swing cooldown, verifies line of sight via path obstruction checks, ignores other murderers or protected targets, and pauses while charging a throw, flinging, or invisible.
+- Setting `Triggerbot` on PC or mobile simultaneously manages gun triggerbot as Sheriff/Hero and knife swing triggerbot as Murderer. Independent control is also available via the `KnifeTriggerbot` setting in the Murderer tab.
+
 ## 1.0.0-rc.13 — 2026-10-17
 
 ### Triggerbot

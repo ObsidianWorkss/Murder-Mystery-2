@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.14
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 114 release assertions pass (172 total).
+- 5 new release assertions cover knife triggerbot: swings knife at a player in reach while murderer, enforces the 0.85s cooldown, refuses out-of-reach targets, refuses obstructed targets, and verifies `SetKnifeTriggerbot` independently enables the bot.
+- `luau-analyze` findings are unchanged from rc.13 — no new real errors introduced.
+- Knife triggerbot has not been tested in a live server.
+
 ## Release candidate 1.0.0-rc.13
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 109 release assertions pass (167 total).

@@ -322,28 +322,43 @@ do
     check(State.Config.AnimationPack=="Mage","an unknown saved pack falls back to Mage")
 end
 do
+    local function vec(x,y,z)
+        return setmetatable({X=x,Y=y,Z=z,Magnitude=math.sqrt(x*x+y*y+z*z)},{
+            __sub=function(a,b) return vec(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
+        })
+    end
     local now=0
+    local ownRoot={Position=vec(0,0,0)}
     local char={hum={Health=100}}
     function char:FindFirstChildOfClass(c) return c=="Humanoid" and self.hum or nil end
+    function char:FindFirstChild(n) if n=="HumanoidRootPart" then return ownRoot end return nil end
     local me={Name="Me",UserId=1,Character=char}
+    local killerRoot={Position=vec(0,0,3)}
     local killerChar={hum={Health=100}}
     function killerChar:FindFirstChildOfClass(c) return c=="Humanoid" and self.hum or nil end
+    function killerChar:FindFirstChild(n) if n=="HumanoidRootPart" then return killerRoot end return nil end
     local killer={Name="Killer",UserId=2,Character=killerChar}
+    local innoRoot={Position=vec(0,0,3)}
     local innocentChar={hum={Health=100}}
     function innocentChar:FindFirstChildOfClass(c) return c=="Humanoid" and self.hum or nil end
+    function innocentChar:FindFirstChild(n) if n=="HumanoidRootPart" then return innoRoot end return nil end
     local innocent={Name="Inno",UserId=3,Character=innocentChar}
     local roles={[me]="Sheriff",[killer]="Murderer",[innocent]="Innocent"}
     local excluded={[killer]=false}
     local alivePlayers={[me]=true,[killer]=true,[innocent]=true}
     local gunTool={Name="Gun",Enabled=true,Parent=char}
+    local knifeTool={Name="Knife",Enabled=true,Parent=char}
     local currentWeapon=gunTool
     local sentGunShots={}
+    local sentKnifeStabs={}
     local aimTarget=nil
+    local pathClear=true
 
-    local State={Running=true,Config={Triggerbot=false,Aim=false,MagicBullet=false},
-        WeaponHandlers={[gunTool]={Kind="Gun",Item=gunTool}},
+    local State={Running=true,Config={Triggerbot=false,KnifeTriggerbot=false,Aim=false,MagicBullet=false},
+        WeaponHandlers={[gunTool]={Kind="Gun",Item=gunTool},[knifeTool]={Kind="Knife",Item=knifeTool,Charging=false,LastStab=-math.huge}},
         IsPlayerExcluded=function(p) return excluded[p]==true end,
-        SetMagicBullet=function(v) State.Config.MagicBullet=v end}
+        SetMagicBullet=function(v) State.Config.MagicBullet=v end,
+        GetKillAuraRange=function() return 6.5 end}
     local connections={}
     local C={State=State,Player=me,Players={GetPlayers=function() return {me,killer,innocent} end},
         Clock=function() return now end,Connect=function(s,cb) connections[s]=cb end,
@@ -352,16 +367,19 @@ do
         IsAlive=function(p) return alivePlayers[p]==true end,
         EquippedWeapon=function() return currentWeapon,currentWeapon and currentWeapon.Name end,
         SendGun=function(record,target) table.insert(sentGunShots,target); return true end,
-        GetTarget=function() return aimTarget,aimTarget and aimTarget.Character,nil end,
+        StabKnife=function(record,target,part) table.insert(sentKnifeStabs,target); return true end,
+        GetTarget=function() return aimTarget,aimTarget and aimTarget.Character,aimTarget and aimTarget.Character:FindFirstChild("HumanoidRootPart") end,
+        ClearPath=function() return pathClear end,
+        GetKillAuraRange=function() return 6.5 end,
         InputBlocked=function() return false end}
     -- INSERT_TRIGGERBOT
     installTriggerbot(C)
     local bot=State.Triggerbot
-    check(connections.Heartbeat and not State.Config.Triggerbot and bot.Status=="Off","triggerbot hooks heartbeat and starts off")
+    check(connections.Heartbeat and not State.Config.Triggerbot and not State.Config.KnifeTriggerbot and bot.Status=="Off","triggerbot hooks heartbeat and starts off")
     bot.Step()
     check(#sentGunShots==0 and not bot.Active,"triggerbot stays off until enabled")
     State.SetTriggerbot(true)
-    check(State.Config.Triggerbot and State.Config.Aim and State.Config.MagicBullet,"enabling triggerbot turns on aim and gun aim")
+    check(State.Config.Triggerbot and State.Config.KnifeTriggerbot and State.Config.Aim and State.Config.MagicBullet,"enabling triggerbot turns on aim and gun aim")
     bot.Step()
     check(bot.Status=="Ready  ·  aim at murderer" and #sentGunShots==0,"triggerbot waits for aim target")
     aimTarget=innocent
@@ -378,10 +396,30 @@ do
     currentWeapon=nil
     now+=1
     bot.Step()
-    check(bot.Status=="Waiting for gun","triggerbot reports missing gun")
-    currentWeapon=gunTool
+    check(bot.Status=="Waiting for weapon","triggerbot reports missing gun")
+    currentWeapon=knifeTool
+    roles[me]="Murderer"
+    roles[killer]="Sheriff"
+    aimTarget=killer
+    now+=1
+    bot.Step()
+    check(#sentKnifeStabs==1 and sentKnifeStabs[1]==killer and bot.Status=="Swung  ·  @Killer","triggerbot swings knife at player in reach while murderer")
+    bot.Step()
+    check(#sentKnifeStabs==1,"triggerbot enforces knife swing cooldown")
+    now+=1
+    killerRoot.Position=vec(0,0,20)
+    bot.Step()
+    check(bot.Status=="Target out of reach" and #sentKnifeStabs==1,"triggerbot does not swing at players out of reach")
+    killerRoot.Position=vec(0,0,3)
+    pathClear=false
+    bot.Step()
+    check(bot.Status=="Target obstructed" and #sentKnifeStabs==1,"triggerbot does not swing at obstructed targets")
+    pathClear=true
     State.StopTriggerbot()
-    check(not State.Config.Triggerbot and bot.Status=="Off","stopping triggerbot turns it off cleanly")
+    check(not State.Config.Triggerbot and not State.Config.KnifeTriggerbot and bot.Status=="Off","stopping triggerbot clears knife triggerbot")
+    State.SetKnifeTriggerbot(true)
+    check(State.Config.KnifeTriggerbot and bot.Enabled,"setting knife triggerbot enables it")
+    State.StopTriggerbot()
 end
 do
     -- Keybinds: fake input objects and setters; nothing here touches a real game.
