@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.4"
+State.Version = "1.0.0-rc.5"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -24388,29 +24388,42 @@ local installRoleReveal=function(C)
     local clock=C.Clock or os.clock
     local reveal={Cooldown=4,LastSent=-math.huge,Sent=0}
     State.RoleReveal=reveal
-    function State.FormatRoleReveal(murderer,sheriff,sheriffDead)
-        local message="Murderer: @"..murderer.Name
-        if sheriff then message..=" • Sheriff: @"..sheriff.Name
-        elseif sheriffDead then message..=" • Sheriff: dead" end
-        return message
+    function State.FormatRoleReveal(murderer,sheriff,sheriffDead,hero)
+        local parts={"🔪 Murderer: @"..murderer.Name}
+        if sheriff then table.insert(parts,"🔫 Sheriff: @"..sheriff.Name)
+        elseif sheriffDead then table.insert(parts,"💀 Sheriff: dead") end
+        if hero then table.insert(parts,"🦸 Hero: @"..hero.Name) end
+        return table.concat(parts," • ")
     end
-    local function find(role)
+    local function find(matches)
         for _,p in ipairs(C.Players:GetPlayers()) do
-            if C.InRound(p) and C.RoleFor(p)==role then return p end
+            if C.InRound(p) and matches(p) then return p end
         end
         return nil
+    end
+    local function isMurderer(p) return C.RoleFor(p)=="Murderer" end
+    -- The round data keeps the original sheriff apart from a hero who picked up the gun.
+    -- Without round data, whoever holds the gun counts as sheriff.
+    local function isSheriff(p)
+        local role=C.RawRole(p)
+        return role=="Sheriff" or (role==nil and C.RoleFor(p)=="Sheriff")
+    end
+    local function isHero(p)
+        local role=C.RawRole(p)
+        return role=="Hero" or (role~=nil and role~="Sheriff" and role~="Murderer" and C.HasGun(p))
     end
     local function protected(p) return State.IsPlayerExcluded~=nil and State.IsPlayerExcluded(p)==true end
     function State.GetRoleReveal()
         if not C.InRound(player) and not C.ViewerInRound() then return nil,"Available during a round" end
-        local murderer=find("Murderer")
+        local murderer=find(isMurderer)
         if not murderer then return nil,"Murderer not known yet" end
         if murderer==player then return nil,"You are the murderer" end
         if protected(murderer) then return nil,"The murderer is protected" end
-        local sheriff=find("Sheriff")
+        local sheriff,hero=find(isSheriff),find(isHero)
         local sheriffDead=sheriff==nil
         if sheriff==player or (sheriff and protected(sheriff)) then sheriff=nil end
-        return State.FormatRoleReveal(murderer,sheriff,sheriffDead)
+        if hero==player or (hero and protected(hero)) then hero=nil end
+        return State.FormatRoleReveal(murderer,sheriff,sheriffDead,hero)
     end
     function State.RevealRolesInChat()
         local wait=reveal.Cooldown-(clock()-reveal.LastSent)
@@ -24425,6 +24438,8 @@ local installRoleReveal=function(C)
 end
 
 installRoleReveal({State=State,Player=player,Players=Players,RoleFor=roleFor,
+    RawRole=function(p) local data=dataFor(p); return data and data.Role or nil end,
+    HasGun=function(p) return toolFor(p,"Gun")~=nil end,
     InRound=function(p)
         local root=alive(p) and p.Character:FindFirstChild("HumanoidRootPart")
         return root~=nil and root~=false and espInRoundArea(root.Position)

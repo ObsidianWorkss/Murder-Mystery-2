@@ -59,24 +59,45 @@ end
 do
     -- Role reveal: a fake Send records messages, so nothing reaches a real chat.
     local now=100
-    local me,killer,cop,lobbyKiller={Name="Me"},{Name="Killer"},{Name="Cop"},{Name="OldKiller"}
-    local roles={[me]="Innocent",[killer]="Murderer",[cop]="Sheriff",[lobbyKiller]="Murderer"}
-    local inRound={[me]=true,[killer]=true,[cop]=true,[lobbyKiller]=false}
-    local excluded,sent,sendResult={},{},{true}
+    local me,killer,cop,hero,lobbyKiller={Name="Me"},{Name="Killer"},{Name="Cop"},{Name="Hero"},{Name="OldKiller"}
+    -- roles holds the round data role; RoleFor folds it the way the script's roleFor does.
+    local roles={[me]="Innocent",[killer]="Murderer",[cop]="Sheriff",[hero]="Innocent",[lobbyKiller]="Murderer"}
+    local inRound={[me]=true,[killer]=true,[cop]=true,[hero]=true,[lobbyKiller]=false}
+    local guns,excluded,sent,sendResult={},{},{},{true}
     local State={IsPlayerExcluded=function(p) return excluded[p]==true end}
     local C={State=State,Player=me,Clock=function() return now end,
-        Players={GetPlayers=function() return {me,lobbyKiller,cop,killer} end},
-        RoleFor=function(p) return roles[p] end,InRound=function(p) return inRound[p]==true end,
+        Players={GetPlayers=function() return {me,lobbyKiller,cop,hero,killer} end},
+        RawRole=function(p) return roles[p] end,HasGun=function(p) return guns[p]==true end,
+        RoleFor=function(p)
+            local role=roles[p]
+            if role=="Murderer" then return "Murderer" end
+            if guns[p] or role=="Sheriff" or role=="Hero" then return "Sheriff" end
+            return role or "Unknown"
+        end,
+        InRound=function(p) return inRound[p]==true end,
         ViewerInRound=function() return false end,
         Send=function(message) table.insert(sent,message); return table.unpack(sendResult) end}
     -- INSERT_REVEAL
     installRoleReveal(C)
-    check(State.GetRoleReveal()=="Murderer: @Killer • Sheriff: @Cop","reveal names the round murderer and sheriff")
+    local both="🔪 Murderer: @Killer • 🔫 Sheriff: @Cop"
+    check(State.GetRoleReveal()==both,"reveal names the round murderer and sheriff")
     inRound[cop]=false
-    check(State.GetRoleReveal()=="Murderer: @Killer • Sheriff: dead","reveal reports a dead sheriff")
-    inRound[cop]=true; roles[cop],roles[me]="Innocent","Sheriff"
-    check(State.GetRoleReveal()=="Murderer: @Killer","reveal never names you as sheriff")
-    roles[me],roles[killer]="Murderer","Innocent"; inRound[lobbyKiller]=false
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer • 💀 Sheriff: dead","reveal reports a dead sheriff")
+    roles[hero],guns[hero]="Hero",true
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer • 💀 Sheriff: dead • 🦸 Hero: @Hero","reveal names the hero after the sheriff dies")
+    roles[hero]="Innocent"
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer • 💀 Sheriff: dead • 🦸 Hero: @Hero","a gun holder counts as hero before round data updates")
+    excluded[hero]=true
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer • 💀 Sheriff: dead","reveal omits a protected hero")
+    excluded[hero],guns[hero],roles[hero]=nil,nil,"Innocent"
+    roles[me],guns[me]="Hero",true
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer • 💀 Sheriff: dead","reveal never names you as hero")
+    roles[me],guns[me]="Innocent",nil
+    inRound[cop],roles[cop],guns[cop]=true,nil,true
+    check(State.GetRoleReveal()==both,"without round data the gun holder counts as sheriff")
+    roles[cop],guns[cop]="Innocent",nil; roles[me]="Sheriff"
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer","reveal never names you as sheriff")
+    roles[me],roles[killer]="Murderer","Innocent"
     local message,reason=State.GetRoleReveal()
     check(message==nil and reason=="You are the murderer","reveal refuses when you are the murderer")
     roles[me],roles[killer],roles[cop]="Innocent","Murderer","Sheriff"
@@ -84,7 +105,7 @@ do
     message,reason=State.GetRoleReveal()
     check(message==nil and reason=="The murderer is protected","reveal skips a protected murderer")
     excluded[killer],excluded[cop]=nil,true
-    check(State.GetRoleReveal()=="Murderer: @Killer","reveal omits a protected sheriff")
+    check(State.GetRoleReveal()=="🔪 Murderer: @Killer","reveal omits a protected sheriff")
     excluded[cop]=nil; inRound[killer]=false
     message,reason=State.GetRoleReveal()
     check(message==nil and reason=="Murderer not known yet","lobby leftovers are not revealed as murderer")
@@ -94,7 +115,7 @@ do
     inRound[me]=true
     check(#sent==0,"previews never send a chat message")
     local ok,result=State.RevealRolesInChat()
-    check(ok and #sent==1 and sent[1]=="Murderer: @Killer • Sheriff: @Cop" and result:find("Sent",1,true),"reveal sends one message")
+    check(ok and #sent==1 and sent[1]==both and result:find("Sent",1,true),"reveal sends one message")
     now+=1
     ok,result=State.RevealRolesInChat()
     check(not ok and #sent==1 and result=="Wait 3 s","reveal cooldown blocks repeat messages")

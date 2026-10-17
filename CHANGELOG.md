@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.5 — 2026-10-17
+
+### Reveal roles
+
+- Messages use emojis: `🔪 Murderer: @name • 🔫 Sheriff: @name`.
+- After the sheriff dies, the player holding the gun is named: `🔪 Murderer: @name • 💀 Sheriff: dead • 🦸 Hero: @name`. The original sheriff and the hero come from the round data; a gun holder counts as hero before that data updates.
+- You are still never named, and a protected hero is left out.
+
 ## 1.0.0-rc.4 — 2026-10-17
 
 ### New

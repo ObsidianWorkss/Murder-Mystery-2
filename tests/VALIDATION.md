@@ -1,5 +1,11 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.5
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 53 release assertions pass (111 total).
+- 5 new reveal assertions cover the hero after the sheriff dies, a gun holder before round data updates, a protected hero, never naming you as hero, and a gun holder counting as sheriff when round data is missing.
+- Emoji rendering in Roblox chat has not been checked live.
+
 ## Release candidate 1.0.0-rc.4
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 48 release assertions pass (106 total).

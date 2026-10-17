@@ -1,12 +1,12 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.4**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.5**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report and role-reveal and movement regression suites pass locally (106 assertions).
+- [x] Combat, loader, support-report and role-reveal and movement regression suites pass locally (111 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks — pending a connected Roblox client
@@ -15,7 +15,7 @@ Version: **1.0.0-rc.4**. Do not describe this candidate as fully verified until 
 - [ ] Movement: speed, jump, infinite jump, noclip and fly work on PC and mobile, restore on switch-off, and survive respawn without leftovers.
 - [ ] Menu: role tabs, cards open and close, live status text resizes its card, search opens the card holding a result.
 - [ ] Status card, Fire/Throw/Stop buttons, status pill and murderer warning render cleanly on PC and mobile; the card drags from anywhere.
-- [ ] Reveal roles: preview matches the round, one message posts, the cooldown blocks a second press, and it refuses while you are murderer.
+- [ ] Reveal roles: emojis render in chat, the hero appears after the sheriff dies, preview matches the round, one message posts, the cooldown blocks a second press, and it refuses while you are murderer.
 - [ ] PC: Right Shift menu, click fire/stab, E/right-click throw, End stop.
 - [ ] Mobile: dragging, FIRE/STAB, THROW, STOP, and switching input modes.
 - [ ] Support report: clipboard success and unavailable-clipboard fallback.
