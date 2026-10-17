@@ -39,6 +39,9 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     start = source.index("local installRoleReveal=function(C)")
     end = source.index("installRoleReveal({", start)
     release = release.replace("-- INSERT_REVEAL", source[start:end])
+    start = source.index("local installMovement=function(C)")
+    end = source.index("installMovement({", start)
+    release = release.replace("-- INSERT_MOVEMENT", source[start:end])
     if "-- INSERT_" in release or "-- INSERT_" in template:
         raise RuntimeError("Unexpanded regression-test source marker")
     harness.write_text(release, encoding="utf-8")

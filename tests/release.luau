@@ -105,4 +105,89 @@ do
     ok=State.RevealRolesInChat()
     check(ok and #sent==3 and State.RoleReveal.Sent==2,"a failed send does not start the cooldown")
 end
+do
+    -- Movement: a fake character and signals; nothing here touches a real game.
+    local now=0
+    local vector
+    local vectorMeta={__add=function(a,b) return vector(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end,
+        __sub=function(a,b) return vector(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end,
+        __mul=function(a,k) return vector(a.X*k,a.Y*k,a.Z*k) end,
+        __index=function(a,key) if key=="Unit" then return vector(a.X/a.Magnitude,a.Y/a.Magnitude,a.Z/a.Magnitude) end return nil end}
+    function vector(x,y,z) return setmetatable({X=x,Y=y,Z=z,Magnitude=math.sqrt(x*x+y*y+z*z)},vectorMeta) end
+    local Vector3={new=vector,zero=vector(0,0,0),yAxis=vector(0,1,0)}
+    local CFrame={lookAt=function(position) return {Position=position,LookVector=vector(0,0,-1)} end}
+    local Enum={KeyCode={Space="Space",LeftControl="LeftControl"},Material={Air="Air",Grass="Grass"},
+        HumanoidStateType={Jumping="Jumping"}}
+    local workspace={Gravity=196.2}
+    local created={}
+    local Instance={new=function(class)
+        local object={ClassName=class,Parent=nil}
+        function object:Destroy() self.Parent=nil; self.Destroyed=true end
+        table.insert(created,object)
+        return object
+    end}
+    local function part(collide) return {CanCollide=collide,Parent=true,IsA=function(_,class) return class=="BasePart" end} end
+    local head,torso,leg=part(true),part(true),part(false)
+    local root=part(true); root.Position=vector(0,5,0); root.CFrame={LookVector=vector(0,0,-1),RightVector=vector(1,0,0)}
+    local states={}
+    local hum={Health=100,Parent=true,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,UseJumpPower=true,PlatformStand=false,
+        FloorMaterial="Grass",MoveDirection=vector(0,0,0)}
+    function hum:ChangeState(state) table.insert(states,state) end
+    local char={hum=hum}
+    function char:FindFirstChildOfClass(class) return class=="Humanoid" and hum or nil end
+    function char:FindFirstChild(name) return name=="HumanoidRootPart" and root or nil end
+    function char:GetChildren() return {head,torso,leg,root} end
+    local player={Character=char}
+    local keys={}
+    local UIS={GetFocusedTextBox=function() return nil end,IsKeyDown=function(_,key) return keys[key]==true end,JumpRequest={}}
+    local State={Running=true,Config={WalkSpeed=24,JumpPower=80,FlySpeed=50,SpeedBoost=true,Noclip=true}}
+    local connections={}
+    local C={State=State,Player=player,UIS=UIS,Clock=function() return now end,
+        RunService={Stepped="Stepped",Heartbeat="Heartbeat"},Connect=function(signal,callback) connections[signal]=callback end}
+    -- INSERT_MOVEMENT
+    installMovement(C)
+    local move,cfg=State.Movement,State.Config
+    check(not cfg.SpeedBoost and not cfg.Noclip,"movement toggles start off after a reload")
+    check(connections.Stepped and connections.Heartbeat and connections[UIS.JumpRequest],"movement hooks physics and jump input")
+    cfg.SpeedBoost=true; move.Step()
+    check(hum.WalkSpeed==24,"speed boost sets walk speed")
+    hum.WalkSpeed=17; move.Step()
+    check(hum.WalkSpeed==24,"speed boost holds after the game changes speed")
+    cfg.SpeedBoost=false; move.Step()
+    check(hum.WalkSpeed==17,"switching speed off restores the game's latest speed")
+    hum.WalkSpeed=0; cfg.SpeedBoost=true; move.Step()
+    check(hum.WalkSpeed==0,"speed boost never unfreezes a frozen player")
+    hum.WalkSpeed=16; move.Step(); cfg.SpeedBoost=false; move.Step()
+    cfg.JumpBoost=true; move.Step()
+    check(hum.JumpPower==80,"jump boost sets jump power")
+    cfg.JumpBoost=false; move.Step()
+    check(hum.JumpPower==50,"jump boost restores jump power")
+    hum.UseJumpPower=false; cfg.JumpBoost=true; move.Step()
+    check(math.abs(hum.JumpHeight-80^2/(2*196.2))<1e-6,"jump boost converts power to height for height-based rigs")
+    cfg.JumpBoost=false; move.Step()
+    check(hum.JumpHeight==7.2,"jump height is restored")
+    cfg.Noclip=true; move.StepNoclip()
+    check(not head.CanCollide and not torso.CanCollide and not root.CanCollide,"noclip disables body collisions")
+    State.Fling={Active=true}; move.StepNoclip()
+    check(head.CanCollide and torso.CanCollide and not leg.CanCollide,"noclip pauses for fling and restores only original collisions")
+    State.Fling=nil; move.StepNoclip(); cfg.Noclip=false; move.StepNoclip()
+    check(head.CanCollide and root.CanCollide and not leg.CanCollide,"switching noclip off restores collisions")
+    cfg.InfiniteJump=true; move.JumpRequested()
+    check(#states==0,"infinite jump leaves ground jumps to the game")
+    hum.FloorMaterial="Air"; move.JumpRequested(); move.JumpRequested()
+    check(#states==1,"infinite jump fires once per press in mid-air")
+    now+=.3; move.JumpRequested()
+    check(#states==2,"infinite jump repeats after the hold delay")
+    cfg.Fly=true; move.Step()
+    check(#created==2 and created[1].Parent==root and hum.PlatformStand,"fly attaches movers and stands the humanoid")
+    keys.Space=true; move.Step()
+    check(created[1].Velocity.Y==50 and created[1].Velocity.X==0 and not move.Status:find("stopped"),"fly climbs at fly speed while Space is held")
+    now+=1; move.JumpRequested()
+    check(#states==2,"infinite jump stays off while flying")
+    cfg.SpeedBoost,cfg.Noclip=true,true; move.Step(); move.StepNoclip()
+    State.StopMovement()
+    check(created[1].Destroyed and created[2].Destroyed and not hum.PlatformStand,"stopping movement removes fly movers")
+    check(not (cfg.SpeedBoost or cfg.JumpBoost or cfg.InfiniteJump or cfg.Noclip or cfg.Fly) and hum.WalkSpeed==16 and head.CanCollide,
+        "stopping movement turns every assist off and restores the character")
+end
 print(string.format("%d release assertions passed",passed))

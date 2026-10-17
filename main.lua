@@ -17695,7 +17695,7 @@ local State = {
     PickupMode = "TouchOnly",
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Invisibility OFF"},
     RepairRequired = repairRequired,
-    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+    Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17732,7 +17732,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.3"
+State.Version = "1.0.0-rc.4"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17744,7 +17744,8 @@ function State.GetSupportSnapshot()
     end
     local flags = {}
     for _, name in ipairs({"Aim", "MagicBullet", "ConservativeGun", "KnifeAim", "KnifeAllDirections",
-        "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura"}) do
+        "RequireClearKnifeTarget", "StabAssist", "StabSweep", "ESP", "AutoKnifeDodge", "KillAura",
+        "SpeedBoost", "JumpBoost", "InfiniteJump", "Noclip", "Fly"}) do
         flags[name] = State.Config[name] == true
     end
     local stats = {}
@@ -21565,6 +21566,7 @@ function State.Destroy()
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
+    if State.StopMovement then State.StopMovement() end
     if State.FlushAuraTouches and not State.FlushAuraTouches() then
         warn("Unload stopped: blade touch cleanup incomplete; retry unload")
         return false
@@ -23321,6 +23323,7 @@ local installEmergencyStop = function(C)
         State.Config.AutoKnifeDodge = false
         run("dodge",function() if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end end)
         run("target memory",State.ClearTargetContinuity)
+        run("movement",State.StopMovement)
         run("fling queue",function() if State.StopFlingAll then local ok,message=State.StopFlingAll("Emergency stop"); if ok==false then error(message) end end end)
         run("fling",function() if State.StopFling then State.StopFling() end end)
         if hadFling and State.Fling.ReturnStatus and State.Fling.ReturnStatus:find("Return failed:",1,true) then
@@ -23332,7 +23335,7 @@ local installEmergencyStop = function(C)
                 if ok==false then error(message or "Character restoration failed") end
             end
         end)
-        local message = #errors==0 and "Emergency stop: attacks, fling, pickup and dodge stopped"
+        local message = #errors==0 and "Emergency stop: attacks, fling, pickup, dodge and movement stopped"
             or "Emergency stop completed with issues: "..table.concat(errors,"; ")
         State.EmergencyStopReport={OK=#errors==0,Errors=errors,Message=message}
         State.AimStatus=message
@@ -24221,6 +24224,163 @@ end
 
 
 do
+-- Movement assists: speed, jump, infinite jump, noclip and fly. Each is undone the moment it is
+-- switched off, while fling or invisibility controls your character, on emergency stop and on unload.
+local installMovement=function(C)
+    local State,player,UIS=C.State,C.Player,C.UIS
+    local clock=C.Clock or os.clock
+    local cfg=State.Config
+    cfg.SpeedBoost,cfg.JumpBoost,cfg.InfiniteJump,cfg.Noclip,cfg.Fly=false,false,false,false,false
+    local move={Status="Off"}
+    State.Movement=move
+    local walk,jump={Property="WalkSpeed"},{}
+    local collisions=setmetatable({},{__mode="k"})
+    local parts,partsFor,partsAt={},nil,-math.huge
+    local fly,lastAirJump=nil,-math.huge
+    local function character()
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if hum and root and hum.Health>0 then return char,hum,root end
+        return nil
+    end
+    local function paused()
+        if (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) then return "Paused while flinging" end
+        if State.Invis and (State.Invis.Active or State.Invis.Busy) then return "Paused while invisible" end
+        return nil
+    end
+    -- Keep a humanoid number at the boosted value. The value the game last set is remembered and
+    -- restored on release; a game value of 0 (frozen, or jumping disabled) is never overridden.
+    local function hold(slot,hum,want)
+        if slot.Humanoid~=hum then slot.Humanoid,slot.Native,slot.Written=hum,nil,nil end
+        local current=hum[slot.Property]
+        if slot.Written==nil or current~=slot.Written then slot.Native=current end
+        if slot.Native<=0 then slot.Written=current; return end
+        if math.abs(current-want)>1e-3 then hum[slot.Property]=want end
+        slot.Written=hum[slot.Property]
+    end
+    local function release(slot)
+        local hum=slot.Humanoid
+        if hum and slot.Native~=nil and hum.Parent and hum[slot.Property]==slot.Written then hum[slot.Property]=slot.Native end
+        slot.Humanoid,slot.Native,slot.Written=nil,nil,nil
+    end
+    local function restoreCollisions()
+        for part,was in pairs(collisions) do if part.Parent then part.CanCollide=was end end
+        table.clear(collisions)
+    end
+    local function bodyParts(char)
+        local now=clock()
+        if partsFor~=char or now-partsAt>1 then
+            parts,partsFor,partsAt={},char,now
+            for _,part in ipairs(char:GetChildren()) do if part:IsA("BasePart") then table.insert(parts,part) end end
+        end
+        return parts
+    end
+    local function stopFly()
+        local f=fly
+        if not f then return end
+        fly=nil
+        pcall(function() f.Velocity:Destroy() end)
+        pcall(function() f.Gyro:Destroy() end)
+        if f.Humanoid.Parent then f.Humanoid.PlatformStand=f.PlatformStand end
+    end
+    local function stepFly(hum,root)
+        if fly and (fly.Root~=root or not fly.Velocity.Parent or not fly.Gyro.Parent) then stopFly() end
+        if not fly then
+            local velocity=Instance.new("BodyVelocity")
+            velocity.MaxForce=Vector3.new(1e9,1e9,1e9); velocity.Velocity=Vector3.zero; velocity.Parent=root
+            local gyro=Instance.new("BodyGyro")
+            gyro.MaxTorque=Vector3.new(1e9,1e9,1e9); gyro.P=9e4; gyro.CFrame=root.CFrame; gyro.Parent=root
+            fly={Velocity=velocity,Gyro=gyro,Humanoid=hum,Root=root,PlatformStand=hum.PlatformStand}
+        end
+        if not hum.PlatformStand then hum.PlatformStand=true end
+        -- Stick or WASD input follows the camera pitch, so looking up while moving climbs.
+        local camera=workspace.CurrentCamera
+        local frame=camera and camera.CFrame or root.CFrame
+        local flat=Vector3.new(frame.LookVector.X,0,frame.LookVector.Z)
+        local direction=Vector3.zero
+        local input=hum.MoveDirection
+        if input.Magnitude>1e-3 and flat.Magnitude>1e-3 then
+            local relative=CFrame.lookAt(Vector3.zero,flat):VectorToObjectSpace(input)
+            direction=frame.LookVector*-relative.Z+frame.RightVector*relative.X
+        end
+        if not UIS:GetFocusedTextBox() then
+            if UIS:IsKeyDown(Enum.KeyCode.Space) then direction+=Vector3.yAxis end
+            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then direction-=Vector3.yAxis end
+        end
+        fly.Velocity.Velocity=direction.Magnitude>1e-3 and direction.Unit*cfg.FlySpeed or Vector3.zero
+        if flat.Magnitude>1e-3 then fly.Gyro.CFrame=CFrame.lookAt(root.Position,root.Position+flat) end
+    end
+    local function summary()
+        local active={}
+        if cfg.SpeedBoost then table.insert(active,"Speed "..cfg.WalkSpeed) end
+        if cfg.JumpBoost then table.insert(active,"Jump "..cfg.JumpPower) end
+        if cfg.InfiniteJump then table.insert(active,"Infinite jump") end
+        if cfg.Noclip then table.insert(active,"Noclip") end
+        if cfg.Fly then table.insert(active,"Fly "..cfg.FlySpeed) end
+        return #active>0 and table.concat(active,"  ·  ") or "Off"
+    end
+    function State.StopMovement()
+        cfg.SpeedBoost,cfg.JumpBoost,cfg.InfiniteJump,cfg.Noclip,cfg.Fly=false,false,false,false,false
+        stopFly(); release(walk); release(jump); restoreCollisions()
+        move.Status="Off"
+        return true
+    end
+    -- Noclip runs before physics each step; the humanoid re-enables some collisions every frame.
+    function move.StepNoclip()
+        if not State.Running then return end
+        local char=cfg.Noclip and not paused() and character()
+        if not char then
+            if next(collisions)~=nil then restoreCollisions() end
+            return
+        end
+        for _,part in ipairs(bodyParts(char)) do
+            if part.CanCollide then
+                if collisions[part]==nil then collisions[part]=true end
+                part.CanCollide=false
+            end
+        end
+    end
+    function move.JumpRequested()
+        if not State.Running or not cfg.InfiniteJump or cfg.Fly or paused() then return end
+        local _,hum=character()
+        -- Ground jumps stay native; holding jump repeats at most four times a second.
+        if not hum or hum.FloorMaterial~=Enum.Material.Air or clock()-lastAirJump<.25 then return end
+        if (hum.UseJumpPower and hum.JumpPower or hum.JumpHeight)<=0 then return end
+        lastAirJump=clock()
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+    function move.Step()
+        if not State.Running then return end
+        local ok,err=pcall(function()
+            local blocked=paused()
+            local _,hum,root=character()
+            local live=hum~=nil and not blocked
+            if live and cfg.SpeedBoost then hold(walk,hum,cfg.WalkSpeed) elseif walk.Humanoid then release(walk) end
+            if live and cfg.JumpBoost then
+                local property=hum.UseJumpPower and "JumpPower" or "JumpHeight"
+                if jump.Property~=property then release(jump); jump.Property=property end
+                hold(jump,hum,property=="JumpPower" and cfg.JumpPower or cfg.JumpPower^2/(2*workspace.Gravity))
+            elseif jump.Humanoid then release(jump) end
+            if live and cfg.Fly then stepFly(hum,root) elseif fly then stopFly() end
+            local active=summary()
+            move.Status=blocked and active~="Off" and blocked or active
+        end)
+        if not ok then
+            State.StopMovement()
+            move.Status="Movement stopped: "..tostring(err)
+        end
+    end
+    C.Connect(C.RunService.Stepped,move.StepNoclip)
+    C.Connect(UIS.JumpRequest,move.JumpRequested)
+    C.Connect(C.RunService.Heartbeat,move.Step)
+end
+
+installMovement({State=State,Player=player,UIS=UIS,RunService=RunService,Connect=connect})
+end
+
+
+do
 -- Button only: posts the murderer and sheriff of the current round to chat. Never names you,
 -- skips protected players, and waits a few seconds between messages.
 local installRoleReveal=function(C)
@@ -24374,7 +24534,7 @@ local createMobileUI = function(C)
         if State.Running then State.Destroy() end
     end)
 
-    -- Seven sidebar tabs; each former page is a collapsible card, created in display order
+    -- Tabs follow your role in the round; each holds collapsible cards created in display order,
     -- so the builders below can keep filling them in any order.
     mobile.Pages={}
     local function tab(title,icon)
@@ -24387,29 +24547,32 @@ local createMobileUI = function(C)
     end
     local home=tab("Home","house")
     mobile.Pages.Home={Tab=home}
-    local combatPage=tab("Combat","crosshair")
-    local combat=page("GunAim",combatPage,"Gun Aim","crosshair",true)
-    local knife=page("KnifeAim",combatPage,"Knife Aim","sword")
-    local automation=page("KillAura",combatPage,"Kill Aura","zap")
-    local dodgeTab=page("Dodge",combatPage,"Knife Dodge","shield")
-    local pickupTab=page("Pickup",combatPage,"Gun Pickup","hand")
-    local visualsPage=tab("Visuals","eye")
-    local visuals=page("ESP",visualsPage,"Player ESP","eye",true)
-    local hud=page("HUD",visualsPage,"HUD & Alerts","layout-dashboard")
-    local guidance=page("Guidance",visualsPage,"Guidance","route")
-    local characterPage=tab("Character","ghost")
-    local movement=page("Invisibility",characterPage,"Invisibility","ghost",true)
-    local travel=page("Teleports",characterPage,"Teleports","map-pin")
-    local animations=page("Animations",characterPage,"Animations","sparkles")
-    local playersPage=tab("Players","users")
-    local playersTab=page("Players",playersPage,"Player Actions","users",true)
-    local protected=page("Protected",playersPage,"Protected","shield-check")
-    local chatSection=page("Chat",playersPage,"Chat","message-circle")
+    local murdererPage=tab("Murderer","sword")
+    local knife=page("KnifeAim",murdererPage,"Knife Aim","sword",true)
+    local automation=page("KillAura",murdererPage,"Kill Aura","zap")
+    local sheriffPage=tab("Sheriff","crosshair")
+    local combat=page("GunAim",sheriffPage,"Gun Aim","crosshair",true)
+    local innocentPage=tab("Innocent","shield")
+    local dodgeTab=page("Dodge",innocentPage,"Knife Dodge","shield",true)
+    local pickupTab=page("Pickup",innocentPage,"Gun Pickup","hand",true)
     local flingPage=tab("Fling","wind")
     local flingTab=page("Fling",flingPage,"Fling","wind",true)
     local roleFling=page("RoleFling",flingPage,"Role Fling","target")
     local flingOptions=page("FlingOptions",flingPage,"Fling Setup","sliders-horizontal")
     local flingReports=page("FlingReports",flingPage,"Fling Reports","clipboard-list")
+    local movementPage=tab("Movement","footprints")
+    local motion=page("Movement",movementPage,"Movement","footprints",true)
+    local movement=page("Invisibility",movementPage,"Invisibility","ghost")
+    local travel=page("Teleports",movementPage,"Teleports","map-pin")
+    local animations=page("Animations",movementPage,"Animations","sparkles")
+    local visualsPage=tab("Visuals","eye")
+    local visuals=page("ESP",visualsPage,"Player ESP","eye",true)
+    local hud=page("HUD",visualsPage,"HUD & Alerts","layout-dashboard")
+    local guidance=page("Guidance",visualsPage,"Guidance","route")
+    local playersPage=tab("Players","users")
+    local playersTab=page("Players",playersPage,"Player Actions","users",true)
+    local protected=page("Protected",playersPage,"Protected","shield-check")
+    local chatSection=page("Chat",playersPage,"Chat","message-circle")
     local settingsPage=tab("Settings","settings")
     local settings=page("Settings",settingsPage,"General","settings",true)
     local appearance=page("Appearance",settingsPage,"Appearance","palette")
@@ -24460,7 +24623,7 @@ local createMobileUI = function(C)
     end
     mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Waiting for round"})
     home:Paragraph({Title="MM2 Universal",Desc="v" .. State.Version})
-    option(combat,"Aim assist","Aim","Master switch for every aim feature.")
+    option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
     option(knife, "Knife throw prediction", "KnifeAim")
@@ -24538,6 +24701,23 @@ local createMobileUI = function(C)
     local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Collects a dropped gun without teleporting." or "Your executor lacks firetouchinterest.")
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
     buildAutomationSettings()
+    if State.StopMovement then
+        local function slider(title,key,min,max)
+            motion:Slider({Title=title,Step=1,Value={Min=min,Max=max,Default=State.Config[key]},Callback=function(value)
+                local n=tonumber(value)
+                if n and State.Running then State.Config[key]=math.clamp(math.floor(n+.5),min,max) end
+            end})
+        end
+        option(motion,"Speed boost","SpeedBoost","Walk faster.")
+        slider("Walk speed","WalkSpeed",16,60)
+        option(motion,"Jump boost","JumpBoost","Jump higher.")
+        slider("Jump power","JumpPower",50,150)
+        option(motion,"Infinite jump","InfiniteJump","Jump again in mid-air.")
+        option(motion,"Noclip","Noclip","Walk through walls.")
+        option(motion,"Fly","Fly","Move to fly where you look. Space up, Ctrl down.")
+        slider("Fly speed","FlySpeed",16,120)
+        mobile.MovementStatus=motion:Paragraph({Title="Status",Desc=State.Movement and State.Movement.Status or "Off"})
+    end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
     option(movement, "Invisibility", "Invisibility", "Ghost mode. Shooting restores you first.")
@@ -25213,6 +25393,7 @@ local createMobileUI = function(C)
             mobile.LastInvisibilityStatus=State.Invis.Status
             refresh()
         end
+        if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
         if State.KillAura and mobile.KillAuraStatus and mobile.KillAuraStatus.ParagraphFrame and mobile.LastKillAuraStatus~=State.KillAura.Status then
             mobile.KillAuraStatus.ParagraphFrame:SetDesc(State.KillAura.Status)
             mobile.LastKillAuraStatus=State.KillAura.Status

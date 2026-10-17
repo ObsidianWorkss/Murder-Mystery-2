@@ -1,5 +1,12 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.4
+
+- `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 48 release assertions pass (106 total).
+- 21 new movement assertions use a fake character: speed and jump restore the game's latest value, a frozen player stays frozen, height-based rigs get the converted jump height, noclip restores only collisions that were on, fling pauses noclip, infinite jump ignores ground jumps and holds, fly attaches and removes its movers, and stop restores everything.
+- The menu keeps every rc.3 control; 8 movement controls and a status line were added.
+- Movement has not been tried in a live server.
+
 ## Release candidate 1.0.0-rc.3
 
 - `main.lua` and `loader.lua` compile with Luau 0.739; 58 combat and 27 release assertions pass (85 total).

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-rc.4 — 2026-10-17
+
+### New
+
+- Movement card: speed boost, jump boost, infinite jump, noclip and fly, with sliders for walk speed, jump power and fly speed. All start off on load, pause while you fling or are invisible, never unfreeze a player the game froze, and switch off with End or Unload.
+
+### Menu
+
+- Tabs follow your role: Murderer (knife aim, kill aura), Sheriff (gun aim), Innocent (knife dodge, gun pickup), then Fling, Movement, Visuals, Players and Settings.
+- Aim assist, the master switch, moved to Home.
+
 ## 1.0.0-rc.3 — 2026-10-17
 
 ### New

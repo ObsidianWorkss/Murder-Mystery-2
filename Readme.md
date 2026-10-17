@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.3 · Release candidate · PC + mobile**
+**v1.0.0-rc.4 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -56,6 +56,8 @@ The layout follows the active input device. Touch-capable PCs can continue using
 
 ## Other tools
 
+- Menu tabs follow your role: Murderer, Sheriff and Innocent, then Fling, Movement, Visuals, Players and Settings.
+- Movement: speed boost, jump boost, infinite jump, noclip and fly (Space up, Ctrl down; on mobile, look where you want to go). Each switches off cleanly, pauses while you fling or are invisible, and stops with End. The server can still kick for movement it rejects.
 - Role and dropped-gun ESP, threat warnings, and compact combat status.
 - Player exclusions shared by script-controlled targeting and player actions.
 - Players → Chat → **Reveal roles** posts the round's murderer and sheriff in chat, for example `Murderer: @name • Sheriff: @name`. It previews the message first, never names you, skips protected players, and waits 4 seconds between messages.
