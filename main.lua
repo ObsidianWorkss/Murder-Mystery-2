@@ -17742,7 +17742,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.20"
+State.Version = "1.0.0-rc.21"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -22903,7 +22903,7 @@ local installKillAura=function(C)
     local State,player=C.State,C.Player
     local clock=C.Clock or os.clock
     local focused=true
-    local aura={Enabled=false,Status="Off",Attempts=0,TargetId=nil,LastAttempt=-math.huge}
+    local aura={Enabled=false,Status="Off",Attempts=0,Contacts=0,TargetId=nil,LastAttempt=-math.huge}
     State.KillAura=aura
     State.Config.KillAura=false
     if State.Config.AuraEquipKnife==nil then State.Config.AuraEquipKnife=true end
@@ -22921,6 +22921,14 @@ local installKillAura=function(C)
     function State.GetKillAuraRange()
         return State.Config.AuraExtendedReach and (reach(State.Config.AuraReachRange) or 30)
             or (range(State.Config.KillAuraRange) or 6)
+    end
+    function State.GetAuraContactPart(target,origin)
+        local char=target and target.Character
+        if not char then return nil end
+        for _,name in ipairs(C.BodyPartNames or {"UpperTorso","Torso","LowerTorso","Head"}) do
+            local part=char:FindFirstChild(name)
+            if part and part:IsA("BasePart") and C.ClearPath(origin,part.Position,char) then return part end
+        end
     end
     local function refresh()
         if State.MobileUI and State.MobileUI.Refresh then pcall(State.MobileUI.Refresh) end
@@ -22985,7 +22993,8 @@ local installKillAura=function(C)
         local n=range(value)
         if not n then return false,"Aura range must be between 1 and 6.5 studs" end
         State.Config.KillAuraRange=n
-        return true,n
+        local ok,message=State.CancelKillAuraContacts("Range updated")
+        return ok,ok and n or message
     end
     local function pause(message)
         aura.TargetId=nil
@@ -23002,10 +23011,15 @@ local installKillAura=function(C)
         local ok,message=pcall(function()
             if not State.Running then State.StopKillAura("Unloaded"); return end
             local char=player.Character
-            if char~=aura.Character then State.StopKillAura("Off  ·  character changed"); return end
+            if char~=aura.Character then
+                pause("Waiting for your new character")
+                aura.Character=char
+                aura.LastEquip=nil
+                return
+            end
             local hum=char and char:FindFirstChildOfClass("Humanoid")
             local root=char and char:FindFirstChild("HumanoidRootPart")
-            if not hum or hum.Health<=0 then State.StopKillAura("Off  ·  character unavailable"); return end
+            if not hum or hum.Health<=0 then pause("Waiting for respawn"); return end
             if C.RoleFor(player)~="Murderer" or not C.IsAlive(player) then pause("Waiting until you are murderer"); return end
             if not root then pause("Waiting for your character"); return end
             if not State.Config.Aim then pause("Paused  ·  turn on Aim assist"); return end
@@ -23021,7 +23035,7 @@ local installKillAura=function(C)
             local ready,reason=C.CanStab(item)
             if not ready then aura.Status=reason or "Knife cooling down"; return end
             if clock()-aura.LastAttempt<0.85 then return end
-            local best,bestChar,bestDistance
+            local best,bestChar,bestPart,bestDistance
             local radius=State.GetKillAuraRange()
             for _,p in ipairs(C.Players:GetPlayers()) do
                 if p~=player and not State.IsPlayerExcluded(p) and C.IsAlive(p) then
@@ -23031,25 +23045,29 @@ local installKillAura=function(C)
                     if targetHum and targetHum.Health>0 and targetRoot then
                         local distance=(targetRoot.Position-root.Position).Magnitude
                         if distance==distance and distance<=radius and (not bestDistance or distance<bestDistance
-                            or distance==bestDistance and p.UserId<best.UserId)
-                            and C.ClearPath(root.Position,targetRoot.Position,targetChar) then
-                            best,bestChar,bestDistance=p,targetChar,distance
+                            or distance==bestDistance and p.UserId<best.UserId) then
+                            local part=State.GetAuraContactPart(p,root.Position)
+                            if part then best,bestChar,bestPart,bestDistance=p,targetChar,part,distance end
                         end
                     end
                 end
             end
             if not best then aura.TargetId=nil; aura.Status="No clear target in range"; return end
             if best.Character~=bestChar or State.IsPlayerExcluded(best) or not C.IsAlive(best) then return end
-            local accepted,why=C.Stab(item,best)
+            local accepted,why,contact=C.Stab(item,best,bestPart)
             aura.TargetId=accepted and best.UserId or nil
             if accepted then
                 aura.Attempts+=1; aura.LastAttempt=clock()
-                aura.Status="Stab sent  ·  @"..best.Name
+                if contact==true then aura.Contacts+=1 end
+                aura.LastDistance=bestDistance
+                aura.Status=(why or "Swing sent; damage unconfirmed")..("  ·  @%s  ·  %.1f studs"):format(best.Name,bestDistance)
             else aura.Status=why or "Waiting for a ready knife" end
         end)
         if not ok then State.StopKillAura("Stopped: "..tostring(message)) end
     end)
-    C.Connect(player.CharacterRemoving,function() State.StopKillAura("Off  ·  respawning") end)
+    C.Connect(player.CharacterRemoving,function()
+        if aura.Enabled then pause("Waiting for respawn"); aura.Character=nil end
+    end)
     if C.UIS then
         C.Connect(C.UIS.WindowFocusReleased,function() focused=false; if aura.Enabled then pause("Paused  ·  Roblox is in the background") end end)
         C.Connect(C.UIS.WindowFocused,function() focused=true end)
@@ -23062,13 +23080,34 @@ local function auraKnifeReady(item)
     if not record or not ready(record) then return false,"Waiting for your knife" end
     if record.Charging then return false,"Paused for your throw" end
     local throwSpeed=item:GetAttribute("ThrowSpeed")
-    throwSpeed=type(throwSpeed)=="number" and throwSpeed>0 and throwSpeed or 1
+    throwSpeed=type(throwSpeed)=="number" and throwSpeed==throwSpeed and throwSpeed>0 and throwSpeed<math.huge and throwSpeed or 1
     if os.clock()-record.LastThrow<2*throwSpeed then return false,"Throw cooling down" end
     if os.clock()-record.LastStab<0.85 then return false,"Stab cooling down" end
     return true
 end
+local function auraStab(item,target,part)
+    if not State.CanAuraContact() then return false,"Aura paused" end
+    if roleFor(player)~="Murderer" or not alive(player) or not alive(target) or State.IsPlayerExcluded(target) then return false,"Target unavailable" end
+    if not auraKnifeReady(item) then return false,"Knife cooling down" end
+    local ownRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    local char=target.Character
+    local targetRoot=char and char:FindFirstChild("HumanoidRootPart")
+    if not ownRoot or not targetRoot or (targetRoot.Position-ownRoot.Position).Magnitude>State.GetKillAuraRange() then return false,"Target out of range" end
+    part=part or State.GetAuraContactPart(target,ownRoot.Position)
+    if not part or not part:IsA("BasePart") or not part:IsDescendantOf(char)
+        or not clearPath(ownRoot.Position,part.Position,char) then return false,"No clear body contact" end
+    local record=State.WeaponHandlers[item]
+    if not stabKnife(record,target) then return false,"Knife did not start a swing" end
+    record.AuraStab=true
+    local before=State.Stats.StabContactReports
+    -- Normal and extended aura both report the selected body part immediately;
+    -- a physical overlap or a native Handle.Touched event is not required.
+    reportStabContact(record,part,State.Config.AuraExtendedReach and "AuraReachAttempt" or "AuraStabAssist")
+    local contact=State.Stats.StabContactReports>before
+    return true,contact and "Contact sent; damage unconfirmed" or "Swing sent; contact report unavailable",contact
+end
 installKillAura({State=State,Player=player,Players=Players,RunService=RunService,UIS=UIS,Connect=connect,
-    RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,
+    RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,BodyPartNames=hitPartNames.Knife,
     InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end,
     CanStab=auraKnifeReady,
     EquipKnife=function()
@@ -23083,28 +23122,7 @@ installKillAura({State=State,Player=player,Players=Players,RunService=RunService
         end
         if State.FlushAuraTouches then return State.FlushAuraTouches() end
     end,
-    Stab=function(item,target)
-        if not State.CanAuraContact() then return false end
-        if roleFor(player)~="Murderer" or not alive(player) or not alive(target) or State.IsPlayerExcluded(target) then return false end
-        if not auraKnifeReady(item) then return false end
-        local ownRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local targetRoot=target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        if not ownRoot or not targetRoot or (targetRoot.Position-ownRoot.Position).Magnitude>State.GetKillAuraRange()
-            or not clearPath(ownRoot.Position,targetRoot.Position,target.Character) then return false end
-        local record=State.WeaponHandlers[item]
-        local before=State.Stats.StabRequests
-        stabKnife(record,target)
-        local sent=State.Stats.StabRequests>before
-        if sent then
-            record.AuraStab=true
-            if State.Config.AuraExtendedReach then
-                local char=target.Character
-                local hit=char and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("Head") or targetRoot)
-                if hit then reportStabContact(record,hit,"AuraReachAttempt") end
-            end
-        end
-        return sent
-    end})
+    Stab=auraStab})
 end
 
 
@@ -25194,7 +25212,7 @@ local createMobileUI = function(C)
     option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
     if State.SetKillAura then
-        option(automation,"Kill aura","KillAura","Stabs nearby players while you are murderer.")
+        option(automation,"Kill aura","KillAura","Automatically swings and reports clear nearby body contact as murderer. No physical blade overlap needed.")
     end
     if State.EmergencyStop then
         home:Button({Title="Emergency stop",Desc="Stop key on PC",Callback=mobile.TriggerEmergencyStop})
@@ -25215,7 +25233,7 @@ local createMobileUI = function(C)
             if not ok then State.KillAura.Status=tostring(message) end
         end})
         if State.SetAuraExtendedReach then
-            option(auraOptions,"Extended stab reach","AuraExtendedReach","Attempts contact past normal range.")
+            option(auraOptions,"Extended stab reach","AuraExtendedReach","Extends kill aura's contact-attempt range. Requires Kill aura; the server validates damage and distance.")
             auraOptions:Slider({Title="Extended reach",Desc="Studs.",Step=1,
                 Value={Min=1,Max=100,Default=State.Config.AuraReachRange},Callback=function(value)
                 if syncing or not State.Running then return end

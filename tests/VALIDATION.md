@@ -1,5 +1,13 @@
 # Validation — 2026-10-17
 
+## Release candidate 1.0.0-rc.21
+
+- Luau 0.739 compiles both scripts; 58 combat, 118 release, 80 triggerbot and 46 aura assertions pass (302 total).
+- Aura tests extract the shipped controller, readiness checks, swing adapter and contact reporter. A fake remote records the actual contact payload; no physical touch or executor touch API is supplied. Normal and extended modes report the selected body part. The remaining checks cover range changes, partial cover, automatic equip, respawn, death, role waiting, cooldowns, exclusions, menu/focus pauses and failed swings/contacts/cleanup.
+- Current native KnifeClient inspection confirmed `KnifeStabbed:FireServer()` followed by `HandleTouched:FireServer(part)` during its 0.85-second swing window. The new adapter preserves that payload shape and existing cooldowns.
+- Live pre-update diagnostics showed aura off with zero attempts after respawn, and later stopped by an area teleport. Extended reach was enabled but aura itself was off. The local character was sheriff during verification, so live murderer damage and acceptance at extended distances remain unverified.
+- Loaded rc.21 and enabled Kill aura plus extended reach in the connected client. Verified a 30-stud configured radius and the live status `Waiting until you are murderer` while in the lobby, with zero swing/contact requests. This checks startup and role waiting, not damage.
+
 ## Release candidate 1.0.0-rc.20
 
 - Luau 0.739 compiles both scripts; 58 combat, 118 release, and 80 triggerbot assertions pass (256 total).

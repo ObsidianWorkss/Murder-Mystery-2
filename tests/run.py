@@ -66,3 +66,17 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         raise RuntimeError("Unexpanded triggerbot-test source marker")
     harness.write_text(trigger, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+    aura = (root / "tests" / "aura.luau").read_text(encoding="utf-8")
+    for marker, begin, finish in [
+        ("AURA", "local installKillAura=function(C)", "local function auraKnifeReady(item)"),
+        ("AURA_READY", "local function auraKnifeReady(item)", "local function auraStab(item,target,part)"),
+        ("AURA_STAB", "local function auraStab(item,target,part)", "installKillAura({"),
+        ("AURA_CONTACT", "local function reportStabContact(record, hit, source)", "local function scanStabContacts(record)"),
+    ]:
+        start = source.index(begin)
+        end = source.index(finish, start)
+        aura = aura.replace("-- INSERT_" + marker + "\n", source[start:end] + "\n")
+    if "-- INSERT_" in aura:
+        raise RuntimeError("Unexpanded aura-test source marker")
+    harness.write_text(aura, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

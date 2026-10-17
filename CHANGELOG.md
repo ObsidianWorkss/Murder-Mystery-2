@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.21 — 2026-10-17
+
+- Normal and extended kill aura now explicitly report the selected body contact after starting a swing. Normal aura previously relied on blade overlap; physical contact is no longer required to send its report. Server damage validation remains unchanged.
+- Aura selects a clear body part instead of requiring a clear ray to the target's root, and revalidates that same part before reporting contact.
+- Enabled aura waits through death, respawn and innocent rounds rather than switching itself off when the character changes. Explicit stops, unloads, and actions that stop aura still disable it.
+- Status distinguishes contact requests from swings without contact reports and includes target distance. Range changes cancel outstanding aura contacts; invalid throw-speed values cannot bypass cooldowns.
+- Adds 46 assertions covering the extracted aura controller, readiness function, swing adapter and actual contact reporter, including normal and extended requests without physical touch, automatic equip, partial cover, respawn and failures.
+
 ## 1.0.0-rc.20 — 2026-10-17
 
 - Gun triggerbot now calls the exact `sendGun(record)` path used by a manual assisted click. It finds the known murderer and uses fresh prediction, timing and path checks, without requiring a direct cursor hit or crosshair dwell. Clear offscreen assisted shots work the same way as manual Gun aim.

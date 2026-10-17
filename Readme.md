@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.20 · Release candidate · PC + mobile**
+**v1.0.0-rc.21 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -34,7 +34,7 @@ For clearer startup errors, execute the included [`loader.lua`](loader.lua) file
 | Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
 | Clicked stab assist | Attempts contact with the nearest clear opponent within 6.5 studs when the murderer clicks to stab. Enabled by default. |
 | Stab sweep | Checks blade overlaps and movement during a stab. |
-| Kill aura | Optional automatic stab attempts. Disabled by default. |
+| Kill aura | Automatically swings and reports clear nearby body contact as murderer; physical blade overlap is not required. Disabled by default. |
 
 Clicking with a knife stabs; it does not automatically throw. Turn off **Knife throw prediction** for manual cursor throws. To keep prediction while allowing cursor fallback when no target is available, turn off **Require clear throw target**.
 
@@ -51,6 +51,14 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. The gun recalculates a fresh assisted shot when it resumes; the knife reacquires its crosshair target. Missed manual clicks are never queued.
 
 Gun requests have a conservative **3-second minimum interval**, also measured from manual assisted shots, and wait for the tool to be enabled. Knife requests respect the existing stab and throw cooldowns; extended aura range does not extend triggerbot reach. The gun uses the exact manual assisted-shot function, preserving prediction, timing, wall, player-path, and exclusion checks. It checks at most four times per second while ready; rejected checks do not count as sent shots. The status card retains the last gun-check reason even if the next round or a pause changes the current status. Request counters are not hit or kill counters.
+
+### Using kill aura and extended reach
+
+Enable **Murderer → Kill Aura → Kill aura**, or press **K** after closing the menu. **Equip knife for aura** equips your knife automatically. While you are murderer, aura selects a clear nearby body part, swings, and sends its contact report without waiting for your blade to touch the player. It checks alternative body parts when the target's center is behind cover.
+
+With **Extended stab reach** off, **Aura range** sets the radius (1–6.5 studs). With it on, **Extended reach** sets the attempted radius (1–100 studs, default 30). Extended reach modifies kill aura; it does not enable aura by itself or change the server's damage validation. A contact request beyond the server's allowed distance can still be rejected.
+
+The aura stays enabled while waiting through normal death, respawn, or innocent rounds, and resumes when you have a ready murderer knife. It pauses for menus, typing, lost focus, fling, and unavailable weapon states. Emergency stop, unload/reload, and actions that explicitly stop aura turn it off. Its status distinguishes a successful contact request from a swing with no contact report; neither proves a kill.
 
 ## Controls
 
@@ -105,6 +113,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 - **Triggerbot does nothing:** check its status card and last gun-check reason, close the menu, equip the weapon, and enable Aim assist and Gun aim. Gun triggerbot fires at a valid assisted target without a direct cursor hit. Knife triggerbot requires a crosshair target in reach and mouse lock on mobile. Both reset to off after reloading the script; press T to enable them.
 - **Knife won't throw:** check cooldown and clear-target protection. A cancelled charge releases its local cooldown; press throw again after repositioning.
 - **Stab misses:** the opponent must be nearby and unobstructed. Server validation can still reject contact attempts.
+- **Aura does nothing:** enable Kill aura with K outside the menu, confirm your role is murderer, and check its status. Extended reach requires Kill aura to be on. Teleports and stop controls can switch aura off; normal respawns now keep it enabled.
 - **Controls stop responding:** close the menu and any focused text box. Try camera repair or unload and reload.
 - **Optional feature unavailable:** check the feature's status in the menu; required executor functionality may be missing.
 
