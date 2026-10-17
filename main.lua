@@ -12,7 +12,8 @@
 -- E, right-button press, or the native touch throw action explicitly starts a knife throw.
 -- Clicking with the knife never automatically throws, regardless of target distance.
 -- Aimed shots/throws are skipped if no unobstructed body target is available.
--- Gun targets the known murderer in 3D; knife throws retain on-screen target selection.
+-- Gun targets the known murderer in 3D; knife throws can acquire clear offscreen targets.
+-- Clear-target protection skips unaimed assisted throws; clicked stab assist selects a nearby clear opponent.
 -- Camera and cursor are never moved. F6 toggles silent aim and restores native handlers.
 -- Magic Bullet (F7) separately toggles immediate gun redirection to the known murderer.
 -- Magic Bullet OFF restores the native gun controller; knife assist has its own toggle.
@@ -17697,7 +17698,8 @@ local State = {
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 30, KillAura = false, KillAuraRange = 6, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
-        MaxRange = 1000, MaxLead = 8, Ping = 0.04},
+        MaxRange = 1000, MaxLead = 8, Ping = 0.04,
+        KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
         GunReplies = 0, GunTargetHits = 0, GunMisses = 0, GunUnconfirmed = 0,
@@ -17729,7 +17731,7 @@ if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
 env.MM2Assist = State
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Build = "Universal-WindUI-2026-10-17-ContinuousOcclusion"
+State.Build = "Universal-WindUI-2026-10-17-ClearAttackAssist"
 if State.Config.ESPStyleVersion ~= "NativeFill1" then State.Config.StableBodyESP=false; State.Config.ESPStyleVersion="NativeFill1" end
 do
 -- Role-independent, session-persistent exclusions for script-controlled targeting.
@@ -19012,7 +19014,8 @@ local function chooseTarget(kind, origin, item, preferred, strict)
         if other ~= player and not State.IsPlayerExcluded(other) and alive(other) and (not strict or other == preferred) and (kind == "Knife" or roleFor(other) == "Murderer") then
             local char = other.Character
             local root = char:FindFirstChild("HumanoidRootPart")
-            local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil, strict)
+            local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil,
+                strict or (kind == "Knife" and State.Config.KnifeAllDirections))
             if lower then
                 local bias = State.TargetContinuityBias(kind,other,char,preferred,strict,started)
                 table.insert(candidates, {Player = other, Character = char, Root = root, Order = order,
@@ -19495,11 +19498,11 @@ function State.ExcludedPlayerInShotPath(origin, destination)
     end
     return false
 end
-local function aimPoint(record, preferred, strict)
+local function aimPoint(record, preferred, strict, origin)
     sampleMotion(os.clock())
     State.Stats.AimCalls += 1
     if record.Kind == "Knife" and not State.Config.KnifeAim then return weapon:GetMouseTargetCFrame(), nil end
-    local target = chooseTarget(record.Kind, shotOrigin(record.Kind, record.Item), record.Item, preferred, strict)
+    local target = chooseTarget(record.Kind, origin or shotOrigin(record.Kind, record.Item), record.Item, preferred, strict)
     if target then
         State.Stats.Redirects += 1
         if record.Kind == "Knife" then State.Stats.KnifeRedirects += 1 end
@@ -19652,7 +19655,7 @@ local function sendGun(record, preferred, strict)
     local snapshot=State.CreateGunPathSnapshot and State.CreateGunPathSnapshot()
     local function selectAim()
         State.GunPathSnapshot=snapshot
-        local ok,frame,name,found=pcall(aimPoint,record,preferred,strict)
+        local ok,frame,name,found=pcall(aimPoint,record,preferred,strict,originFrame.Position)
         State.GunPathSnapshot=nil
         if not ok then return nil,nil,nil,tostring(frame) end
         return frame,name,found
@@ -19684,8 +19687,11 @@ local function sendGun(record, preferred, strict)
         or root:FindFirstChild("GunRaycastAttachment")~=attachment then
         return skip("Shot cancelled: weapon or character changed")
     end
-    -- Use one frame for the pending record and actual payload, after all prediction work.
-    originFrame=attachment.WorldCFrame
+    -- Keep the selected origin in both the pending record and payload. A second
+    -- large movement after the bounded recalculation invalidates this click.
+    if (attachment.WorldPosition-originFrame.Position).Magnitude>.25 then
+        return skip("Shot cancelled: muzzle moved during aiming; fire again")
+    end
     local origin=originFrame.Position
     local head=ownCharacter:FindFirstChild("Head")
     if not finite(origin) or (targetFrame.Position-origin).Magnitude<.001 then
@@ -19880,11 +19886,32 @@ local function scanStabContacts(record)
         end
     end
 end
+-- Select one nearby body point for a manual click; no automatic attack loop.
+function State.SelectStabAssistTarget()
+    if not State.Config.StabAssist or roleFor(player) ~= "Murderer" then return nil end
+    local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not ownRoot then return nil end
+    local best, bestPart, bestDistance
+    for _, other in ipairs(Players:GetPlayers()) do
+        local char = other.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if other ~= player and root and alive(other) and not State.IsPlayerExcluded(other) then
+            local distance = (root.Position - ownRoot.Position).Magnitude
+            if distance <= 6.5 and (not bestDistance or distance < bestDistance) then
+                for _, name in ipairs({"UpperTorso", "Torso", "Head", "LowerTorso"}) do
+                    local part = char:FindFirstChild(name)
+                    if part and part:IsA("BasePart") and clearPath(ownRoot.Position, part.Position, char) then
+                        best, bestPart, bestDistance = other, part, distance
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return best, bestPart
+end
 local function stabKnife(record, preferred)
-    if not ready(record) then return end
-    record.StabTarget = preferred
-    record.AuraStab = false
-    State.KnifeFeedback = nil
+    if not ready(record) then return false end
     -- A click cancels an explicit throw even during the stab cooldown.
     record.ThrowToken += 1
     if record.Charging then
@@ -19892,20 +19919,29 @@ local function stabKnife(record, preferred)
         record.LastThrow = -math.huge
         stopTracks(record)
     end
-    if os.clock() - record.LastStab < 0.85 then return end
+    if os.clock() - record.LastStab < 0.85 then return false end
     local events = record.Item:FindFirstChild("Events")
     local remote = events and events:FindFirstChild("KnifeStabbed")
-    if not remote then return end
+    if not remote or not remote:IsA("RemoteEvent") then return false end
+    local sent, why = pcall(function() remote:FireServer() end)
+    if not sent then
+        State.KnifeFeedback = {Message = "Stab request failed: " .. tostring(why), Until = os.clock() + 1.8}
+        return false
+    end
+    record.StabTarget = preferred
+    record.AuraStab = false
+    State.KnifeFeedback = nil
     record.LastStab = os.clock()
     record.StabbingUntil = os.clock() + 0.85
     record.StabContacts = {}
     record.StabContactFailures = {}
     local handle = record.Item:FindFirstChild("Handle")
     record.BladeFrame, record.BladeTime = handle and handle.CFrame, os.clock()
-    stopTracks(record)
-    playTrack(record, math.random(1, 2) == 1 and "Slash" or "Downstab")
-    remote:FireServer()
     State.Stats.StabRequests += 1
+    -- Optional local animation failures must not interrupt contact assistance.
+    pcall(stopTracks, record)
+    pcall(playTrack, record, math.random(1, 2) == 1 and "Slash" or "Downstab")
+    return true
 end
 local function knifeFeedback(message)
     State.KnifeFeedback = {Message = message, Until = os.clock() + 1.8}
@@ -19915,6 +19951,7 @@ local function startThrow(record, preferred, strict)
     if record.Kind ~= "Knife" then return false end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return false end
     if not ready(record) then knifeFeedback("Throw unavailable: equip a ready knife"); return false end
+    if strict and not State.Config.KnifeAim then knifeFeedback("Enable knife throw prediction for selected-target attacks"); return false end
     if record.Charging then return false end
     local throwSpeed = record.Item:GetAttribute("ThrowSpeed")
     throwSpeed = type(throwSpeed)=="number" and throwSpeed==throwSpeed and throwSpeed>0 and throwSpeed<math.huge and throwSpeed or 1
@@ -19923,15 +19960,17 @@ local function startThrow(record, preferred, strict)
     local events=record.Item:FindFirstChild("Events")
     local remote=events and events:FindFirstChild("KnifeThrown")
     local handle=record.Item:FindFirstChild("Handle")
-    if not remote or not handle then knifeFeedback("Knife throw objects unavailable"); return false end
+    if not remote or not remote:IsA("RemoteEvent") or not handle or not handle:IsA("BasePart") then knifeFeedback("Knife throw objects unavailable"); return false end
     local chosen=State.Config.KnifeAim and chooseTarget("Knife",handle.Position,record.Item,preferred,strict)
-    if strict and not chosen then
-        knifeFeedback("Throw skipped: selected target is not clear"); return false
+    if not chosen and (strict or (State.Config.KnifeAim and State.Config.RequireClearKnifeTarget)) then
+        State.Stats.SkippedKnifeThrows += 1
+        knifeFeedback("Throw skipped: no clear target; reposition and try again"); return false
     end
     record.Charging=true
     record.ThrowToken+=1
     local token=record.ThrowToken
     local chargedTarget=chosen and chosen.Player
+    local chargedCharacter=chargedTarget and chargedTarget.Character
     record.ThrowTargetUserId=chargedTarget and chargedTarget.UserId
     record.LastThrow=os.clock()
     record.StabbingUntil=0
@@ -19953,22 +19992,36 @@ local function startThrow(record, preferred, strict)
             task.wait(throwSpeed)
             if record.ThrowToken~=token then return end
             if not ready(record) then cancel("Throw cancelled: weapon is no longer ready"); return end
+            if record.Item:FindFirstChild("Handle")~=handle or record.Item:FindFirstChild("Events")~=events
+                or events:FindFirstChild("KnifeThrown")~=remote then cancel("Throw cancelled: weapon objects changed"); return end
+            if chargedTarget and (chargedTarget.Character~=chargedCharacter or not alive(chargedTarget)) then
+                cancel("Throw cancelled: target is no longer alive in the same character"); return
+            end
             if chargedTarget and State.IsPlayerExcluded(chargedTarget) then cancel("Throw cancelled: target excluded"); return end
-            local targetFrame,targetName,solution=aimPoint(record,chargedTarget,strict)
-            -- A manual throw remains usable when assistance has no valid target.
-            -- Selected-player automation must never fall back to an unrelated cursor shot.
+            if (strict or (chargedTarget and State.Config.RequireClearKnifeTarget)) and not State.Config.KnifeAim then
+                cancel("Throw cancelled: knife prediction disabled"); return
+            end
+            local originFrame=handle.CFrame
+            local lockTarget=strict or (chargedTarget~=nil and State.Config.RequireClearKnifeTarget)
+            local targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
+            -- Cursor fallback is explicit; protected assisted throws keep their target.
             local manual=false
-            if not targetFrame and not strict then
+            if not targetFrame and not strict and (not State.Config.KnifeAim or not State.Config.RequireClearKnifeTarget) then
                 targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
             end
             if not targetFrame then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target no longer clear"); return
             end
-            if State.ExcludedPlayerInShotPath(handle.Position,targetFrame.Position) then
+            if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
+                or State.IsPlayerExcluded(solution.Player)
+                or not clearPath(originFrame.Position,targetFrame.Position,solution.Character,true)) then
+                State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target or firing path changed"); return
+            end
+            if State.ExcludedPlayerInShotPath(originFrame.Position,targetFrame.Position) then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: excluded player in firing path"); return
             end
             if not ready(record) or record.ThrowToken~=token then cancel(); return end
-            remote:FireServer(handle.CFrame,targetFrame)
+            remote:FireServer(originFrame,targetFrame)
             sent=true
             record.Charging=false
             State.Stats.KnifeRequests+=1
@@ -19991,7 +20044,10 @@ local function clickKnife(record)
     if not ready(record) then return end
     -- A stab cancels a pending charge before its release task can throw.
     State.LastKnifeInput = {Action = "Stab"}
-    stabKnife(record)
+    local target, part = State.SelectStabAssistTarget()
+    if stabKnife(record, target) and part then
+        reportStabContact(record, part, "ClickedStabAssist")
+    end
 end
 local function takeOver(item)
     if State.WeaponHandlers[item] or not State.Config.Aim or not owned(item)
@@ -24192,6 +24248,9 @@ local createMobileUI = function(C)
     option(combat,"Aim assist","Aim","Master switch for gun aim, knife aim and automatic stabs.")
     option(combat, "Gun aim", "MagicBullet", "Aim at the known murderer when you fire.")
     option(knife, "Knife throw prediction", "KnifeAim")
+    option(knife, "All-direction knife aim", "KnifeAllDirections", "Also acquire clear targets outside the camera view; visible targets take priority.")
+    option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Skip assisted throws without a clear target and keep the charged target through release.")
+    option(knife, "Clicked stab assist", "StabAssist", "On your click, attempt contact with the nearest clear opponent within 6.5 studs. Server validation still applies.")
     if State.SetKillAura then
         option(automation,"Murderer kill aura","KillAura","Automatic stab attempts while you are the murderer.")
     end
