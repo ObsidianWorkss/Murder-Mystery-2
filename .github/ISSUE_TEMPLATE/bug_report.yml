@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible problem with controls or script behavior.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include a small reproduction and the version shown on Home. Never post access keys or saved key files.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Explain what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Load version ...
+        2. Equip ...
+        3. Enable ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Script version or commit
+      placeholder: 1.0.0-rc.40
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device and input
+      options:
+        - PC — mouse and keyboard
+        - Phone — touch
+        - Tablet — touch
+        - Hybrid device or controller
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Client environment
+      description: Operating system and executor/version, if relevant.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Support report and evidence
+      description: Paste Settings → Copy support report and relevant console output. For combat issues, distinguish skipped requests, unconfirmed replies, reported hits and observed eliminations.
+      render: text

@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a focused improvement to controls, behavior or documentation.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should this solve?
+      description: Describe the current workflow and the difficulty you encounter.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain what should change and how you would use it.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include device/input details, alternatives or relevant examples. Do not include access keys.

@@ -15,6 +15,7 @@ if not match:
     raise SystemExit("Missing release version in main.lua")
 version = match.group(1)
 files = ["main.lua", "loader.lua", "Readme.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md",
+         "CONTRIBUTING.md", "assets/banner.svg", "docs/FEATURES.md",
          "docs/SUPPORT.md", "docs/RELEASE_CHECKLIST.md", "tests/VALIDATION.md"]
 payloads = {name: (root / name).read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8") for name in files}
 manifest = {"version": version, "files": {name: hashlib.sha256(data).hexdigest() for name, data in payloads.items()}}

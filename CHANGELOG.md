@@ -2,6 +2,7 @@
 
 ## 1.0.0-rc.40 — 2026-10-18
 
+- Refreshed the repository overview with a branded banner, build badge, quick start and documentation index. Preserved the detailed manual in the feature guide and added contribution guidance, structured issue forms and a pull request template. The release archive includes the new user-facing documentation and banner.
 - Added a default phone shortcut dock with Invis, Speed, universal Trigger and Aura, plus More and Emergency stop. More holds Fly, Noclip, Dodge and the explicit Kill all start/stop action. Buttons share the existing feature setters, reflect state and refusals, and do not enable attacks on load.
 - Phones start with the full menu closed. A Pages picker replaces the sidebar so settings use the full width. Guarded the bundled window's automatic Open to prevent a delayed startup reopening the hidden menu. Desktop menu behavior is retained.
 - Hid the phone instruction/status overlays by default to remove their inventory obstruction; they can be enabled explicitly. Added saved phone preferences, smaller weapon controls with 44 px touch heights, bounded toast width, orientation-aware positions, short-landscape dock rows and draggable/resettable controls. More temporarily hides weapon/fly controls beneath it, and Stop no longer needs a duplicate floating button.

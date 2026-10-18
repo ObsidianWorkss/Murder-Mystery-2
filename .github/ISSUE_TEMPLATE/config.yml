@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Read the feature guide
+    url: https://github.com/ObsidianWorkss/Murder-Mystery-2/blob/main/docs/FEATURES.md
+    about: Settings, controls, defaults and troubleshooting.
+  - name: Support and recovery
+    url: https://github.com/ObsidianWorkss/Murder-Mystery-2/blob/main/docs/SUPPORT.md
+    about: Recover controls and collect a useful support report.

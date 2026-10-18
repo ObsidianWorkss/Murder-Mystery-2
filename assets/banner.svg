@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="280" viewBox="0 0 1280 280" role="img" aria-labelledby="title desc">
+  <title id="title">MM2 Universal</title>
+  <desc id="desc">Adaptive PC and mobile controls. A Luau toolkit for Murder Mystery 2.</desc>
+  <defs>
+    <linearGradient id="surface" x2="1" y2="1">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#090e18"/>
+    </linearGradient>
+    <linearGradient id="accent" x2="1" y2="1">
+      <stop stop-color="#96b2ff"/>
+      <stop offset="1" stop-color="#5b7ef0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="280" rx="20" fill="url(#surface)"/>
+  <path d="M1000 0v280M1080 0v280M1160 0v280M1240 0v280M950 60h330M950 140h330M950 220h330" stroke="#7499ff" opacity=".09"/>
+  <rect x="52" y="76" width="112" height="112" rx="28" fill="url(#accent)"/>
+  <text x="108" y="146" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-weight="700" font-size="35" fill="#0d1529">MM2</text>
+  <text x="198" y="105" font-family="Segoe UI,Arial,sans-serif" font-size="14" letter-spacing="3" fill="#9aaccb">OBSIDIANWORKSS</text>
+  <text x="194" y="160" font-family="Segoe UI,Arial,sans-serif" font-weight="700" font-size="51" fill="#edf2ff">MM2 Universal</text>
+  <text x="198" y="198" font-family="Segoe UI,Arial,sans-serif" font-size="20" fill="#a8b5ce">Adaptive PC and mobile controls</text>
+  <rect x="1076" y="102" width="136" height="50" rx="25" fill="#7499ff" fill-opacity=".10" stroke="#7499ff" stroke-opacity=".35"/>
+  <text x="1144" y="134" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="17" font-weight="600" fill="#b9cbff">LUAU</text>
+</svg>

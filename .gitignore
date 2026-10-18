@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 dist/
+MM2Universal/
+access-key.txt
+verify-key.luau
