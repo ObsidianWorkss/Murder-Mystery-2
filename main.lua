@@ -17735,7 +17735,7 @@ local installSettings=function(C)
     local folder,path="MM2Universal","MM2Universal/settings.json"
     local canRead=type(C.ReadFile)=="function" and type(C.IsFile)=="function"
     local canWrite=type(C.WriteFile)=="function" and type(C.MakeFolder)=="function" and type(C.IsFolder)=="function"
-    local unsaved={Ping=true,MapVoteRepeat=true} -- measured/session-only actions
+    local unsaved={Ping=true,MapVoteRepeat=true,AutoKnifeDodge=true} -- measured/session-only actions
     local function copy(value)
         if type(value)~="table" then return value end
         local out={}
@@ -17831,6 +17831,7 @@ if previousConfig and previousConfig.MagicBullet == nil then State.Config.Aim = 
 State.Config.Invisibility = false
 State.Config.ExperimentalInvisibility = false
 State.Config.MapVoteRepeat = false
+State.Config.AutoKnifeDodge = true -- Starts on each load; off/emergency stop still work for this session.
 if State.Config.MageAnimations then State.Config.PoseEnabled = false end
 -- Replace the earlier guessed default rather than persisting it across reloads.
 if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
@@ -17843,7 +17844,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.37"
+State.Version = "1.0.0-rc.38"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17877,7 +17878,8 @@ function State.GetSupportSnapshot()
             FileWrite=type(writefile)=="function" and type(makefolder)=="function" and type(isfolder)=="function"},
         Settings=flags,Stats=stats,Performance=performance,
         WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil,
-        MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil}
+        MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil,
+        KnifeDodge=State.GetKnifeDodgeSnapshot and State.GetKnifeDodgeSnapshot() or nil}
 end
 function State.GetSupportReport()
     return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
@@ -19335,6 +19337,58 @@ table.insert(State.Connections, {Disconnect = function()
 end})
 end
 do
+local installKnifeDodgeLifecycle=function(C)
+    local State,dodge=C.State,C.Dodge
+    local bound,destroyed=false,false
+    local function clear() dodge.Direction,dodge.Character=nil,nil end
+    local function unbind()
+        if bound then C.Unbind(); bound=false end
+    end
+    local function bind()
+        if bound or destroyed then return end
+        C.Bind(function()
+            if destroyed or not State.Running or not State.Config.AutoKnifeDodge then clear(); return end
+            local ok,message=pcall(C.Step)
+            if not ok then
+                clear(); unbind(); State.Config.AutoKnifeDodge=false
+                dodge.LastError=tostring(message)
+                dodge.Status="Knife dodge error  ·  toggle off/on to retry"
+            end
+        end)
+        bound=true
+    end
+    function State.SetAutoKnifeDodge(enabled)
+        if destroyed then return false,"Knife dodge is unloaded" end
+        enabled=enabled==true
+        State.Config.AutoKnifeDodge=enabled==true
+        dodge.LastError=nil
+        clear()
+        if enabled then bind() else unbind() end
+        dodge.Status=enabled and "Knife dodge ready" or "Knife dodge OFF"
+        if C.Refresh then C.Refresh() end
+        return true
+    end
+    function State.StopKnifeDodge(reason)
+        -- Cancel only the current movement override. Invisibility pauses the guarded loop.
+        clear()
+        dodge.Status=reason or "Knife dodge paused"
+    end
+    function State.DestroyKnifeDodge()
+        destroyed=true; clear(); unbind()
+        dodge.Status="Knife dodge unloaded"
+    end
+    function State.GetKnifeDodgeSnapshot()
+        local tracked=0
+        for _ in pairs(dodge.Tracked) do tracked+=1 end
+        return {Enabled=State.Config.AutoKnifeDodge==true,Bound=bound,Focused=dodge.Focused,
+            Status=dodge.Status,Tracked=tracked,Decisions=dodge.Decisions,Jumps=dodge.Jumps,Sidesteps=dodge.Sidesteps}
+    end
+    C.Connect(C.FocusLost,function() dodge.Focused=false; clear(); dodge.Status="Paused: window not focused" end)
+    C.Connect(C.FocusGained,function() dodge.Focused=true end)
+    C.Connect(C.CharacterRemoving,function() clear(); dodge.Status="Waiting for your next character" end)
+    if State.Config.AutoKnifeDodge then bind() else dodge.Status="Knife dodge OFF" end
+end
+
     local dodge = {Status = "Knife dodge ready", Focused = true, Tracked = setmetatable({}, {__mode = "k"}),
         Decisions = 0, Jumps = 0, Sidesteps = 0, LastAction = nil}
     State.KnifeDodge = dodge
@@ -19442,34 +19496,29 @@ do
         if typeof(direction) ~= "Vector3" or direction.Magnitude < 0.1 or type(speed) ~= "number" or speed < 5 then return nil end
         return part.Position, direction * speed
     end
-    function State.SetAutoKnifeDodge(enabled)
-        State.Config.AutoKnifeDodge = enabled == true
-        if not enabled then dodge.Direction, dodge.Character = nil, nil end
-        dodge.Status = enabled and "Knife dodge ready" or "Knife dodge OFF"
-        if refreshButtons.AutoKnifeDodge then refreshButtons.AutoKnifeDodge() end
-    end
-    function State.StopKnifeDodge()
-        dodge.Direction, dodge.Character = nil, nil
-        RunService:UnbindFromRenderStep(bindName)
-    end
-    connect(UIS.WindowFocusReleased, function() dodge.Focused = false; dodge.Direction, dodge.Character = nil, nil end)
-    connect(UIS.WindowFocused, function() dodge.Focused = true end)
-    connect(player.CharacterRemoving, function() dodge.Direction, dodge.Character = nil, nil end)
-    RunService:BindToRenderStep(bindName, Enum.RenderPriority.Input.Value + 2, function()
-        if not State.Config.AutoKnifeDodge or not State.Running or mobileBlocked() or not dodge.Focused or GuiService.MenuIsOpen
-            or UIS:GetFocusedTextBox() or not alive(player) or State.Invis.Busy
-            or (State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy)) then
+    local function step()
+        local pause
+        if mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox() then pause="Paused: menu, chat or character action"
+        elseif not dodge.Focused then pause="Paused: window not focused"
+        elseif not alive(player) then pause="Waiting for a living round character"
+        elseif State.Invis.Busy or State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy) then
+            pause="Paused during invisibility"
+        end
+        if pause then
             dodge.Direction, dodge.Character = nil, nil
+            dodge.Status=pause
             return
         end
         local char = player.Character
         local hum, root = char and char:FindFirstChildOfClass("Humanoid"), char and char:FindFirstChild("HumanoidRootPart")
         if not hum or not root or hum.Sit or hum.PlatformStand or root.Anchored then
             dodge.Direction, dodge.Character = nil, nil
+            dodge.Status="Paused: character unavailable, seated or controlled"
             return
         end
         local now = os.clock()
         local ctx, soonest, projectileRecord = nil, nil, nil
+        if not dodge.Direction then dodge.Status="Watching for incoming thrown knives" end
         for projectile, record in pairs(dodge.Tracked) do
             if not projectile.Parent then dodge.Tracked[projectile] = nil
             elseif not record.Handled then
@@ -19504,7 +19553,12 @@ do
             if char == dodge.Character and now < dodge.Until then hum:Move(dodge.Direction, false)
             else dodge.Direction, dodge.Character = nil, nil end
         end
-    end)
+    end
+    installKnifeDodgeLifecycle({State=State,Dodge=dodge,Step=step,Connect=connect,
+        Bind=function(callback) RunService:BindToRenderStep(bindName,Enum.RenderPriority.Input.Value+2,callback) end,
+        Unbind=function() RunService:UnbindFromRenderStep(bindName) end,
+        FocusLost=UIS.WindowFocusReleased,FocusGained=UIS.WindowFocused,CharacterRemoving=player.CharacterRemoving,
+        Refresh=function() if refreshButtons.AutoKnifeDodge then refreshButtons.AutoKnifeDodge() end end})
     function State.TestKnifeDodge()
         local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
         if not root then return {OK = false, Error = "Character unavailable"} end
@@ -22100,7 +22154,7 @@ function State.Destroy()
     if State.StopAutoAttack then State.StopAutoAttack("Unloaded") end
     if State.StopFling then State.StopFling("Unloaded; position restored") end
     if State.MobileUI and State.MobileUI.Destroy then State.MobileUI.Destroy() end
-    if State.StopKnifeDodge then State.StopKnifeDodge() end
+    if State.DestroyKnifeDodge then State.DestroyKnifeDodge() elseif State.StopKnifeDodge then State.StopKnifeDodge() end
     if State.SetExperimentalInvisibility then State.SetExperimentalInvisibility(false) end
     if State.StopPose then State.StopPose(true) end
     if State.RestoreMage then State.RestoreMage(true) end
@@ -25033,7 +25087,7 @@ local installWorldTeleports=function(C)
         local worked,message=pcall(function()
             if State.StopAutoAttack then State.StopAutoAttack("Stopped for area teleport") end
             if State.StopKillAura then local yes,err=State.StopKillAura("Stopped for area teleport"); if yes==false then error(err) end end
-            if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end
+            if State.StopKnifeDodge then State.StopKnifeDodge("Paused for area teleport") end
             if State.StopFlingAll then local ok,message=State.StopFlingAll("Stopped for area teleport"); if ok==false then error(message) end end
             if State.StopFling then State.StopFling("Stopped for area teleport") end
             if State.CancelFlingReturn then State.CancelFlingReturn() end
@@ -26291,6 +26345,8 @@ local createMobileUI = function(C)
     option(hud,"Gun aim marker","AimMarker","Marks where your shot will land.")
     option(displayOptions,"Stable body colors","StableBodyESP","Box fill for hard-to-see bodies.")
     option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Jumps or sidesteps thrown knives.")
+    dodgeTab:Paragraph({Title="Default",Desc="Starts on each load. Pauses during invisibility, menus and chat; turning it off or Emergency stop lasts for this session."})
+    mobile.KnifeDodgeStatus=dodgeTab:Paragraph({Title="Auto dodge status",Desc=State.KnifeDodge.Status})
     local canTouch = type(firetouchinterest) == "function"
     if not canTouch then State.Config.AutoPickup = false end
     local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Collects a dropped gun without teleporting." or "Your executor lacks firetouchinterest.")
@@ -27244,6 +27300,10 @@ local createMobileUI = function(C)
             local r=State.MapVote
             updateDescription(mobile.MapVoteStatus,"MapVote",r.Status..("\nRespawns: %d/3 · touches: %d · observed total increase: %d"):format(r.Respawns,r.Touches,r.ObservedIncrease))
             if toggles.MapVoteRepeat and toggles.MapVoteRepeat.Value~=State.Config.MapVoteRepeat then refresh() end
+        end
+        if mobile.KnifeDodgeStatus then
+            local d=State.KnifeDodge
+            updateDescription(mobile.KnifeDodgeStatus,"KnifeDodge",d.Status..("\nJumps: %d · sidesteps: %d"):format(d.Jumps,d.Sidesteps))
         end
         if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
         if State.AntiFling and mobile.AntiFlingStatus then updateDescription(mobile.AntiFlingStatus,"AntiFling",State.AntiFling.Status) end

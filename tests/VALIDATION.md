@@ -1,5 +1,12 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.38
+
+- Luau 0.739 compiles both scripts; 83 combat, 189 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility, 60 voting and 27 dodge assertions pass (623 total).
+- Code audit found that invisibility preparation called StopKnifeDodge, which unbound its render hook permanently; SetAutoKnifeDodge(true) never rebound it. Area teleport separately called SetAutoKnifeDodge(false). The lifecycle fix preserves the guarded loop across temporary pauses, rebinds on explicit enable and reserves destruction for unload. Area teleport cancels current movement instead of changing the setting.
+- Extracted lifecycle and real area-teleport tests cover binding, temporary pauses, off/on, no duplicate hook, direct off guards, focus, character removal, detached diagnostics, Emergency stop, unload/queued callback rejection, unexpected frame-error handling/retry and preservation of explicit Off during teleport. Saved-settings checks verify previous Off values cannot disable the next default-on session. These checks do not simulate real incoming-knife geometry or establish survival.
+- The previously responsive client disconnected; the remaining client entry timed out on a targeted status probe. Live startup, incoming-throw behavior and survival for rc.38 remain unverified.
+
 ## Release candidate 1.0.0-rc.37
 
 - Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility and 60 voting assertions pass (594 total).

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.38 — 2026-10-18
+
+- Fixed invisibility preparation permanently unbinding knife dodge. Temporary pauses now cancel current movement; explicit Off unbinds, On binds again, and unload destroys the hook. Area teleports no longer silently switch dodge off.
+- Auto knife dodge starts enabled on every load, ignoring saved or previous-session Off values. Explicit Off and Emergency stop remain effective for the current session.
+- Added Auto dodge status, support counters and visible frame-error handling. Status explains input/focus/invisibility/character pauses. This does not guarantee dodging or verify live survival.
+
 ## 1.0.0-rc.37 — 2026-10-18
 
 - Fixed the live failure where an actual pad touch during voting never selected a map. Current MM2 updates VoteInfoGui visibility/map/count while legacy VoteIcons Voting/Map/Votes remain false/nil/zero. The reader now prefers current boards and uses legacy metadata only when no current board exists.

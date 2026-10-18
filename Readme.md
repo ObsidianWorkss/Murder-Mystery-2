@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.37 · Release candidate · PC + mobile**
+**v1.0.0-rc.38 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -95,6 +95,14 @@ Normal equips and holsters, rapid toggles, consumed UI input, menus, chat, focus
 
 **Weapon equip status**, next to the setting, retains the outcome and press/recovery/skip/failure counts. **Copy support report** includes these counters, native-action/input observations and the last weapon location without raw errors or player identities. If 1 fails again, use that status to distinguish a missing owned tool, inactive hotbar, consumed input or failed local equip. The reported intermittent failure has not yet been reproduced during an active weapon round.
 
+## Auto knife dodge
+
+**Innocent → Knife Dodge → Dodge incoming knives** starts enabled on every load. Old saved Off values and a previous session's Emergency stop do not disable the next load. You can turn it off for the current session; Emergency stop also switches it off.
+
+It attempts a jump over a low incoming thrown knife or a supported sidestep with a clear route. It does not counter knife stabs or guarantee survival. Menus, typing, lost focus, missing/dead characters, controlled movement and invisibility pause it. Invisibility preparation now cancels the current sidestep without permanently removing the dodge loop; the loop resumes when the character becomes available again. Map/lobby teleports also cancel the old sidestep without switching the feature off.
+
+**Auto dodge status** shows the current waiting/pause reason and jump/sidestep counts. Explicit Off removes the frame hook and On rebinds it. Unload removes it permanently for that script instance. Unexpected frame errors stop the feature with a visible retry status. Support reports include enabled/bound/focus state and tracked-knife/action counters, without raw errors. Real incoming-throw survival for rc.38 remains a live check.
+
 ## Gun pickup and invisibility
 
 Picking up, equipping and firing a gun keep invisibility active. Owning a gun also allows invisibility activation. Weapon input waits during invisibility preparation or incomplete restoration without dismantling the invisible assembly. Turning off **Knife while invisible** pauses knife input while invisible instead of revealing you. Manual **Restore character**, Emergency stop and normal character cleanup remain available. Invisibility on other clients and accepted shots while invisible still require live verification.
@@ -154,7 +162,7 @@ The layout follows the active input device. Touch-capable PCs can continue using
 - Role and dropped-gun ESP, threat warnings, and compact combat status.
 - Player exclusions shared by script-controlled targeting and player actions.
 - Players → Chat → **Reveal roles** posts the round's roles in chat, for example `🔪 Murderer: @name • 🔫 Sheriff: @name`, or `🔪 Murderer: @name • 💀 Sheriff: dead • 🦸 Hero: @name` once someone picks up the gun. It previews the message first, never names you, skips protected players, and waits 4 seconds between messages.
-- Optional gun pickup, knife dodge, tactical hints, selected-player attacks, teleports, and fling attempts.
+- Default-on knife dodge; optional gun pickup, tactical hints, selected-player attacks, teleports, and fling attempts.
 - R15 animation options, display presets, camera repair, and unload controls.
 
 Experimental actions can be rejected or corrected by the server. Use **Stop all player actions**, **Emergency stop / return**, or **Unload and restore** as appropriate. **Repair character (respawns)** resets your character.

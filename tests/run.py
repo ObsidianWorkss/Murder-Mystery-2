@@ -34,6 +34,21 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness.write_text(template, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
 
+    dodge = (root / "tests" / "dodge.luau").read_text(encoding="utf-8")
+    start = source.index("local installKnifeDodgeLifecycle=function(C)")
+    end = source.index("    local dodge = {Status", start)
+    dodge = dodge.replace("-- INSERT_DODGE", source[start:end])
+    start = source.index("local installEmergencyStop = function(C)")
+    end = source.index("installEmergencyStop({", start)
+    dodge = dodge.replace("-- INSERT_EMERGENCY", source[start:end])
+    start = source.index("local installWorldTeleports=function(C)")
+    end = source.index("installWorldTeleports({", start)
+    dodge = dodge.replace("-- INSERT_TELEPORT", source[start:end])
+    if "-- INSERT_" in dodge:
+        raise RuntimeError("Unexpanded dodge-test source marker")
+    harness.write_text(dodge, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
     voting = (root / "tests" / "voting.luau").read_text(encoding="utf-8")
     start = source.index("local installMapVoteRepeat=function(C)")
     end = source.index("installMapVoteRepeat({", start)
