@@ -17843,7 +17843,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.34"
+State.Version = "1.0.0-rc.35"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20687,7 +20687,12 @@ local installSeatVisibility=function(C)
     end
     function State.SetExperimentalInvisibility(enabled) return State.SetInvisibility(enabled) end
     function State.ExitUndergroundForAttack(kind)
-        if kind=="Knife" and mode.Active and not mode.Busy and State.Config.InvisibleKnife then return true end
+        -- Weapon input never reveals the character. Wait for a transition to finish instead.
+        if kind=="Gun" or kind=="Knife" then
+            if mode.Busy then return false end
+            if kind=="Knife" and mode.Active and not State.Config.InvisibleKnife then return false end
+            return true
+        end
         if mode.Record then return State.SetInvisibility(false) end
         return true
     end
@@ -26290,7 +26295,7 @@ local createMobileUI = function(C)
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
-    option(movement, "Invisibility", "Invisibility", "Picking up or equipping a gun keeps you invisible. Shooting restores you first.")
+    option(movement, "Invisibility", "Invisibility", "Picking up, equipping and firing a gun keep invisibility active.")
     mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Off"})
     movement:Button({Title="Restore character",Desc="Turns invisibility off, no reset.",Callback=function()
         suppressInput()

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-rc.35 — 2026-10-18
+
+- Gun firing no longer automatically restores the invisible character. Gun and knife inputs wait during invisibility transitions or incomplete restoration, retaining the assembly. Disabling Knife while invisible pauses knife input instead of restoring visibility.
+- Manual restoration, emergency cleanup and explicit non-weapon movement cleanup remain. This does not establish server acceptance of shots or observer invisibility.
+
 ## 1.0.0-rc.34 — 2026-10-18
 
 - Removed automatic invisibility restoration on gun pickup/equip and the gun-ownership activation restriction. Guns no longer cancel preparation or active invisibility. Removed its setting/key option; obsolete saved values are ignored.

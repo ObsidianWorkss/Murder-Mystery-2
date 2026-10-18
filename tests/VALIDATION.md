@@ -1,5 +1,11 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.35
+
+- Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility and 38 voting assertions pass (572 total).
+- The extracted controller allows active invisible gun input without removing its record, seat or weld. Both weapon types wait during Parking, Attaching and RestoreFailed; disabling invisible knife use refuses input without revealing. Visible gun input, manual restore/error recovery and explicit non-weapon cleanup remain covered.
+- Sent rc.35 to the connected client, but the subsequent value probe timed out. Initialization is unconfirmed. Actual server acceptance of shots while invisible and other-client visibility remain unverified.
+
 ## Release candidate 1.0.0-rc.34
 
 - Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 23 visibility and 38 voting assertions pass (566 total).

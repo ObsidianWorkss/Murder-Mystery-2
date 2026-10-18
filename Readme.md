@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.34 · Release candidate · PC + mobile**
+**v1.0.0-rc.35 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -97,7 +97,7 @@ Normal equips and holsters, rapid toggles, consumed UI input, menus, chat, focus
 
 ## Gun pickup and invisibility
 
-Picking up or equipping a gun keeps invisibility active, including during preparation. Owning a gun also allows invisibility activation. The automatic pickup reveal added in rc.33 has been removed, and old saved settings cannot restore it. Shooting still uses the existing character restoration; manual **Restore character**, Emergency stop and normal character cleanup also remain available.
+Picking up, equipping and firing a gun keep invisibility active. Owning a gun also allows invisibility activation. Weapon input waits during invisibility preparation or incomplete restoration without dismantling the invisible assembly. Turning off **Knife while invisible** pauses knife input while invisible instead of revealing you. Manual **Restore character**, Emergency stop and normal character cleanup remain available. Invisibility on other clients and accepted shots while invisible still require live verification.
 
 ## Experimental map voting
 

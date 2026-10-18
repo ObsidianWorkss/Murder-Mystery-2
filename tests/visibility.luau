@@ -72,9 +72,21 @@ do
         "failed manual restoration retains the assembly record and reports incomplete restoration")
     f.SeatError=false; f.State.SetInvisibility(false)
     check(not f.State.Invis.Record and not f.State.Invis.Busy,"failed manual restoration can be retried")
-    f=fixture(); f.StartActive("Active"); f.Gun="Character"; f.State.ExitUndergroundForAttack("Gun")
-    check(not f.State.Invis.Record,"the existing shooting restoration remains separate from gun pickup")
+    f=fixture(); f.StartActive("Active"); f.Gun="Character"
+    check(f.State.ExitUndergroundForAttack("Gun") and f.State.Invis.Record~=nil and f.State.Invis.Active
+        and f.Seat.Parent~=nil and f.Weld.Parent~=nil,"gun firing is allowed without revealing or dismantling invisibility")
     f=fixture(); f.StartActive("Active"); f.State.ExitUndergroundForAttack("Knife")
     check(f.State.Invis.Active,"knife use retains its existing invisible behavior")
+    f.State.Config.InvisibleKnife=false
+    check(not f.State.ExitUndergroundForAttack("Knife") and f.State.Invis.Active,"disabled invisible knife use pauses rather than revealing")
+    for _,phase in ipairs({"Parking","Attaching","RestoreFailed"}) do
+        f=fixture(); local record=f.StartActive(phase)
+        check(not f.State.ExitUndergroundForAttack("Gun") and not f.State.ExitUndergroundForAttack("Knife")
+            and f.State.Invis.Record==record and f.Seat.Parent~=nil,"weapon input waits during "..phase.." without restoring")
+    end
+    f=fixture()
+    check(f.State.ExitUndergroundForAttack("Gun"),"normal visible gun input is still allowed")
+    f=fixture(); f.StartActive("Active"); f.State.ExitUndergroundForAttack()
+    check(not f.State.Invis.Record,"explicit non-weapon movement cleanup still restores its owned assembly")
 end
 print(passed.." visibility assertions passed")
