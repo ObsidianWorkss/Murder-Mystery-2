@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.38 · Release candidate · PC + mobile**
+**v1.0.0-rc.39 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -99,9 +99,13 @@ Normal equips and holsters, rapid toggles, consumed UI input, menus, chat, focus
 
 **Innocent → Knife Dodge → Dodge incoming knives** starts enabled on every load. Old saved Off values and a previous session's Emergency stop do not disable the next load. You can turn it off for the current session; Emergency stop also switches it off.
 
-It attempts a jump over a low incoming thrown knife or a supported sidestep with a clear route. It does not counter knife stabs or guarantee survival. Menus, typing, lost focus, missing/dead characters, controlled movement and invisibility pause it. Invisibility preparation now cancels the current sidestep without permanently removing the dodge loop; the loop resumes when the character becomes available again. Map/lobby teleports also cancel the old sidestep without switching the feature off.
+**Dodge mode → Side teleport** is the new default. It tries 4, 6, then 8 studs perpendicular to an incoming knife's path, preferring the shortest supported route. It checks both sides, swept body clearance, endpoint space and floor support, then checks the route again immediately before moving. Other tracked knife paths, vertical falls and your continued walking input can rule out a destination. Teleports have a 300 ms request cooldown; blocked or unavailable teleports fall back to the existing jump/sidestep attempt.
 
-**Auto dodge status** shows the current waiting/pause reason and jump/sidestep counts. Explicit Off removes the frame hook and On rebinds it. Unload removes it permanently for that script instance. Unexpected frame errors stop the feature with a visible retry status. Support reports include enabled/bound/focus state and tracked-knife/action counters, without raw errors. Real incoming-throw survival for rc.38 remains a live check.
+Select **Jump / sidestep** to use ordinary movement only. Your mode choice is saved. Tracked knives can use direction attributes, physics velocity or successive position samples; faster knives are checked from farther away. Side teleport considers threats up to 0.55 seconds ahead, while ordinary movement keeps its 0.38-second horizon. These are prediction windows, not measured reaction times or survival rates.
+
+It does not counter knife stabs or guarantee survival. Menus, typing, lost focus, missing/dead characters, controlled movement and invisibility pause it. Invisibility preparation cancels the current sidestep without permanently removing the dodge loop; it resumes when the character becomes available again. Map/lobby teleports also cancel the old sidestep without switching the feature off. Dodge never turns invisibility off to make a teleport.
+
+**Auto dodge status** shows the waiting/pause reason and teleport/jump/sidestep counts. Teleport counts mean client movement requests, not confirmed server positions or survived attacks; the server may correct the movement. Explicit Off removes the frame hook and On rebinds it. Unload removes it permanently for that script instance. Unexpected frame errors stop the feature with a visible retry status. Support reports include mode, enabled/bound/focus state, tracked motion and action counters, without raw errors. Real incoming-throw behavior for rc.39 remains a live check; no “100×” improvement is claimed.
 
 ## Gun pickup and invisibility
 

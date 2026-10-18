@@ -1,16 +1,17 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.38**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.39**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting and dodge lifecycle regression suites pass locally (623 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle and side-teleport regression suites pass locally (674 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
 
+- [ ] Side teleport: real incoming throws, correct perpendicular displacement, walls/occupied endpoints/ledges/slopes, multiple knives, walking input, mode switches, cooldown, server correction and survival. Run the expanded native TestKnifeDodge preflight before treating local geometry checks as verified.
 - [ ] Auto dodge starts on after saved Off/Emergency stop; real incoming thrown knife jump/sidestep, invisibility pause/resume, area teleport continuity, explicit off/on, focus, respawn and unload. Distinguish a chosen dodge action from actual survival.
 - [ ] Acquire/equip/fire a real gun while invisible; verify invisibility stays active, accepted shots and observer visibility separately. Weapon input during preparation must wait without revealing. Verify manual restoration and error recovery separately.
 - [ ] Opt into map voting during an active lobby vote: real Detector1–3 selection, character reset, new living character, physical return to that same detector and another accepted vote; off/End/unload and voting end stop it. Confirm extra vote attribution separately from other players changing the total; duplicate votes remain unverified.

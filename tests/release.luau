@@ -566,7 +566,7 @@ do
     end
     local function defaults()
         return {Aim=true,Fly=false,WalkSpeed=24,Ping=0.04,MenuTheme="Midnight",Keybinds=false,ExcludedPlayers={},AnimationPack="Mage",
-            KillAllMode="Burst",TargetPriority="Nearest",PerformancePreset="Balanced",MapVoteRepeat=false,AutoKnifeDodge=true}
+            KillAllMode="Burst",TargetPriority="Nearest",PerformancePreset="Balanced",MapVoteRepeat=false,AutoKnifeDodge=true,KnifeDodgeMode="Side teleport"}
     end
     local function start(overrides)
         local State={Config=defaults()}
@@ -586,6 +586,7 @@ do
     first.Config.KillAllMode,first.Config.TargetPriority,first.Config.PerformancePreset="Aimed throws","Sheriff first","Low effects"
     first.Config.MapVoteRepeat=true
     first.Config.AutoKnifeDodge=false
+    first.Config.KnifeDodgeMode="Jump / sidestep"
     first.Config.ExcludedPlayers["123"]={UserId=123,Name="friend",DisplayName="friend"}
     first.SaveSettings()
     check(writes==2,"a change is written once")
@@ -598,10 +599,12 @@ do
     check(second.Config.Ping==0.04,"ping is measured each session, never loaded")
     check(second.Config.MapVoteRepeat==false,"map vote respawns never resume from saved settings")
     check(second.Config.AutoKnifeDodge,"auto dodge starts enabled instead of persisting a session off setting")
+    check(second.Config.KnifeDodgeMode=="Jump / sidestep","selected dodge mode persists separately from session on/off")
     files[path]=Http:JSONEncode({Version=1,Config={MapVoteRepeat=true,AutoRevealGun=true,AutoKnifeDodge=false}})
     local session=start()
     check(not session.Config.MapVoteRepeat and session.Config.AutoRevealGun==nil,"older files cannot arm map vote respawns or restore auto-reveal")
     check(session.Config.AutoKnifeDodge,"old saved false cannot disable the new default-on dodge session")
+    check(session.Config.KnifeDodgeMode=="Side teleport","older settings without a dodge mode use the new side teleport default")
     check(second.Config.KillAllMode=="Aimed throws" and second.Config.TargetPriority=="Sheriff first" and second.Config.PerformancePreset=="Low effects",
         "mode, priority and performance preset survive saved-settings reload")
     check(second.DefaultConfig.WalkSpeed==24 and second.DefaultConfig.ExcludedPlayers["123"]==nil,"defaults are kept apart from saved values")

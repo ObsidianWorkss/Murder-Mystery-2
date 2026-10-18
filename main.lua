@@ -17709,7 +17709,7 @@ local State = {
         AutoPickup = false, MapVoteRepeat = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
-        KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true,
+        KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true, KnifeDodgeMode = "Side teleport",
         Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
@@ -17844,7 +17844,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.38"
+State.Version = "1.0.0-rc.39"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19337,6 +19337,122 @@ table.insert(State.Connections, {Disconnect = function()
 end})
 end
 do
+local function finiteDodgeVector(v)
+    return typeof(v)=="Vector3" and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+        and math.abs(v.X)<1e7 and math.abs(v.Y)<1e7 and math.abs(v.Z)<1e7
+end
+local function resolveKnifeVelocity(record,position,now,direction,speed,physical)
+    if not finiteDodgeVector(position) then return nil end
+    local velocity,source
+    if finiteDodgeVector(direction) and direction.Magnitude>.01 and type(speed)=="number"
+        and speed==speed and speed>=5 and speed<=1500 then
+        velocity,source=direction.Unit*speed,"Direction"
+    elseif finiteDodgeVector(physical) and physical.Magnitude>=5 and physical.Magnitude<=1500 then
+        velocity,source=physical,"Physics"
+    end
+    local elapsed=record.SampleAt and now-record.SampleAt
+    if not velocity and elapsed and elapsed>=1/300 and elapsed<=.25 then
+        local sampled=(position-record.SamplePosition)/elapsed
+        if finiteDodgeVector(sampled) and sampled.Magnitude>=5 and sampled.Magnitude<=1500 then velocity,source=sampled,"Sampled"
+        else record.Velocity,record.VelocityAt=nil,nil end
+    end
+    if not record.SampleAt or elapsed and elapsed>=1/300 then record.SamplePosition,record.SampleAt=position,now end
+    if velocity then record.Velocity,record.VelocityAt=velocity,now
+    elseif record.VelocityAt and now>=record.VelocityAt and now-record.VelocityAt<=.15 then velocity,source=record.Velocity,"Recent sample" end
+    return velocity,source
+end
+local function knifeTeleportClearance(ctx,point,incoming,motions,floorY)
+    if not finiteDodgeVector(point) then return nil end
+    local clearance=100
+    local function check(motion)
+        if not finiteDodgeVector(motion.Position) or not finiteDodgeVector(motion.Velocity) then return false end
+        local velocity=motion.Velocity
+        local control=finiteDodgeVector(ctx.ControlVelocity) and ctx.ControlVelocity or Vector3.zero
+        local flat=Vector3.new(velocity.X-control.X,0,velocity.Z-control.Z)
+        local offset=motion.Position-point
+        local flatOffset=Vector3.new(offset.X,0,offset.Z)
+        local speed2=flat:Dot(flat)
+        local horizon=ctx.Horizon or .55
+        local dot=flatOffset:Dot(flat)
+        local time=speed2>.0001 and math.clamp(-dot/speed2,0,horizon) or 0
+        local distance=(flatOffset+flat*time).Magnitude
+        clearance=math.min(clearance,distance)
+        local radius=ctx.Radius+.8
+        if distance>radius then return true end
+        local first,last=0,horizon
+        if speed2>.0001 then
+            local disc=dot*dot-speed2*(flatOffset:Dot(flatOffset)-radius*radius)
+            if disc<0 then return true end
+            first=math.max(0,(-dot-math.sqrt(disc))/speed2)
+            last=math.min(horizon,(-dot+math.sqrt(disc))/speed2)
+            if first>last then return true end
+        end
+        local shift=point.Y-ctx.Position.Y
+        local function rise(t)
+            local value=not ctx.Grounded and (ctx.Velocity.Y*t-.5*ctx.Gravity*t*t) or 0
+            if not ctx.Grounded and floorY then value=math.max(value,floorY-(ctx.Low+shift)) end
+            return value
+        end
+        local lowRise,highRise=math.min(rise(first),rise(last)),math.max(rise(first),rise(last))
+        if not ctx.Grounded and ctx.Velocity.Y>0 then
+            local peak=ctx.Velocity.Y/ctx.Gravity
+            if peak>first and peak<last then highRise=math.max(highRise,rise(peak)) end
+        end
+        local firstY,lastY=motion.Position.Y+velocity.Y*first,motion.Position.Y+velocity.Y*last
+        return math.max(firstY,lastY)<ctx.Low+shift+lowRise-.7
+            or math.min(firstY,lastY)>ctx.High+shift+highRise+.7
+    end
+    if not check(incoming) then return nil end
+    for _,motion in ipairs(motions or {}) do if not check(motion) then return nil end end
+    return clearance
+end
+local function planKnifeTeleport(C,ctx,incoming,motions)
+    if not finiteDodgeVector(ctx.Position) or not finiteDodgeVector(incoming.Velocity)
+        or type(incoming.Time)~="number" or incoming.Time~=incoming.Time or incoming.Time<=.01
+        or incoming.Time>(ctx.Horizon or .55) then return nil end
+    local heading=Vector3.new(incoming.Velocity.X,0,incoming.Velocity.Z)
+    if heading.Magnitude<.1 then return nil end
+    local side=Vector3.new(-heading.Z,0,heading.X).Unit
+    for _,distance in ipairs({4,6,8}) do
+        local best
+        for _,direction in ipairs({side,-side}) do
+            local point,floorY=C.Landing(ctx,ctx.Position+direction*distance)
+            if point and finiteDodgeVector(point) and (point-ctx.Position).Magnitude<=8.5 and C.Clear(ctx,point) then
+                local clearance=knifeTeleportClearance(ctx,point,incoming,motions,floorY)
+                if clearance and (not best or clearance>best.Clearance) then
+                    best={Kind="Teleport",Position=point,Distance=(point-ctx.Position).Magnitude,
+                        Clearance=clearance,Time=incoming.Time,CreatedAt=ctx.Now,Projectile=incoming.Projectile}
+                end
+            end
+        end
+        if best then return best end -- Prefer the shortest supported displacement that clears all known paths.
+    end
+end
+local function commitKnifeTeleport(C,ctx,action)
+    local State,dodge=C.State,C.Dodge
+    local now=C.Clock()
+    local function allowed()
+        return State.Running and State.Config.AutoKnifeDodge and State.Config.KnifeDodgeMode=="Side teleport" and C.Valid(ctx)
+    end
+    if not action or action.Kind~="Teleport" or not finiteDodgeVector(action.Position) or not allowed()
+        or dodge.TeleportBusy or now<(dodge.NextTeleport or 0) then return false end
+    local age=action.CreatedAt and now-action.CreatedAt
+    if not age or age<0 or age>.08 or age>action.Time then return false end
+    if not C.Safe(ctx,action) or not allowed() then return false end
+    dodge.TeleportBusy=true
+    dodge.NextTeleport=now+.3
+    local ok,message=pcall(C.Move,ctx,action.Position)
+    dodge.TeleportBusy=false
+    if not ok then
+        dodge.FailedTeleports=(dodge.FailedTeleports or 0)+1
+        dodge.Status="Side teleport failed  ·  waiting for another safe action"
+        dodge.LastError=tostring(message)
+        return false,"Move failed"
+    end
+    dodge.Teleports=(dodge.Teleports or 0)+1
+    return true
+end
+
 local installKnifeDodgeLifecycle=function(C)
     local State,dodge=C.State,C.Dodge
     local bound,destroyed=false,false
@@ -19368,6 +19484,13 @@ local installKnifeDodgeLifecycle=function(C)
         if C.Refresh then C.Refresh() end
         return true
     end
+    function State.SetKnifeDodgeMode(mode)
+        if mode~="Side teleport" and mode~="Jump / sidestep" then return false,"Choose Side teleport or Jump / sidestep" end
+        if destroyed then return false,"Knife dodge is unloaded" end
+        State.Config.KnifeDodgeMode=mode; clear()
+        dodge.Status=State.Config.AutoKnifeDodge and "Knife dodge ready" or "Knife dodge OFF"
+        return true
+    end
     function State.StopKnifeDodge(reason)
         -- Cancel only the current movement override. Invisibility pauses the guarded loop.
         clear()
@@ -19381,16 +19504,19 @@ local installKnifeDodgeLifecycle=function(C)
         local tracked=0
         for _ in pairs(dodge.Tracked) do tracked+=1 end
         return {Enabled=State.Config.AutoKnifeDodge==true,Bound=bound,Focused=dodge.Focused,
-            Status=dodge.Status,Tracked=tracked,Decisions=dodge.Decisions,Jumps=dodge.Jumps,Sidesteps=dodge.Sidesteps}
+            Status=dodge.Status,Tracked=tracked,Decisions=dodge.Decisions,Jumps=dodge.Jumps,Sidesteps=dodge.Sidesteps,
+            Mode=State.Config.KnifeDodgeMode,Teleports=dodge.Teleports or 0,FailedTeleports=dodge.FailedTeleports or 0,
+            ValidMotions=dodge.ValidMotions or 0}
     end
     C.Connect(C.FocusLost,function() dodge.Focused=false; clear(); dodge.Status="Paused: window not focused" end)
     C.Connect(C.FocusGained,function() dodge.Focused=true end)
     C.Connect(C.CharacterRemoving,function() clear(); dodge.Status="Waiting for your next character" end)
+    if State.Config.KnifeDodgeMode~="Jump / sidestep" then State.Config.KnifeDodgeMode="Side teleport" end
     if State.Config.AutoKnifeDodge then bind() else dodge.Status="Knife dodge OFF" end
 end
 
     local dodge = {Status = "Knife dodge ready", Focused = true, Tracked = setmetatable({}, {__mode = "k"}),
-        Decisions = 0, Jumps = 0, Sidesteps = 0, LastAction = nil}
+        Decisions = 0, Jumps = 0, Sidesteps = 0, Teleports=0, LastAction = nil}
     State.KnifeDodge = dodge
     local bindName = "MM2AssistKnifeDodge_" .. game:GetService("HttpService"):GenerateGUID(false)
     local function track(projectile) dodge.Tracked[projectile] = {} end
@@ -19416,12 +19542,17 @@ end
         local params = RaycastParams.new()
         params.FilterType, params.FilterDescendantsInstances = Enum.RaycastFilterType.Exclude, {char}
         params.RespectCanCollide, params.IgnoreWater, params.CollisionGroup = true, true, root.CollisionGroup
+        local overlap=OverlapParams.new()
+        overlap.FilterType,overlap.FilterDescendantsInstances=Enum.RaycastFilterType.Exclude,{char}
+        overlap.RespectCanCollide,overlap.CollisionGroup,overlap.MaxParts=true,root.CollisionGroup,32
         local gravity = math.max(workspace.Gravity, 1)
         local jump = hum.UseJumpPower and hum.JumpPower or math.sqrt(2 * gravity * hum.JumpHeight)
         return {Character = char, Root = root, Position = root.Position, Velocity = root.AssemblyLinearVelocity,
-            Low = low, High = high, Radius = radius, Params = params, Gravity = gravity, JumpVelocity = jump,
+            ControlVelocity=Vector3.new(hum.MoveDirection.X,0,hum.MoveDirection.Z)*hum.WalkSpeed,
+            Low = low, High = high, Radius = radius, Params = params, Overlap=overlap, Gravity = gravity, JumpVelocity = jump,
             WalkSpeed = hum.WalkSpeed, Grounded = hum.FloorMaterial ~= Enum.Material.Air,
-            JumpEnabled = hum:GetStateEnabled(Enum.HumanoidStateType.Jumping), Reaction = math.clamp(State.Config.Ping + 0.02, 0.02, 0.12)}
+            JumpEnabled = hum:GetStateEnabled(Enum.HumanoidStateType.Jumping), Reaction = math.clamp(State.Config.Ping + 0.02, 0.02, 0.12),
+            Horizon=State.Config.KnifeDodgeMode=="Side teleport" and .55 or .38,Now=os.clock()}
     end
     local function threat(ctx, position, velocity)
         local relative = velocity - ctx.Velocity
@@ -19429,7 +19560,7 @@ end
         local flatV, flatOffset = Vector3.new(relative.X, 0, relative.Z), Vector3.new(offset.X, 0, offset.Z)
         if flatV.Magnitude < 5 then return nil end
         local arrival = -flatOffset:Dot(flatV) / flatV:Dot(flatV)
-        if arrival <= 0 or arrival > 0.38 then return nil end
+        if arrival <= 0 or arrival > (ctx.Horizon or .38) then return nil end
         local missDistance = (flatOffset + flatV * arrival).Magnitude
         if missDistance > ctx.Radius + 0.45 then return nil end
         local heightShift = ctx.Velocity.Y * arrival
@@ -19483,7 +19614,7 @@ end
         end
         return best
     end
-    local function projectileMotion(projectile)
+    local function projectileMotion(projectile,record,now)
         local link = projectile:FindFirstChild("HandleLink")
         local handle = link and link:IsA("ObjectValue") and link.Value
         if handle and ((player.Character and handle:IsDescendantOf(player.Character))
@@ -19493,10 +19624,11 @@ end
         if not part or not part:IsA("BasePart") then return nil end
         local direction = projectile:GetAttribute("Direction") or part:GetAttribute("Direction")
         local speed = projectile:GetAttribute("ThrowSpeed") or part:GetAttribute("ThrowSpeed") or State.ObservedKnifeSpeed or 96
-        if typeof(direction) ~= "Vector3" or direction.Magnitude < 0.1 or type(speed) ~= "number" or speed < 5 then return nil end
-        return part.Position, direction * speed
+        local velocity,source=resolveKnifeVelocity(record or {},part.Position,now or os.clock(),direction,speed,part.AssemblyLinearVelocity)
+        if not velocity then return nil end
+        return part.Position,velocity,source
     end
-    local function step()
+    local function pauseReason()
         local pause
         if mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox() then pause="Paused: menu, chat or character action"
         elseif not dodge.Focused then pause="Paused: window not focused"
@@ -19504,6 +19636,63 @@ end
         elseif State.Invis.Busy or State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy) then
             pause="Paused during invisibility"
         end
+        return pause
+    end
+    local teleportChecks={}
+    function teleportChecks.Landing(ctx,point)
+        local floor=workspace:Raycast(point+Vector3.new(0,2,0),Vector3.new(0,-18,0),ctx.Params)
+        local maxDrop=ctx.Grounded and 2.5 or 6
+        if not floor or floor.Normal.Y<.65 or floor.Position.Y<ctx.Low-maxDrop or floor.Position.Y>ctx.Low+1.5
+            or floor.Position.Y<=workspace.FallenPartsDestroyHeight+32 then return nil end
+        local vertical=ctx.Grounded and floor.Position.Y-ctx.Low+.08 or 0
+        return point+Vector3.new(0,vertical,0),floor.Position.Y
+    end
+    function teleportChecks.Clear(ctx,point)
+        local lift=Vector3.new(0,(ctx.Low+ctx.High)*.5-ctx.Position.Y+.05,0)
+        local size=Vector3.new(ctx.Radius*2+.15,math.max(1,ctx.High-ctx.Low-.15),ctx.Radius*2+.15)
+        return not workspace:Blockcast(CFrame.new(ctx.Position+lift),size,point-ctx.Position,ctx.Params)
+            and #workspace:GetPartBoundsInBox(CFrame.new(point+lift),size,ctx.Overlap)==0
+    end
+    local teleportCommit={State=State,Dodge=dodge,Clock=os.clock}
+    function teleportCommit.Valid(ctx)
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        return not pauseReason() and char==ctx.Character and ctx.Root.Parent==char and hum and hum.Health>0
+            and not hum.Sit and not hum.PlatformStand and not ctx.Root.Anchored
+            and finiteDodgeVector(ctx.Root.Position) and (ctx.Root.Position-ctx.Position).Magnitude<=1.5
+    end
+    function teleportCommit.Safe(ctx,action)
+        local base=Vector3.new(action.Position.X,ctx.Position.Y,action.Position.Z)
+        local supported,floorY=teleportChecks.Landing(ctx,base)
+        if not supported or (supported-action.Position).Magnitude>.15 or not teleportChecks.Clear(ctx,action.Position) then return false end
+        local primary=action.Projectile
+        local record=primary and dodge.Tracked[primary]
+        if not record or not primary.Parent then return false end
+        local primaryPosition,primaryVelocity=projectileMotion(primary,record,os.clock())
+        if not primaryPosition or not threat(ctx,primaryPosition,primaryVelocity) then return false end
+        local motions={}
+        for projectile,record in pairs(dodge.Tracked) do
+            if projectile.Parent then
+                local position,velocity=projectileMotion(projectile,record,os.clock())
+                if position then table.insert(motions,{Position=position,Velocity=velocity}) end
+            end
+        end
+        for _,motion in ipairs(motions) do
+            if not knifeTeleportClearance(ctx,action.Position,motion,{},floorY) then return false end
+        end
+        return true
+    end
+    function teleportCommit.Move(ctx,point)
+        local root,char=ctx.Root,ctx.Character
+        local offset=root.CFrame:ToObjectSpace(char:GetPivot())
+        local target=CFrame.new(point)*root.CFrame.Rotation*offset
+        local vertical=root.AssemblyLinearVelocity.Y
+        char:PivotTo(target)
+        root.AssemblyLinearVelocity=Vector3.new(0,vertical,0)
+        root.AssemblyAngularVelocity=Vector3.zero
+    end
+    local function step()
+        local pause=pauseReason()
         if pause then
             dodge.Direction, dodge.Character = nil, nil
             dodge.Status=pause
@@ -19518,26 +19707,51 @@ end
         end
         local now = os.clock()
         local ctx, soonest, projectileRecord = nil, nil, nil
+        local motions={}
+        dodge.ValidMotions=0
         if not dodge.Direction then dodge.Status="Watching for incoming thrown knives" end
         for projectile, record in pairs(dodge.Tracked) do
             if not projectile.Parent then dodge.Tracked[projectile] = nil
-            elseif not record.Handled then
-                local position, velocity = projectileMotion(projectile)
-                if position and (position - root.Position).Magnitude < 60 then
+            else
+                local position, velocity = projectileMotion(projectile,record,now)
+                if position and (position - root.Position).Magnitude < math.clamp(velocity.Magnitude*.6+8,60,600) then
+                    dodge.ValidMotions+=1
+                    table.insert(motions,{Position=position,Velocity=velocity})
                     ctx = ctx or context(char, root, hum)
-                    local incoming = threat(ctx, position, velocity)
-                    if incoming and (not soonest or incoming.Time < soonest.Time) then soonest, projectileRecord = incoming, record end
+                    local retry=State.Config.KnifeDodgeMode=="Side teleport" and (record.Attempts or 0)<2 and now-(record.LastDodgeAt or -math.huge)>=.35
+                    if not record.Handled or retry then
+                        local incoming = threat(ctx, position, velocity)
+                        if incoming then incoming.Projectile=projectile end
+                        if incoming and (not soonest or incoming.Time < soonest.Time) then soonest, projectileRecord = incoming, record end
+                    end
                 end
             end
         end
         if soonest then
-            local action = choose(ctx, soonest)
+            local action,teleported
+            if State.Config.KnifeDodgeMode=="Side teleport" and now>=(dodge.NextTeleport or 0) and (projectileRecord.TeleportFailures or 0)<2 then
+                action=planKnifeTeleport(teleportChecks,ctx,soonest,motions)
+                if action then
+                    local failure
+                    teleported,failure=commitKnifeTeleport(teleportCommit,ctx,action)
+                    if failure=="Move failed" then projectileRecord.TeleportFailures=(projectileRecord.TeleportFailures or 0)+1 end
+                end
+            end
+            if not teleported then action=choose(ctx,soonest) end
+            if player.Character~=char or hum.Health<=0 or not State.Running or not State.Config.AutoKnifeDodge or pauseReason() then
+                dodge.Direction,dodge.Character=nil,nil; return
+            end
             if action then
                 projectileRecord.Handled = true
+                projectileRecord.Attempts=(projectileRecord.Attempts or 0)+1
+                projectileRecord.LastDodgeAt=now
                 dodge.Decisions += 1
                 dodge.LastAction = {Kind = action.Kind, TimeToImpact = soonest.Time, KnifeHeight = soonest.Height,
-                    Clearance = action.Clearance, Late = action.Late, At = now}
-                if action.Kind == "Jump" then
+                    Clearance = action.Clearance, Late = action.Late, At = now,Distance=action.Distance}
+                if teleported then
+                    dodge.Direction,dodge.Character=nil,nil
+                    dodge.Status=("Side teleport sent  ·  %.1f studs"):format(action.Distance)
+                elseif action.Kind == "Jump" then
                     hum.Jump = true
                     hum:ChangeState(Enum.HumanoidStateType.Jumping)
                     dodge.Jumps += 1
@@ -19573,9 +19787,12 @@ end
             char.Parent = folder
             local params = RaycastParams.new()
             params.FilterType, params.FilterDescendantsInstances, params.RespectCanCollide = Enum.RaycastFilterType.Exclude, {char}, true
+            local overlap=OverlapParams.new()
+            overlap.FilterType,overlap.FilterDescendantsInstances,overlap.RespectCanCollide=Enum.RaycastFilterType.Exclude,{char},true
             local ctx = {Character = char, Position = base + Vector3.new(0, 4, 0), Velocity = Vector3.zero,
                 Low = base.Y + 1.05, High = base.Y + 6.5, Radius = 1.4, Params = params, Gravity = 196.2,
-                JumpVelocity = 50, WalkSpeed = 16, Grounded = true, JumpEnabled = true, Reaction = 0.04}
+                JumpVelocity = 50, WalkSpeed = 16, Grounded = true, JumpEnabled = true, Reaction = 0.04,
+                Overlap=overlap,Now=os.clock(),Horizon=.55}
             local function incoming(height, x, velocity)
                 return threat(ctx, Vector3.new(ctx.Position.X + (x or 0), height, ctx.Position.Z - 24), velocity or Vector3.new(0, 0, 96))
             end
@@ -19584,6 +19801,8 @@ end
             result.LowKnifeJump = low and choose(ctx, low).Kind == "Jump"
             local high = incoming(ctx.High - 1)
             result.HighKnifeSide = high and choose(ctx, high).Kind == "Side"
+            local teleport=high and planKnifeTeleport(teleportChecks,ctx,high,{})
+            result.SideTeleportPlanned=teleport and teleport.Kind=="Teleport" and teleport.Distance<=8.5 or false
             result.PassingKnifeIgnored = incoming(ctx.Low + 1, 8) == nil
             result.RecedingKnifeIgnored = incoming(ctx.Low + 1, 0, Vector3.new(0, 0, -96)) == nil
             local ceiling = Instance.new("Part")
@@ -19614,10 +19833,11 @@ end
             ctx.Grounded, ctx.Velocity = true, Vector3.zero
             floor:Destroy()
             result.LedgeRejected = choose(ctx, high) == nil
+            result.TeleportLedgeRejected=planKnifeTeleport(teleportChecks,ctx,high,{})==nil
             result.OK = result.LowKnifeDetected and result.LowKnifeJump and result.HighKnifeSide and result.PassingKnifeIgnored
                 and result.RecedingKnifeIgnored and result.LowCeilingUsesSide and result.BlockedSideRejected
                 and result.KnifeBehindWallIgnored and result.LedgeRejected and result.OwnKnifeIgnored
-                and result.LandingKnifeDetected and result.AirborneSidestep
+                and result.LandingKnifeDetected and result.AirborneSidestep and result.SideTeleportPlanned and result.TeleportLedgeRejected
         end)
         folder:Destroy()
         if not ok then result.OK, result.Error = false, tostring(message) end
@@ -21256,7 +21476,7 @@ button("Role ESP", "ESP", 228)
 button("Dropped gun ESP", "GunESP", 265)
 button("Nearby murderer warning", "ThreatWarning", 302)
 button("Auto gun pickup (no TP)", "AutoPickup", 339)
-button("Auto knife dodge: jump / sidestep", "AutoKnifeDodge", 376)
+button("Auto knife dodge", "AutoKnifeDodge", 376)
 button("Invisibility (F8)", "Invisibility", 413)
 local repair = Instance.new("TextButton")
 repair.Position = UDim2.fromOffset(14, 450)
@@ -26344,7 +26564,13 @@ local createMobileUI = function(C)
     option(displayOptions,"Clean role visuals","CleanVisuals","Names only on ESP labels.")
     option(hud,"Gun aim marker","AimMarker","Marks where your shot will land.")
     option(displayOptions,"Stable body colors","StableBodyESP","Box fill for hard-to-see bodies.")
-    option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Jumps or sidesteps thrown knives.")
+    option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Moves aside from incoming thrown knives.")
+    mobile.FeaturePickers.KnifeDodgeMode={Value=State.Config.KnifeDodgeMode,Widget=dodgeTab:Dropdown({Title="Dodge mode",
+        Desc="Side teleport tries a supported 4–8 stud move; falls back to jump/sidestep when unavailable.",
+        Values={"Side teleport","Jump / sidestep"},Value=State.Config.KnifeDodgeMode,Multi=false,Callback=function(value)
+            if mobile.PickerSyncing or syncing or value==State.Config.KnifeDodgeMode then return end
+            suppressInput(); State.SetKnifeDodgeMode(value); refresh()
+        end})}
     dodgeTab:Paragraph({Title="Default",Desc="Starts on each load. Pauses during invisibility, menus and chat; turning it off or Emergency stop lasts for this session."})
     mobile.KnifeDodgeStatus=dodgeTab:Paragraph({Title="Auto dodge status",Desc=State.KnifeDodge.Status})
     local canTouch = type(firetouchinterest) == "function"
@@ -27303,7 +27529,7 @@ local createMobileUI = function(C)
         end
         if mobile.KnifeDodgeStatus then
             local d=State.KnifeDodge
-            updateDescription(mobile.KnifeDodgeStatus,"KnifeDodge",d.Status..("\nJumps: %d · sidesteps: %d"):format(d.Jumps,d.Sidesteps))
+            updateDescription(mobile.KnifeDodgeStatus,"KnifeDodge",d.Status..("\nTeleports sent: %d · jumps: %d · sidesteps: %d"):format(d.Teleports,d.Jumps,d.Sidesteps))
         end
         if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
         if State.AntiFling and mobile.AntiFlingStatus then updateDescription(mobile.AntiFlingStatus,"AntiFling",State.AntiFling.Status) end

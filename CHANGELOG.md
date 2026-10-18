@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.39 — 2026-10-18
+
+- Added default Side teleport dodge mode with saved Jump / sidestep alternative. Chooses the shortest clear, supported 4/6/8-stud perpendicular route, checking body sweep, endpoint space, floor, other tracked knives, vertical intersections, landing and continued walking input. Revalidates character, primary threat, route and fresh knife paths before movement. Unsafe/unavailable teleports fall back to ordinary dodge selection.
+- Teleport requests use a 300 ms cooldown, expire stale plans, reject mode/off/unload changes and limit per-knife retries. Preserves character rotation/pivot offset and vertical velocity. No invisibility restoration is added.
+- Added normalized direction, physical velocity and sampled-motion fallback, speed-based tracking distance and a 0.55 s teleport prediction window. Kept the 0.38 s ordinary movement horizon. UI/support counters distinguish movement requests from results; real server acceptance and survival remain unverified.
+
 ## 1.0.0-rc.38 — 2026-10-18
 
 - Fixed invisibility preparation permanently unbinding knife dodge. Temporary pauses now cancel current movement; explicit Off unbinds, On binds again, and unload destroys the hook. Area teleports no longer silently switch dodge off.

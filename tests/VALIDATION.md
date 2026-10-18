@@ -1,5 +1,13 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.39
+
+- Luau 0.739 compiles both scripts; 83 combat, 191 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility, 60 voting, 32 dodge lifecycle and 44 side-dodge assertions pass (674 total).
+- Extracted side planner, motion resolver, commit guard and real runtime recheck are tested with mocked geometry: perpendicular 4-stud selection, blocked side/route, unsupported floor, shortest sufficient expansion to 8, displacement cap, horizon/timing/finite-value guards, multiple incoming knives, falling vertical knives, predicted landing and held walking input.
+- Commit checks cover fresh versus stale plans, cooldown (including failed movement), off/unload/mode/character changes, a new wall or knife during validation, a primary that disappears/turns away, reentrant movement and failed requests. Motion tests cover normalized attributes, physics, successive samples, immediate cached rechecks, stopped/discontinuous movement and invalid values. Mode preference saves separately from default-on session state.
+- Native TestKnifeDodge preflight now includes supported side teleport planning and ledge refusal, but was not run against Roblox physics for this release. Mocked floor/collision checks do not establish native query behavior, accepted teleports or survival. No measured multiplier is claimed.
+- Sent rc.39 to the listed client; its subsequent targeted probe timed out. Live initialization remains unconfirmed.
+
 ## Release candidate 1.0.0-rc.38
 
 - Luau 0.739 compiles both scripts; 83 combat, 189 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility, 60 voting and 27 dodge assertions pass (623 total).

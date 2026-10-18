@@ -75,6 +75,15 @@ do
     check(f.State.GetKnifeDodgeSnapshot().LastError==nil,"support snapshot omits raw internal errors")
     f.FailStep=false; f.State.SetAutoKnifeDodge(true); f.Frame()
     check(f.Ticks==1 and f.Dodge.LastError==nil,"explicit retry can recover from a frame failure")
+    f=fixture()
+    check(f.State.GetKnifeDodgeSnapshot().Mode=="Side teleport","new dodge session defaults to side teleport mode")
+    f.Moving(); f.State.SetKnifeDodgeMode("Jump / sidestep")
+    check(not f.Dodge.Direction and f.State.Config.AutoKnifeDodge and f.Binds==1,"mode switch clears prior movement without disabling the loop")
+    check(f.State.SetKnifeDodgeMode("Unknown")==false and f.State.Config.KnifeDodgeMode=="Jump / sidestep","invalid dodge mode preserves the selected mode")
+    f.State.SetAutoKnifeDodge(false); f.State.SetKnifeDodgeMode("Side teleport")
+    check(not f.State.Config.AutoKnifeDodge and not f.Callback,"selecting teleport mode does not override an explicit Off setting")
+    f.State.DestroyKnifeDodge()
+    check(f.State.SetKnifeDodgeMode("Jump / sidestep")==false,"destroyed script rejects mode changes")
 end
 do
     local f=fixture()

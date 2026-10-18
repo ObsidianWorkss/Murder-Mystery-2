@@ -34,6 +34,18 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness.write_text(template, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
 
+    side = (root / "tests" / "dodge_teleport.luau").read_text(encoding="utf-8")
+    start = source.index("local function finiteDodgeVector(v)")
+    end = source.index("local installKnifeDodgeLifecycle=function(C)", start)
+    side = side.replace("-- INSERT_SIDE_DODGE", source[start:end])
+    start = source.index("    function teleportCommit.Safe(ctx,action)")
+    end = source.index("    function teleportCommit.Move(ctx,point)", start)
+    side = side.replace("-- INSERT_RUNTIME_SAFE", source[start:end])
+    if "-- INSERT_" in side:
+        raise RuntimeError("Unexpanded side-dodge source marker")
+    harness.write_text(side, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
     dodge = (root / "tests" / "dodge.luau").read_text(encoding="utf-8")
     start = source.index("local installKnifeDodgeLifecycle=function(C)")
     end = source.index("    local dodge = {Status", start)
