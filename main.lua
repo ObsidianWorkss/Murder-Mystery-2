@@ -17706,7 +17706,7 @@ local State = {
     RepairRequired = repairRequired,
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 1000, AuraReachVersion = "", KillAura = false, KillAuraRange = 1000, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
-        AutoPickup = false, AutoRevealGun = true, MapVoteRepeat = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
+        AutoPickup = false, MapVoteRepeat = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true,
@@ -17843,7 +17843,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.33"
+State.Version = "1.0.0-rc.34"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20644,9 +20644,6 @@ local installSeatVisibility=function(C)
         if mode.Record then State.Config.Invisibility=true; refresh(); return true,mode.Status end
         local function reject(message) State.Config.Invisibility=false; mode.Status=message; refresh(); return false,message end
         if not State.Running or State.RepairRequired then return reject("Restore your normal character first") end
-        if State.Config.AutoRevealGun~=false and C.HasGun and C.HasGun() then
-            return reject("Gun owned  ·  turn off Reveal on gun pickup to go invisible")
-        end
         if State.Fling and State.Fling.Active then return reject("Stop fling before enabling invisibility") end
         if State.ReleaseFly then State.ReleaseFly() end -- fly holds PlatformStand; release it before the free-to-move check
         local char=player.Character
@@ -20704,9 +20701,6 @@ local installSeatVisibility=function(C)
         if not r or mode.Phase=="RestoreFailed" then return end
         if not State.Running then restore("Off  ·  unloaded"); return end
         if not ownsCharacter(r) then restore("Off  ·  character changed",false); return end
-        if State.Config.AutoRevealGun~=false and C.HasGun and C.HasGun() then
-            restore("Off  ·  gun acquired; character restored"); return
-        end
         if r.Root.Anchored then fail("Stopped  ·  your character is anchored"); return end
         if not finite(r.Root.Position) or r.Root.Position.Y<=world.FallenPartsDestroyHeight+16 then
             -- Avoid preserving an unsafe current position during cleanup.
@@ -20765,7 +20759,6 @@ local installSeatVisibility=function(C)
 end
 
 installSeatVisibility({State=State,Player=player,Workspace=workspace,RunService=RunService,Connect=connect,
-    HasGun=function() return toolFor(player,"Gun")~=nil end,
     Refresh=function() if refreshButtons.Invisibility then refreshButtons.Invisibility() end end,
     BeforeStart=function()
         if State.StopGunPickup then
@@ -25713,7 +25706,7 @@ local installKeybinds=function(C)
         {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
         {"Combat","AutoKnifeDodge","Dodge incoming knives"},{"Combat","AutoPickup","Auto gun pickup"},
         {"Movement","InvisibleKnife","Knife while invisible"},{"Movement","AntiFling","Anti-fling"},
-        {"Movement","AutoRevealGun","Reveal on gun pickup"},{"Movement","MapVoteRepeat","Repeat chosen map vote"},
+        {"Movement","MapVoteRepeat","Repeat chosen map vote"},
         {"Visuals","GunESP","Dropped gun ESP"},{"Visuals","CombatHUD","Combat HUD"},{"Visuals","CompactHUD","Compact HUD"},
         {"Visuals","ThreatWarning","Nearby murderer warning"},{"Visuals","AimMarker","Gun aim marker"},
         {"Visuals","CleanVisuals","Clean role visuals"},{"Visuals","StableBodyESP","Stable body colors"},
@@ -26236,7 +26229,6 @@ local createMobileUI = function(C)
     local canTouch = type(firetouchinterest) == "function"
     if not canTouch then State.Config.AutoPickup = false end
     local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Collects a dropped gun without teleporting." or "Your executor lacks firetouchinterest.")
-    pickupTab:Button({Title="Gun pickup invisibility settings",Callback=function() mobile.OpenPage("Invisibility") end})
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
     buildAutomationSettings()
     if State.StopMovement then
@@ -26298,8 +26290,7 @@ local createMobileUI = function(C)
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
-    option(movement, "Invisibility", "Invisibility", "Ghost mode. Shooting restores you first; gun pickup also restores you by default.")
-    option(movement,"Reveal on gun pickup","AutoRevealGun","Turns invisibility off when you acquire a gun. Saved and on by default.")
+    option(movement, "Invisibility", "Invisibility", "Picking up or equipping a gun keeps you invisible. Shooting restores you first.")
     mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Off"})
     movement:Button({Title="Restore character",Desc="Turns invisibility off, no reset.",Callback=function()
         suppressInput()

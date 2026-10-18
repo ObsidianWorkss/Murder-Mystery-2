@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.33 · Release candidate · PC + mobile**
+**v1.0.0-rc.34 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -97,7 +97,7 @@ Normal equips and holsters, rapid toggles, consumed UI input, menus, chat, focus
 
 ## Gun pickup and invisibility
 
-**Movement → Invisibility → Reveal on gun pickup** is on by default and saved. Acquiring an owned gun in your backpack or hands turns invisibility off on the next simulation tick and restores the local character assembly. It also cancels invisibility preparation if the gun arrives during that transition. With this preference on, already owning a gun refuses a new invisibility activation. Turn the preference off to keep invisibility after pickup; shooting still restores your character first. Failed restoration remains visible in the status and can be retried with **Restore character**.
+Picking up or equipping a gun keeps invisibility active, including during preparation. Owning a gun also allows invisibility activation. The automatic pickup reveal added in rc.33 has been removed, and old saved settings cannot restore it. Shooting still uses the existing character restoration; manual **Restore character**, Emergency stop and normal character cleanup also remain available.
 
 ## Experimental map voting
 
@@ -105,7 +105,7 @@ Under **Movement → Map Voting**, enable **Repeat chosen map vote**, close the 
 
 This is an experimental attempt at the respawn voting behavior, **not verified vote duplication**. The server controls vote eligibility and totals; moving an anchored pad locally does not move it on the server. The status separates respawn requests, touch requests and the observed total increase, which can also come from other players. If no count increase follows a repeat touch, the script stops rather than continuing to reset you. No new character within 12 seconds also stops the attempt.
 
-Voting ending, map/pad changes, conflicting character actions, opening menus, Emergency stop, switching off and unloading cancel the run and clean up pending touches and pad movement. The toggle always starts off and is never saved. Both new controls have optional unbound keys in **Settings → Movement keys**.
+Voting ending, map/pad changes, conflicting character actions, opening menus, Emergency stop, switching off and unloading cancel the run and clean up pending touches and pad movement. The toggle always starts off and is never saved. Its optional key is unbound in **Settings → Movement keys**.
 
 ## Controls
 

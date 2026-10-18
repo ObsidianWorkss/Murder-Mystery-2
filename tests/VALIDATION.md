@@ -1,5 +1,11 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.34
+
+- Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 23 visibility and 38 voting assertions pass (566 total).
+- The extracted visibility controller retains its assembly and phase when guns enter the backpack or character during Parking, Attaching and Active. Gun ownership permits activation, actual preparation survives acquisition, and obsolete auto-reveal values cannot trigger restoration or load from saved settings. Existing gun-shot restoration, invisible knife use, manual restore, safe-position preservation and restoration failure/retry are covered separately.
+- Sent rc.34 to the connected client, but value probes timed out and the console probe failed. Execution dispatch alone does not confirm initialization; live startup and acquiring a real gun while invisible remain unverified.
+
 ## Release candidate 1.0.0-rc.33
 
 - Luau 0.739 compiles both scripts; 83 combat, 188 release, 58 triggerbot, 145 aura, 32 equip, 23 visibility and 38 voting assertions pass (567 total). New suites extract the shipped visibility and voting controllers, not copies of their implementations.

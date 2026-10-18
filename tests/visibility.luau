@@ -25,7 +25,7 @@ local function fixture()
     function f.Char:FindFirstChildOfClass() return f.Hum end
     function f.Char:FindFirstChild(name) return name=="HumanoidRootPart" and f.Root or nil end
     f.Player={Character=f.Char,CharacterAdded=signal(),CharacterRemoving=signal()}
-    f.State={Running=true,Config={AutoRevealGun=true}}
+    f.State={Running=true,Config={}}
     installSeatVisibility({State=f.State,Player=f.Player,Workspace={FallenPartsDestroyHeight=-500},
         NewInstance=function() error("unexpected instance creation") end,
         RunService={PreSimulation=f.Pre},Connect=function(s,fn) return s:Connect(fn) end,
@@ -49,33 +49,32 @@ for _,phase in ipairs({"Parking","Attaching","Active"}) do
     for _,where in ipairs({"Backpack","Character"}) do
         local f=fixture(); f.StartActive(phase); local current=f.Root.CFrame
         f.Gun=where; f.Pre:Fire()
-        check(not f.State.Invis.Record and not f.State.Invis.Active and not f.State.Invis.Busy
-            and not f.State.Config.Invisibility and f.State.Invis.Phase=="Off",
-            where.." gun restores visibility during "..phase)
-        check(not f.Seat.Parent and not f.Weld.Parent,where.." gun cleans up owned seat assembly during "..phase)
-        if phase=="Active" then check(f.Root.CFrame==current,"active gun reveal preserves current safe position") end
+        check(f.State.Invis.Record~=nil and f.State.Config.Invisibility and f.State.Invis.Phase==phase,
+            where.." gun keeps invisibility during "..phase)
+        check(f.Seat.Parent~=nil and f.Weld.Parent~=nil,where.." gun does not dismantle invisibility during "..phase)
+        if phase=="Active" then check(f.Root.CFrame==current,"equipping a gun preserves current invisible position") end
     end
 end
 do
     local f=fixture(); f.StartActive("Active"); f.Pre:Fire()
     check(f.State.Invis.Record~=nil and f.State.Invis.Active,"no gun leaves a stable invisible character alone")
-    f.State.Config.AutoRevealGun=false; f.Gun="Backpack"; f.Pre:Fire()
-    check(f.State.Invis.Active,"explicitly disabling gun reveal preserves invisibility")
-    f.State.Config.AutoRevealGun=true; f.Pre:Fire()
-    check(not f.State.Invis.Record,"enabling gun reveal while already owning a gun restores next simulation tick")
+    f.State.Config.AutoRevealGun=true; f.Gun="Backpack"; f.Pre:Fire()
+    check(f.State.Invis.Active,"obsolete auto-reveal setting cannot reveal a gun owner")
     f=fixture(); f.Gun="Backpack"
     local ok=f.State.SetInvisibility(true)
-    check(ok==false and not f.State.Invis.Record and not f.State.Config.Invisibility,"owning a gun refuses new invisibility before character movement")
-    f=fixture(); f.Gun="Backpack"; f.State.Config.AutoRevealGun=false
-    check(f.State.SetInvisibility(true)==true and f.State.Invis.Phase=="Parking","gun owners can explicitly opt into invisibility")
+    check(ok==true and f.State.Invis.Record~=nil and f.State.Config.Invisibility,"owning a gun allows invisibility activation")
     f=fixture(); f.State.SetInvisibility(true); f.Gun="Backpack"; f.Pre:Fire()
-    check(not f.State.Invis.Record and f.State.Invis.Phase=="Off","actual preparation is cancelled if a gun arrives before attachment")
-    f=fixture(); f.StartActive("Active"); f.Gun="Backpack"; f.SeatError=true; f.Pre:Fire()
+    check(f.State.Invis.Record~=nil and f.State.Invis.Phase=="Parking","gun pickup does not cancel actual invisibility preparation")
+    f=fixture(); f.StartActive("Active"); local current=f.Root.CFrame; f.State.SetInvisibility(false)
+    check(not f.State.Invis.Record and f.Root.CFrame==current,"manual restoration still cleans up at the current safe position")
+    f=fixture(); f.StartActive("Active"); f.Gun="Backpack"; f.SeatError=true; f.State.SetInvisibility(false)
     check(f.State.Invis.Phase=="RestoreFailed" and f.State.Invis.Record~=nil and f.State.Invis.Busy,
-        "failed gun reveal retains the assembly record and reports incomplete restoration")
+        "failed manual restoration retains the assembly record and reports incomplete restoration")
     f.SeatError=false; f.State.SetInvisibility(false)
-    check(not f.State.Invis.Record and not f.State.Invis.Busy,"failed gun reveal can be restored on retry")
-    f=fixture(); f.StartActive("Active"); f.Gun="Backpack"; f.State.Config.AutoRevealGun=nil; f.Pre:Fire()
-    check(not f.State.Invis.Record,"missing older gun-reveal setting defaults to enabled")
+    check(not f.State.Invis.Record and not f.State.Invis.Busy,"failed manual restoration can be retried")
+    f=fixture(); f.StartActive("Active"); f.Gun="Character"; f.State.ExitUndergroundForAttack("Gun")
+    check(not f.State.Invis.Record,"the existing shooting restoration remains separate from gun pickup")
+    f=fixture(); f.StartActive("Active"); f.State.ExitUndergroundForAttack("Knife")
+    check(f.State.Invis.Active,"knife use retains its existing invisible behavior")
 end
 print(passed.." visibility assertions passed")

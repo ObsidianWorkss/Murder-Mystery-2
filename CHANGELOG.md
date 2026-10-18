@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0-rc.34 — 2026-10-18
+
+- Removed automatic invisibility restoration on gun pickup/equip and the gun-ownership activation restriction. Guns no longer cancel preparation or active invisibility. Removed its setting/key option; obsolete saved values are ignored.
+- Existing shooting restoration, manual restoration and character cleanup remain. Experimental map voting is unchanged.
+
 ## 1.0.0-rc.33 — 2026-10-18
 
 - Added saved, default-on Reveal on gun pickup: a gun in the backpack or character restores invisibility, including preparation phases. Owning a gun refuses a new activation while this preference is on. Existing restore error handling and shooting restoration remain.

@@ -1,17 +1,17 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.33**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.34**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility and voting regression suites pass locally (567 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility and voting regression suites pass locally (566 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
 
-- [ ] Acquire a real gun while invisible and during preparation; verify restoration on another client, saved preference, refusal while owning a gun, and restoration-error recovery.
+- [ ] Acquire/equip a real gun while invisible and during preparation; verify invisibility stays active and activation works while owning one. Verify existing shooting/manual restoration and error recovery separately.
 - [ ] Opt into map voting during an active lobby vote: new character appears, selected pad restores after each touch, off/End/unload cancel, and voting end stops. Confirm any extra vote attribution separately from other players changing the same total; duplicate votes remain unverified.
 - [ ] Kill all: Burst and Aimed throws, priorities, queue/charge cancellation, prior aura restoration and actual server outcomes. Measure accepted damage distance rather than treating the 1,000-stud client radius as accepted range.
 - [ ] Aura: normal contact without blade overlap, extended contact acceptance, partial cover, automatic equip and respawn recovery while murderer. Distinguish sent requests from observed server damage.
