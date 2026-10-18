@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.36 — 2026-10-18
+
+- Fixed map voting targeting display icons instead of the actual VotePads.Detector1–3 touch triggers. Display metadata is matched by slot; standing inside a detector can select it when Touched was missed.
+- Re-voting now follows vote, reset, new living character, physical return to the same detector, then another vote. Reset requests death and breaks the owned character's joints. Map geometry is not moved; executor touches are optional supplements to physical contact.
+- Paired touch cleanup, three-reset cap, timeout, voting/map-change cancellation and unchanged-count stop remain. Waits two seconds for repeated vote feedback. Real extra votes still require a live check.
+
 ## 1.0.0-rc.35 — 2026-10-18
 
 - Gun firing no longer automatically restores the invisible character. Gun and knife inputs wait during invisibility transitions or incomplete restoration, retaining the assembly. Disabling Knife while invisible pauses knife input instead of restoring visibility.

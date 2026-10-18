@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.35 · Release candidate · PC + mobile**
+**v1.0.0-rc.36 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -101,11 +101,11 @@ Picking up, equipping and firing a gun keep invisibility active. Owning a gun al
 
 ## Experimental map voting
 
-Under **Movement → Map Voting**, enable **Repeat chosen map vote**, close the menu, and step on your chosen map's pad during an active vote. This explicitly opts into up to **three character respawns** for that activation. After each new character appears, the script briefly moves the selected pad locally to your feet, requests a paired touch, then restores its position.
+Under **Movement → Map Voting**, enable **Repeat chosen map vote**, close the menu, and vote on your chosen map's pad during an active vote. The script selects the actual `VotePads.Detector1–3` trigger paired with that map's display; standing inside it also works if a fresh touch event was missed. It follows **vote → reset → wait for a new living character → return that character to the same voting pad → vote again**, with up to **three resets** per activation.
 
-This is an experimental attempt at the respawn voting behavior, **not verified vote duplication**. The server controls vote eligibility and totals; moving an anchored pad locally does not move it on the server. The status separates respawn requests, touch requests and the observed total increase, which can also come from other players. If no count increase follows a repeat touch, the script stops rather than continuing to reset you. No new character within 12 seconds also stops the attempt.
+This remains **unverified vote duplication**. The reset requests humanoid death and breaks that character's joints; after respawn the character physically returns to the detector. The executor touch API supplements the normal contact when available, but is optional. Map geometry is not moved. Status separates reset requests, re-vote attempts and the observed total increase, which can also come from other players. No count increase within two seconds after the repeat contact stops further resets; no new character within 12 seconds also stops the attempt.
 
-Voting ending, map/pad changes, conflicting character actions, opening menus, Emergency stop, switching off and unloading cancel the run and clean up pending touches and pad movement. The toggle always starts off and is never saved. Its optional key is unbound in **Settings → Movement keys**.
+Voting ending, map/pad changes, conflicting character actions, opening menus, Emergency stop, switching off and unloading cancel the run and clean up pending touches. The toggle always starts off and is never saved. Its optional key is unbound in **Settings → Movement keys**.
 
 ## Controls
 

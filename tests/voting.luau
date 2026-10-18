@@ -15,7 +15,7 @@ local function signal()
     return s
 end
 local function fixture(noTouch)
-    local f={Now=10,Resets=0,Begins=0,Ends=0,Restores=0,Char={},Hum={Health=100},Root={},OriginalFrame={}}
+    local f={Now=10,Resets=0,Begins=0,Ends=0,Moves=0,Char={},Hum={Health=100},Root={},OriginalFrame={}}
     f.Heartbeat=signal(); f.Pad={Touched=signal(),Parent=true,Frame=f.OriginalFrame}
     f.Entry={Pad=f.Pad,Map={},Name="Test map",Voting=true,Votes=1}
     f.State={Running=true,Config={MapVoteRepeat=true}}
@@ -27,23 +27,22 @@ local function fixture(noTouch)
         Connect=function(s,fn) return s:Connect(fn) end,Watch=function(s,fn) return s:Connect(fn) end,
         Touch=not noTouch and touch or nil,ReadPads=function() return f.Removed and {} or {f.Entry} end,
         OwnTouch=function(hit) return hit==f.Root end,Blocked=function() return f.Blocked end,
+        OnPad=function() return f.InPad==true end,
         Character=function() return f.Char,f.Hum,f.Root end,
-        PadFrame=function(pad) return pad.Frame end,
-        MovePad=function(pad,root) pad.Frame=root; return root end,
-        RestorePad=function(pad,original,moved)
-            if f.RestoreError then error("restore") end
-            if pad.Parent and (not moved or pad.Frame==moved) then pad.Frame=original; f.Restores+=1 end
+        ApproachPad=function(root,pad)
+            if f.ApproachError then error("approach") end
+            f.Moves+=1; f.LastApproach={Root=root,Pad=pad}
         end,
-        Reset=function(hum) f.Resets+=1; if f.ResetError then error("reset") end; hum.Health=0 end})
+        Reset=function(hum,char) f.Resets+=1; f.ResetCharacter=char; if f.ResetError then error("reset") end; hum.Health=0 end})
     function f.Advance(dt) f.Now+=dt or .26; f.Heartbeat:Fire() end
     function f.Enable() local ok=f.State.SetMapVoteRepeat(true); f.Advance(); return ok end
     function f.Select() f.Pad.Touched:Fire(f.Root) end
     function f.FirstReset() f.Enable(); f.Select(); f.Advance(1.01) end
     function f.Spawn() f.Char={}; f.Hum={Health=100}; f.Root={}; f.Advance(); f.Advance(.36) end
     function f.FinishTouch(increase)
-        f.Advance(.11)
+        f.Advance(.26)
         if increase then f.Entry.Votes+=1 end
-        f.Advance(1.51)
+        f.Advance(2.01)
     end
     return f
 end
@@ -62,9 +61,10 @@ do
     f.Advance(1)
     check(f.Resets==1 and f.Begins==0,"old character is never treated as a respawn")
     f.Spawn()
-    check(f.Begins==1 and f.Pad.Frame==f.Root,"new character gets one brief moved-pad touch")
+    check(f.Begins==1 and f.Moves==1 and f.LastApproach.Root==f.Root and f.LastApproach.Pad==f.Pad,
+        "new character returns to the same actual voting detector before re-voting")
     f.FinishTouch(false)
-    check(f.Ends==1 and f.Pad.Frame==f.OriginalFrame,"touch ends and original pad position is restored")
+    check(f.Ends==1 and f.Pad.Frame==f.OriginalFrame,"paired touch ends without ever moving the voting pad")
     check(f.Resets==1 and not f.State.Config.MapVoteRepeat and f.State.MapVote.Status:find("No additional",1,true),
         "unchanged server count stops further respawns")
 end
@@ -88,7 +88,7 @@ for _,reason in ipairs({"off","voting ended","maps changed","pad removed","menu 
     elseif reason=="character replaced" then f.Char={}; f.Advance()
     elseif reason=="unload" then f.State.DestroyMapVoteRepeat() end
     check(f.Ends==1 and (not f.Pad.Parent or f.Pad.Frame==f.OriginalFrame) and not f.State.Config.MapVoteRepeat,
-        reason.." cancels touch and cleans up moved pads")
+        reason.." cancels touch without moving map geometry")
     f.Advance(2)
     check(f.Resets==1 and f.Begins==1,reason.." cannot continue a queued respawn or touch")
 end
@@ -96,29 +96,57 @@ end
 do
     local f=fixture(); f.FirstReset(); f.Advance(12.1)
     check(f.Resets==1 and not f.State.Config.MapVoteRepeat and f.Begins==0,"failed respawn times out without repeated resets")
-    f=fixture(true)
-    check(not f.Enable() and f.Resets==0,"missing touch API refuses activation before any respawn")
+    f=fixture(true); f.FirstReset(); f.Spawn(); f.FinishTouch(false)
+    check(f.Resets==1 and f.Moves==1 and f.Begins==0 and f.Ends==0,
+        "normal physical re-voting works without the optional executor touch API")
     f=fixture(); f.Enable(); f.Entry.Voting=false; f.Select(); f.Advance(2)
     check(f.Resets==0,"closed voting pads cannot select a map")
     f=fixture(); f.Enable(); f.Entry.Map=nil; f.Select(); f.Advance(2)
     check(f.Resets==0,"pads without a map cannot select a map")
     f=fixture(); f.FirstReset(); f.BeginError=true; f.Spawn()
     check(f.Begins==1 and f.Ends==1 and f.Pad.Frame==f.OriginalFrame and not f.State.Config.MapVoteRepeat,
-        "touch begin errors still pair end and restore the pad")
+        "touch begin errors still pair end without moving the pad")
     f=fixture(); f.ResetError=true; f.FirstReset(); f.Advance(2)
     check(f.Resets==1 and not f.State.Config.MapVoteRepeat,"reset errors stop without retry loops")
-    f=fixture(); f.FirstReset(); f.Spawn(); f.RestoreError=true
-    check(not f.State.SetMapVoteRepeat(false),"failed pad restoration is reported, not hidden")
-    f.RestoreError=false; f.Advance()
-    check(f.Pad.Frame==f.OriginalFrame and f.Ends==1,"cleanup can recover after a failed restoration without duplicate touch end")
+    f=fixture(); f.FirstReset(); f.Spawn(); f.EndError=true
+    check(not f.State.SetMapVoteRepeat(false),"failed touch end is reported, not hidden")
+    f.EndError=false; f.Advance()
+    check(f.Pad.Frame==f.OriginalFrame and f.Ends==2,"failed touch end retries cleanup without repeating vote or reset")
     f=fixture(); f.FirstReset(); f.Spawn(); local external={}; f.Pad.Frame=external; f.FinishTouch(false)
-    check(f.Pad.Frame==external,"cleanup preserves newer external pad positioning")
+    check(f.Pad.Frame==external,"cleanup never writes external pad positioning")
     f=fixture(); f.Enable(); f.State.Config.MapVoteRepeat=false; f.Advance(); f.Select(); f.Advance(2)
     check(f.Resets==0 and f.Pad.Touched.Connections[1].Disconnected,"direct off disconnects pad listeners")
     f=fixture(); f.State.Config.MapVoteRepeat=true; f.Enable(); f.Select(); f.Advance(1.1)
     check(f.Resets==1,"menu preassignment still initializes the armed session")
     f=fixture(); f.FirstReset(); f.Spawn(); installEmergencyStop({State=f.State}); f.State.EmergencyStop(); f.Advance(2)
     check(f.Resets==1 and f.Ends==1 and f.Pad.Frame==f.OriginalFrame and not f.State.Config.MapVoteRepeat,
-        "emergency stop cancels voting and restores the pad")
+        "emergency stop cancels voting and pairs the touch")
+    f=fixture(); f.Enable(); f.InPad=true; f.Advance(); f.Advance(1.01)
+    check(f.Resets==1,"standing inside a real detector selects a map even without a fresh Touched event")
+    check(f.ResetCharacter==f.Char,"reset receives the exact character that cast the vote")
+    f=fixture(); f.FirstReset(); f.ApproachError=true; f.Spawn()
+    check(f.Begins==0 and not f.State.Config.MapVoteRepeat,"failed physical approach stops before sending a fake contact")
+end
+
+do
+    local function node(kind,children,value)
+        return {Value=value,FindFirstChild=function(_,name) return children and children[name] end,
+            IsA=function(_,class) return kind==class end}
+    end
+    local icon=node("BasePart",{Map=node("ObjectValue",nil,{Name="Chosen map"}),
+        Voting=node("BoolValue",nil,true),Votes=node("IntValue",nil,2)})
+    local detector=node("BasePart")
+    local lobby=node("Model",{VoteIcons=node("Model",{VotePad1=icon}),VotePads=node("Model",{Detector1=detector})})
+    local entries=readMapVotePads(node("Workspace",{RegularLobby=lobby}))
+    check(#entries==1 and entries[1].Pad==detector and entries[1].Pad~=icon,
+        "shipped pad adapter selects actual Detector1, not its separate display icon")
+    check(entries[1].Map.Name=="Chosen map" and entries[1].Voting and entries[1].Votes==2,
+        "actual detector is paired with the same numbered display's server voting metadata")
+    check(#readMapVotePads(node("Workspace",{RegularLobby=node("Model",{VoteIcons=node("Model",{VotePad1=icon})})}))==0,
+        "display-only geometry cannot become a voting target")
+    local breaks=0; local char={BreakJoints=function() breaks+=1 end}; local hum={Health=100,Parent=char}
+    resetMapVoteCharacter(hum,char)
+    check(hum.Health==0 and breaks==1,"reset adapter requests death and breaks the current character's joints")
+    check(not pcall(resetMapVoteCharacter,{Parent={}},char) and breaks==1,"reset adapter rejects a replaced character")
 end
 print(passed.." voting assertions passed")

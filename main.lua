@@ -17843,7 +17843,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.35"
+State.Version = "1.0.0-rc.36"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21839,8 +21839,7 @@ local installMapVoteRepeat=function(C)
         local r=contact
         local ended=not r.Began or r.Ended
         if not ended then ended=pcall(C.Touch,r.Root,r.Pad,1); r.Ended=ended end
-        local restored=pcall(C.RestorePad,r.Pad,r.Frame,r.MovedFrame)
-        if ended and restored then contact=nil; return true end
+        if ended then contact=nil; return true end
         report.Status="Vote cleanup incomplete  ·  switch off again to retry"
         return false
     end
@@ -21856,9 +21855,9 @@ local installMapVoteRepeat=function(C)
     function State.SetMapVoteRepeat(enabled)
         if not enabled then return State.StopMapVoteRepeat() end
         if not cleanup() then return false,report.Status end
-        if not State.Running or type(C.Touch)~="function" then
+        if not State.Running then
             State.Config.MapVoteRepeat=false
-            report.Status="Map vote repeat needs the executor touch API"
+            report.Status="Script is unloaded"
             return false,report.Status
         end
         if armed then return true,report.Status end
@@ -21906,7 +21905,16 @@ local installMapVoteRepeat=function(C)
             end
         end
         for pad,hook in pairs(hooks) do if not seen[pad] then hook:Disconnect(); hooks[pad]=nil end end
-        if not selected then return end
+        if not selected then
+            if C.OnPad and not C.Blocked() then
+                for _,entry in ipairs(entries) do
+                    if entry.Voting and entry.Map and C.OnPad(entry.Pad) then
+                        State.SelectMapVote(entry.Pad); break
+                    end
+                end
+            end
+            return
+        end
         local r,entry=selected,findPad(selected.Pad)
         if not entry or not entry.Voting or entry.Map~=r.Map then
             State.StopMapVoteRepeat("Voting ended or maps changed  ·  stopped"); return
@@ -21918,8 +21926,8 @@ local installMapVoteRepeat=function(C)
             if char~=r.Character or not hum or hum.Health<=0 then State.StopMapVoteRepeat("Character changed during vote touch"); return end
             if now<r.ReadyAt then return end
             if not cleanup() then State.StopMapVoteRepeat(); return end
-            report.Phase="Observing"; r.ReadyAt=now+1.5
-            report.Status="Vote touch sent  ·  waiting for server count"
+            report.Phase="Observing"; r.ReadyAt=now+2
+            report.Status="Returned to selected voting pad  ·  waiting for server count"
         elseif report.Phase=="AwaitRespawn" then
             if now>r.Deadline then State.StopMapVoteRepeat("Respawn not observed within 12 seconds  ·  stopped"); return end
             if char==r.OldCharacter or not hum or hum.Health<=0 or not root then return end
@@ -21928,15 +21936,17 @@ local installMapVoteRepeat=function(C)
             if char~=r.Character or not hum or hum.Health<=0 or not root then State.StopMapVoteRepeat("New character unavailable  ·  stopped"); return end
             if now<r.ReadyAt then return end
             r.BeforeTouch=entry.Votes
-            local touch={Pad=r.Pad,Root=root,Frame=C.PadFrame(r.Pad)}
+            local touch={Pad=r.Pad,Root=root}
             contact=touch
             local ok=pcall(function()
-                touch.MovedFrame=C.MovePad(r.Pad,root)
-                touch.Began=true -- An API can throw after beginning contact; always pair it.
-                C.Touch(root,r.Pad,0)
+                C.ApproachPad(root,r.Pad)
+                if type(C.Touch)=="function" then
+                    touch.Began=true -- An API can throw after beginning contact; always pair it.
+                    C.Touch(root,r.Pad,0)
+                end
             end)
             if not ok then State.StopMapVoteRepeat("Vote touch failed  ·  stopped"); return end
-            report.Touches+=1; report.Phase="Touching"; r.ReadyAt=now+.1
+            report.Touches+=1; report.Phase="Touching"; r.ReadyAt=now+.25
         elseif report.Phase=="Observing" then
             if now<r.ReadyAt then return end
             if not r.Initial and entry.Votes<=r.BeforeTouch then
@@ -21947,7 +21957,7 @@ local installMapVoteRepeat=function(C)
             r.Initial=false; r.OldCharacter=char; r.Deadline=now+12
             report.Respawns+=1; report.Phase="AwaitRespawn"
             report.Status="Respawn requested ("..report.Respawns.."/3)  ·  waiting for a new character"
-            local ok=pcall(C.Reset,hum)
+            local ok=pcall(C.Reset,hum,char)
             if not ok then State.StopMapVoteRepeat("Respawn request failed  ·  stopped") end
         end
     end
@@ -21965,31 +21975,50 @@ local installMapVoteRepeat=function(C)
     end
 end
 
+local function resetMapVoteCharacter(hum,char)
+    if not char or not hum or hum.Parent~=char then error("Character changed before reset") end
+    hum.Health=0
+    char:BreakJoints()
+end
+
+local function readMapVotePads(world)
+    local lobby=world:FindFirstChild("RegularLobby")
+    local folder=lobby and lobby:FindFirstChild("VoteIcons")
+    local detectors=lobby and lobby:FindFirstChild("VotePads")
+    local entries={}
+    if folder and detectors then for i=1,3 do
+        local pad=detectors:FindFirstChild("Detector"..i)
+        local icon=folder:FindFirstChild("VotePad"..i)
+        local map=icon and icon:FindFirstChild("Map")
+        local voting=icon and icon:FindFirstChild("Voting")
+        local votes=icon and icon:FindFirstChild("Votes")
+        if pad and pad:IsA("BasePart") and map and map:IsA("ObjectValue")
+            and voting and voting:IsA("BoolValue") and votes and votes:IsA("IntValue") then
+            table.insert(entries,{Pad=pad,Map=map.Value,Name=map.Value and map.Value.Name or "Unknown map",
+                Voting=voting.Value,Votes=votes.Value})
+        end
+    end end
+    return entries
+end
+
 installMapVoteRepeat({State=State,Heartbeat=RunService.Heartbeat,Connect=connect,
     Watch=function(signal,callback) return signal:Connect(callback) end,
     Touch=type(firetouchinterest)=="function" and firetouchinterest or nil,
-    ReadPads=function()
-        local lobby=workspace:FindFirstChild("RegularLobby")
-        local folder=lobby and lobby:FindFirstChild("VoteIcons")
-        local entries={}
-        if folder then for i=1,3 do
-            local pad=folder:FindFirstChild("VotePad"..i)
-            local map=pad and pad:FindFirstChild("Map")
-            local voting=pad and pad:FindFirstChild("Voting")
-            local votes=pad and pad:FindFirstChild("Votes")
-            if pad and pad:IsA("BasePart") and map and map:IsA("ObjectValue")
-                and voting and voting:IsA("BoolValue") and votes and votes:IsA("IntValue") then
-                table.insert(entries,{Pad=pad,Map=map.Value,Name=map.Value and map.Value.Name or "Unknown map",
-                    Voting=voting.Value,Votes=votes.Value})
-            end
-        end end
-        return entries
-    end,
+    ReadPads=function() return readMapVotePads(workspace) end,
     Character=function()
         local char=player.Character
         return char,char and char:FindFirstChildOfClass("Humanoid"),char and char:FindFirstChild("HumanoidRootPart")
     end,
     OwnTouch=function(hit) return player.Character and hit:IsDescendantOf(player.Character) end,
+    OnPad=function(pad)
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum or hum.Health<=0 then return false end
+        local point=pad.CFrame:PointToObjectSpace(root.Position)
+        local half=pad.Size*.5
+        return math.abs(point.X)<=half.X and math.abs(point.Y)<=half.Y and math.abs(point.Z)<=half.Z
+    end,
     Blocked=function()
         local char=player.Character
         local root=char and char:FindFirstChild("HumanoidRootPart")
@@ -21998,15 +22027,12 @@ installMapVoteRepeat({State=State,Heartbeat=RunService.Heartbeat,Connect=connect
             or State.Invis and (State.Invis.Active or State.Invis.Busy)
             or State.Config.KillAura or State.PlayerActions and State.PlayerActions.Enabled
     end,
-    PadFrame=function(pad) return pad.CFrame end,
-    MovePad=function(pad,root)
-        local frame=root.CFrame*CFrame.new(0,-2.7,0)
-        pad.CFrame=frame; return frame
+    ApproachPad=function(root,pad)
+        if State.ReleaseFly then State.ReleaseFly() end
+        root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+        root.CFrame=CFrame.new(pad.Position)*root.CFrame.Rotation
     end,
-    RestorePad=function(pad,original,moved)
-        if pad.Parent and (not moved or pad.CFrame==moved) then pad.CFrame=original end
-    end,
-    Reset=function(hum) hum.Health=0 end})
+    Reset=resetMapVoteCharacter})
 end
 
 local function autoPickup() State.TickGunPickup() end
@@ -26311,7 +26337,7 @@ local createMobileUI = function(C)
     option(invisOptions,"Knife while invisible","InvisibleKnife","Keep using your knife while invisible.")
     invisOptions:Paragraph({Title="Note",Desc="Spectators can still follow you. Coins may stop."})
     option(voting,"Repeat chosen map vote (experimental)","MapVoteRepeat",
-        "Turn on, close the menu and step on your map's pad. Attempts up to 3 respawns and briefly moves that pad to you after each spawn. Off on reload or voting end.")
+        "Turn on, close the menu and vote on your map's pad. Resets, waits for a new character, then returns you to that same pad to vote again. Up to 3 resets; off on reload or voting end.")
     voting:Paragraph({Title="Server results",Desc="Extra votes are unverified. Stops if no server count increase is observed or respawn fails. Other players can also change the total."})
     mobile.MapVoteStatus=voting:Paragraph({Title="Map vote status",Desc=State.MapVote.Status})
     voting:Button({Title="Stop map vote repeat",Callback=function()

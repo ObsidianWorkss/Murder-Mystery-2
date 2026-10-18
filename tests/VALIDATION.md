@@ -1,5 +1,12 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.36
+
+- Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility and 46 voting assertions pass (580 total).
+- Live read-only finding: the actual lobby touch volumes are VotePads.Detector1–3. VoteIcons.VotePad1–3 are separate displays approximately 6.9–7.1 studs from them. The previous adapter targeted displays for both initial selection and repeat touches. The new adapter matches detector and metadata by slot; an extracted-adapter regression requires the returned target to be the detector, not its display.
+- Extracted controller/adapter checks cover own voting touch, occupancy fallback without Touched, reset of the exact original character, waiting for a new living character, physical return to the same detector, optional supplemental touch, unchanged counts and existing caps/cancellation. Reset adapter requests death and BreakJoints, refusing mismatched ownership. No map geometry is moved, including during cancellation/errors.
+- Live rc.36 startup verified running state, Map Voting page, off/idle state, zero respawns/touches and matching console loaded message in the responsive client. No vote/reset was requested for this startup check. Actual respawn, repeated server vote acceptance and attribution of extra votes remain unverified.
+
 ## Release candidate 1.0.0-rc.35
 
 - Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility and 38 voting assertions pass (572 total).
