@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.40 — 2026-10-18
+
+- Added a default phone shortcut dock with Invis, Speed, universal Trigger and Aura, plus More and Emergency stop. More holds Fly, Noclip, Dodge and the explicit Kill all start/stop action. Buttons share the existing feature setters, reflect state and refusals, and do not enable attacks on load.
+- Phones start with the full menu closed. A Pages picker replaces the sidebar so settings use the full width. Guarded the bundled window's automatic Open to prevent a delayed startup reopening the hidden menu. Desktop menu behavior is retained.
+- Hid the phone instruction/status overlays by default to remove their inventory obstruction; they can be enabled explicitly. Added saved phone preferences, smaller weapon controls with 44 px touch heights, bounded toast width, orientation-aware positions, short-landscape dock rows and draggable/resettable controls. More temporarily hides weapon/fly controls beneath it, and Stop no longer needs a duplicate floating button.
+- Issued an additional owner launch key, storing only its hash alongside the existing valid key. Plaintext keys are excluded from the repository and release archive. Real phone touch/rendering checks remain pending.
+
 ## 1.0.0-rc.39 — 2026-10-18
 
 - Added default Side teleport dodge mode with saved Jump / sidestep alternative. Chooses the shortest clear, supported 4/6/8-stud perpendicular route, checking body sweep, endpoint space, floor, other tracked knives, vertical intersections, landing and continued walking input. Revalidates character, primary threat, route and fresh knife paths before movement. Unsafe/unavailable teleports fall back to ordinary dodge selection.

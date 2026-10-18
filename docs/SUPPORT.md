@@ -19,6 +19,7 @@ Do not include your access key in an issue. Ask the repository owner for a valid
 
 ## Recover controls
 
+- **Phone:** tap MM2, then Pages to choose a section. Main shortcuts are Invis, Speed, Trigger and Aura; More contains the less-used actions. Settings → General resets button positions. Visuals → HUD & Alerts → Show instructions on phone is off by default to leave the inventory clear.
 - **End / STOP:** requests cancellation of active player actions and return where supported.
 - **Repair camera input:** clears stale input state.
 - **Restore character:** requests restoration after invisibility use.

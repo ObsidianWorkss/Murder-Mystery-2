@@ -31,6 +31,15 @@ for name, (start, end) in sections.items():
     template = template.replace("-- INSERT_" + name, code)
 with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness = Path(directory) / "combat.luau"
+    phone = (root / "tests" / "mobile.luau").read_text(encoding="utf-8")
+    start = source.index("local createPhoneControls = function(C)")
+    end = source.index("local createMobileUI = function(C)", start)
+    phone = phone.replace("-- INSERT_PHONE", source[start:end])
+    start = source.index("-- MM2 phones can start with shortcuts only;")
+    end = source.index("\nend)\n\nfunction aw.EditOpenButton", start)
+    phone = phone.replace("-- INSERT_WINDOW_START", source[start:end])
+    harness.write_text(phone, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
     harness.write_text(template, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
 

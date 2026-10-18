@@ -16472,7 +16472,15 @@ end)
 
 task.spawn(function()
 
+-- MM2 phones can start with shortcuts only; avoid scheduling a delayed Open
+-- that would race a Close issued by the mobile UI during construction.
+if av.StartClosed then
+aw.Closed=true
+aw.CanDropdown=false
+aw.UIElements.Main.Visible=false
+else
 aw:Open()
+end
 end)
 
 function aw.EditOpenButton(C,F)
@@ -17577,6 +17585,7 @@ end
 local KeyConfig = {
     Keys = {
         {Hash = "05eda8bfdbdd67dbd26c252eea3ce750c03cebb1110d6ffd55b664faf7c560d9", Note = "Launch key"},
+        {Hash = "12cb1a3bb0f5226cc77c6ed17ab7bf9441aa0ee008cd72ae74c3f0e2de93aa31", Note = "Owner mobile launch key"},
     },
     GetKeyUrl = nil, -- link copied by the dialog's Get key button; the button stays hidden while this is nil
     SaveKey = true, -- remember a valid key on this device
@@ -17705,6 +17714,7 @@ local State = {
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 1000, AuraReachVersion = "", KillAura = false, KillAuraRange = 1000, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
+        MobileShortcuts = true, MobileShowStatus = false, MobileStartClosed = true,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, MapVoteRepeat = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17844,7 +17854,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.39"
+State.Version = "1.0.0-rc.40"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -26238,6 +26248,84 @@ end
 
 
 -- Mobile and PC controls around the bundled WindUI library. No camera or cursor writes.
+-- Phone actions use the same feature setters as the menu, never raw combat remotes.
+local createPhoneControls = function(C)
+    local State,ui=C.State,C.UI
+    local controls={Busy={},Items={
+        {Id="Invisibility",Title="Invisibility",Label="Invis"},
+        {Id="SpeedBoost",Title="Speed",Label="Speed"},
+        {Id="UniversalTriggerbot",Title="Triggerbot",Label="Trigger"},
+        {Id="KillAura",Title="Kill aura",Label="Aura"},
+        {Id="Fly",Title="Fly",Label="Fly",More=true},
+        {Id="Noclip",Title="Noclip",Label="Noclip",More=true},
+        {Id="AutoKnifeDodge",Title="Auto dodge",Label="Dodge",More=true},
+        {Id="KillAll",Title="Kill all",Label="Kill all",More=true},
+    }}
+    local byId={}
+    for _,item in ipairs(controls.Items) do byId[item.Id]=item end
+    function controls.ShowStatus() return ui.Mode~="Mobile" or State.Config.MobileShowStatus==true end
+    function controls.Visible()
+        return ui.Mode=="Mobile" and not ui.MenuOpen and State.Running and not ui.Destroyed
+            and State.Config.MobileShortcuts~=false
+    end
+    function controls.StartClosed() return ui.Mode=="Mobile" and State.Config.MobileStartClosed~=false end
+    function controls.IsOn(id)
+        if id=="UniversalTriggerbot" then return State.Config.Triggerbot or State.Config.KnifeTriggerbot end
+        if id=="KillAll" then return State.KillAll and State.KillAll.Active==true or false end
+        return State.Config[id]==true
+    end
+    function controls.Press(id)
+        if ui.Destroyed or not State.Running or ui.Mode~="Mobile" or ui.MenuOpen or C.Typing() then return false end
+        if id=="Stop" then return ui.TriggerEmergencyStop() end
+        local item=byId[id]
+        if not item or controls.Busy[id] then return false end
+        local wasOn=controls.IsOn(id)
+        controls.Busy[id]=true
+        local ok,on,reason=pcall(function()
+            if id=="KillAll" then
+                if controls.IsOn(id) then
+                    local accepted,message=State.StopKillAll()
+                    return false,accepted==false and message or nil
+                end
+                local accepted,message=ui.RunKillAll(false)
+                -- RunKillAll already reports the accepted/refused result.
+                return accepted==true,accepted==false and message or nil
+            end
+            local enabled=not wasOn
+            if id=="UniversalTriggerbot" then
+                local _,gunReason=ui.SetOption("Triggerbot",enabled)
+                local _,knifeReason=ui.SetOption("KnifeTriggerbot",enabled)
+                return controls.IsOn(id),gunReason or knifeReason
+            end
+            return ui.SetOption(id,enabled)
+        end)
+        controls.Busy[id]=nil
+        if not ui.Destroyed and State.Running then
+            if not ok then ui.Toast(item.Title.." failed", "warn")
+            elseif id~="KillAll" or wasOn then
+                ui.Toast(reason or item.Title..(on and " on" or " off"),reason and "warn" or on and "on" or "off")
+            end
+            if ui.Refresh then ui.Refresh() end
+        end
+        if not ok then return false,nil,tostring(on) end
+        return reason==nil,on,reason
+    end
+    -- Pixel layout is shared with rotation handling. The bottom 130 px stay free
+    -- for the native hotbar, movement stick and jump button at supported sizes.
+    function controls.Layout(width,height)
+        width,height=math.max(240,width),math.max(240,height)
+        local columns=height<320 and width>=480 and 3 or 2
+        local dockWidth=columns*68-4
+        local function rect(x,y,w,h)
+            return {X=math.clamp(x,6,width-w-6),Y=math.clamp(y,6,height-h-6),W=w,H=h}
+        end
+        return {Columns=columns,Dock=rect(width-dockWidth-8,8,dockWidth,columns==3 and 110 or 158),More=rect(width-dockWidth-148,8,132,110),
+            Weapon=rect(width-dockWidth-104,8,88,114),Icon=rect(8,width>=480 and 8 or 130,48,48),Fly=rect(width-dockWidth-176,8,64,114),
+            Menu={W=math.min(570,width-16),H=math.min(470,height-16)}}
+    end
+    return controls
+end
+
 local createMobileUI = function(C)
     local State, UIS, RunService = C.State, C.UIS, C.RunService
     local mobile = {MenuOpen = true, InputUntil = 0, Destroyed = false, Buttons = {}}
@@ -26252,6 +26340,9 @@ local createMobileUI = function(C)
     mobile.EmergencyActionName = emergencyAction
     local function getMode() return C.GetInputMode and C.GetInputMode() or "Mobile" end
     mobile.Mode = getMode()
+    mobile.PhoneControls=createPhoneControls({State=State,UI=mobile,Typing=function() return UIS:GetFocusedTextBox()~=nil end})
+    local startClosed=mobile.PhoneControls.StartClosed()
+    mobile.MenuOpen=not startClosed
     State.InputMode = mobile.Mode
     local syncing = false
     local toggles = {}
@@ -26317,14 +26408,22 @@ local createMobileUI = function(C)
         SideBarWidth = 156, Resizable = false, AutoScale = false, Radius=14, ElementsRadius=10,
         Acrylic = false, HideSearchBar = false, ScrollBarEnabled = true,
         OpenButton = {Enabled = false}, Topbar = {Height = 44, ButtonsType = "Default"},
+        StartClosed = startClosed,
     })
     mobile.Window = window
     if window.UIElements and window.UIElements.SideBar then
         window.UIElements.SideBar.ScrollBarThickness=3
         window.UIElements.SideBar.ScrollBarImageTransparency=.35
     end
-    window:OnOpen(function() mobile.MenuOpen = true; suppressInput() end)
-    window:OnClose(function() mobile.MenuOpen = false; suppressInput() end)
+    window:OnOpen(function()
+        mobile.MenuOpen = true; mobile.MoreOpen=false; suppressInput()
+        if mobile.UpdatePhoneControls then mobile.UpdatePhoneControls() end
+    end)
+    window:OnClose(function()
+        mobile.MenuOpen = false; suppressInput()
+        if mobile.PhoneNavList then mobile.PhoneNavList.Visible=false end
+        if mobile.UpdatePhoneControls then mobile.UpdatePhoneControls() end
+    end)
     window:OnDestroy(function()
         if State.Running then State.Destroy() end
     end)
@@ -26334,8 +26433,11 @@ local createMobileUI = function(C)
     mobile.Pages={}
     mobile.Sliders={}
     mobile.FeaturePickers={}
+    local phoneTabs={}
     local function tab(title,icon)
-        return window:Tab({Title=title,Icon=icon})
+        local result=window:Tab({Title=title,Icon=icon})
+        table.insert(phoneTabs,{Title=title,Tab=result})
+        return result
     end
     local function page(key,parent,title,icon,opened)
         local section=parent:Section({Title=title,Icon=icon,Box=true,BoxBorder=true,Opened=opened==true})
@@ -26430,6 +26532,7 @@ local createMobileUI = function(C)
         C.SyncWeapons()
         C.UpdateVisuals()
         refresh()
+        if mobile.UpdatePhoneControls then mobile.UpdatePhoneControls() end
         return State.Config[key], accepted == false and reason or nil
     end
     mobile.SetOption = setOption
@@ -26711,6 +26814,9 @@ local createMobileUI = function(C)
     option(settings,"Slot 1 equip recovery","WeaponEquipRecovery","Retries a missed native equip once; preserves normal unequip toggles and input guards.")
     mobile.EquipStatus=settings:Paragraph({Title="Weapon equip status",Desc=State.WeaponEquipRecovery.Status})
     settings:Button({Title = "Reset mobile button positions", Callback = function() if mobile.ResetPositions then mobile.ResetPositions() end end})
+    option(settings,"Phone shortcut dock","MobileShortcuts","Invis, Speed, Trigger and Aura; More holds Fly, Noclip, Dodge and Kill all.")
+    option(settings,"Start phone menu closed","MobileStartClosed","Open the full menu with the MM2 button.")
+    option(hud,"Show instructions on phone","MobileShowStatus","Off by default so the status card cannot cover your inventory.")
     if State.Settings then
         mobile.SettingsStatus=settings:Paragraph({Title="Saved settings",Desc=State.Settings.Status})
         settings:Button({Title="Reset settings",Desc="Defaults for every setting. Protected players stay.",Callback=function()
@@ -27029,7 +27135,7 @@ local createMobileUI = function(C)
     mobile.Icon = icon
     local pad = Instance.new("Frame")
     pad.Name = "WeaponTouchPad"
-    pad.Size = UDim2.fromOffset(128, 122)
+    pad.Size = UDim2.fromOffset(88, 114)
     pad.BackgroundTransparency = 1
     pad.Parent = canvas
     -- Drag grip: a short bar instead of a labelled MOVE button.
@@ -27048,36 +27154,39 @@ local createMobileUI = function(C)
         Instance.new("UICorner", grip).CornerRadius = UDim.new(1, 0)
         return handle
     end
-    local handle = gripHandle("MOVE", 128, pad)
+    local handle = gripHandle("MOVE", 88, pad)
     -- Phones have no Space or Ctrl: hold Up or Down while flying.
     local flyPad = Instance.new("Frame")
     flyPad.Name = "FlyTouchPad"
-    flyPad.Size = UDim2.fromOffset(64, 122)
+    flyPad.Size = UDim2.fromOffset(64, 114)
     flyPad.BackgroundTransparency = 1
     flyPad.Visible = false
     flyPad.Parent = canvas
     local flyHandle = gripHandle("FLY MOVE", 64, flyPad)
-    local flyUp = button("FLY UP", UDim2.fromOffset(64, 46), flyPad)
+    local flyUp = button("FLY UP", UDim2.fromOffset(64, 44), flyPad)
     flyUp.Text = "Up"
-    flyUp.Position = UDim2.fromOffset(0, 24)
-    local flyDown = button("FLY DOWN", UDim2.fromOffset(64, 46), flyPad)
+    flyUp.Position = UDim2.fromOffset(0, 20)
+    local flyDown = button("FLY DOWN", UDim2.fromOffset(64, 44), flyPad)
     flyDown.Text = "Down"
-    flyDown.Position = UDim2.fromOffset(0, 76)
+    flyDown.Position = UDim2.fromOffset(0, 70)
     mobile.FlyPad = flyPad
-    local fire = button("FIRE / STAB", UDim2.fromOffset(128, 46), pad)
+    local fire = button("FIRE / STAB", UDim2.fromOffset(88, 44), pad)
     fire.Text = "Fire"
-    fire.Position = UDim2.fromOffset(0, 24)
+    fire.Position = UDim2.fromOffset(0, 20)
     fire.BackgroundColor3 = Color3.fromRGB(26, 34, 58)
     fire.UIStroke.Color, fire.UIStroke.Transparency = look.Accent, 0.4
-    local throw = button("THROW", UDim2.fromOffset(128, 46), pad)
+    local throw = button("THROW", UDim2.fromOffset(88, 44), pad)
     throw.Text = "Throw"
-    throw.Position = UDim2.fromOffset(0, 76)
+    throw.Position = UDim2.fromOffset(0, 70)
     mobile.Buttons = {Fire = fire, Throw = throw}
     mobile.Pad = pad
     pad.Visible = false
 
     local function clamp(frame)
-        local max = canvas.AbsoluteSize - frame.AbsoluteSize - Vector2.new(6, 6)
+        -- Use assigned offsets before the next render updates AbsoluteSize after rotation.
+        local extent=Vector2.new(frame.Size.X.Scale==0 and frame.Size.X.Offset or frame.AbsoluteSize.X,
+            frame.Size.Y.Scale==0 and frame.Size.Y.Offset or frame.AbsoluteSize.Y)
+        local max = canvas.AbsoluteSize - extent - Vector2.new(6, 6)
         frame.Position = UDim2.fromOffset(
             math.clamp(frame.Position.X.Offset, 6, math.max(6, max.X)),
             math.clamp(frame.Position.Y.Offset, 6, math.max(6, max.Y)))
@@ -27203,6 +27312,112 @@ local createMobileUI = function(C)
         State.MobileActionInProgress = false
         if not ok then State.AimStatus = "Mobile input: " .. tostring(message) end
     end
+    local quickDock,moreDock,shortcutButtons
+    do
+        -- A page picker replaces the sidebar on phones, giving each setting the full width.
+        local parent=window.UIElements.Main.Main
+        local nav=button("Home  /  Pages",UDim2.new(1,-16,0,36),parent)
+        nav.Name="PhonePagePicker"; nav.Position=UDim2.fromOffset(8,48); nav.ZIndex=50
+        nav.Visible=mobile.Mode=="Mobile"
+        local list=Instance.new("ScrollingFrame")
+        list.Name="PhonePages"; list.Position=UDim2.fromOffset(8,88); list.Size=UDim2.new(1,-16,1,-96)
+        list.BackgroundColor3=look.Surface; list.BorderSizePixel=0; list.ScrollBarThickness=3
+        list.AutomaticCanvasSize=Enum.AutomaticSize.Y; list.CanvasSize=UDim2.new()
+        list.ScrollingDirection=Enum.ScrollingDirection.Y; list.Visible=false; list.ZIndex=51; list.Parent=parent
+        Instance.new("UICorner",list).CornerRadius=UDim.new(0,12)
+        local flow=Instance.new("UIListLayout",list); flow.Padding=UDim.new(0,4); flow.SortOrder=Enum.SortOrder.LayoutOrder
+        for i,entry in ipairs(phoneTabs) do
+            local pick=button(entry.Title,UDim2.new(1,-6,0,44),list)
+            pick.LayoutOrder=i; pick.ZIndex=52
+            connect(pick.Activated,function()
+                suppressInput(); entry.Tab:Select(); nav.Text=entry.Title.."  /  Pages"; list.Visible=false
+            end)
+        end
+        connect(nav.Activated,function() suppressInput(); list.Visible=not list.Visible end)
+        mobile.PhoneNav,mobile.PhoneNavList=nav,list
+        -- Selection may also change through Home links or search.
+        function mobile.SyncPhonePage()
+            for _,entry in ipairs(phoneTabs) do
+                if entry.Tab.Selected then nav.Text=entry.Title.."  /  Pages"; break end
+            end
+        end
+
+        local function panel(name)
+            local frame=Instance.new("Frame")
+            frame.Name=name; frame.BackgroundColor3=look.Surface; frame.BackgroundTransparency=.12
+            frame.Visible=false; frame.Parent=canvas
+            Instance.new("UICorner",frame).CornerRadius=UDim.new(0,12)
+            return frame
+        end
+        quickDock,moreDock=panel("PhoneShortcuts"),panel("PhoneMoreShortcuts")
+        quickDock.Size=UDim2.fromOffset(132,158); moreDock.Size=UDim2.fromOffset(132,110)
+        local dockGrip=gripHandle("MOVE SHORTCUTS",132,quickDock)
+        draggable(dockGrip,quickDock)
+        local moreGrip=gripHandle("MOVE MORE",132,moreDock)
+        draggable(moreGrip,moreDock)
+        shortcutButtons={}
+        local mainIndex,moreIndex=0,0
+        for _,entry in ipairs(mobile.PhoneControls.Items) do
+            local index
+            if entry.More then index=moreIndex; moreIndex+=1 else index=mainIndex; mainIndex+=1 end
+            local b=button(entry.Label,UDim2.fromOffset(64,44),entry.More and moreDock or quickDock)
+            b.Name=entry.Id; b.TextSize=12
+            b.Position=UDim2.fromOffset((index%2)*68,18+math.floor(index/2)*48)
+            shortcutButtons[entry.Id]=b
+            connect(b.InputBegan,suppressInput)
+            connect(b.Activated,function()
+                -- Do not bypass ordinary input blocking while an invisibility setter yields.
+                suppressInput(); mobile.PhoneControls.Press(entry.Id)
+                if entry.More then mobile.MoreOpen=false end
+                mobile.UpdatePhoneControls()
+            end)
+        end
+        local more=button("More",UDim2.fromOffset(64,44),quickDock)
+        more.Name="More"; more.TextSize=12; more.Position=UDim2.fromOffset(0,114)
+        connect(more.InputBegan,suppressInput)
+        connect(more.Activated,function()
+            action(function() mobile.MoreOpen=not mobile.MoreOpen; mobile.UpdatePhoneControls() end)
+        end)
+        local stop=button("Stop",UDim2.fromOffset(64,44),quickDock)
+        stop.Name="Stop"; stop.TextSize=12; stop.Position=UDim2.fromOffset(68,114)
+        stop.TextColor3=Color3.fromRGB(255,150,156)
+        connect(stop.InputBegan,suppressInput)
+        connect(stop.Activated,function()
+            suppressInput(); mobile.PhoneControls.Press("Stop"); mobile.MoreOpen=false; mobile.UpdatePhoneControls()
+        end)
+        mobile.ShortcutDock,mobile.MoreDock,mobile.ShortcutButtons=quickDock,moreDock,shortcutButtons
+        mobile.ShortcutGrip,mobile.ShortcutMoreButton,mobile.ShortcutStopButton=dockGrip,more,stop
+        local shownStates={}
+        function mobile.UpdatePhoneControls()
+            local shown=mobile.PhoneControls.Visible()
+            quickDock.Visible=shown
+            moreDock.Visible=shown and mobile.MoreOpen==true
+            if moreDock.Visible and not userPositioned[moreDock] then
+                local x=quickDock.Position.X.Offset-moreDock.Size.X.Offset-8
+                if x<6 then x=quickDock.Position.X.Offset+quickDock.Size.X.Offset+8 end
+                moreDock.Position=UDim2.fromOffset(x,quickDock.Position.Y.Offset)
+                clamp(moreDock)
+            end
+            more.Text=mobile.MoreOpen and "Less" or "More"
+            for _,entry in ipairs(mobile.PhoneControls.Items) do
+                local b=shortcutButtons[entry.Id]
+                local enabled=mobile.PhoneControls.IsOn(entry.Id)
+                local busy=mobile.PhoneControls.Busy[entry.Id]==true
+                local value=(enabled and 1 or 0)+(busy and 2 or 0)
+                if shownStates[entry.Id]~=value then
+                    shownStates[entry.Id]=value
+                    b.Text=(busy and "Wait…" or entry.Label)..(enabled and " •" or "")
+                    b.TextColor3=enabled and Color3.fromRGB(110,232,158) or look.Text
+                    b.UIStroke.Color=enabled and look.Accent or Color3.new(1,1,1)
+                    b.UIStroke.Transparency=enabled and .4 or .88
+                end
+            end
+            if mobile.Mode=="Mobile" then
+                pad.Visible=not mobile.MenuOpen and not moreDock.Visible and C.EquippedWeapon()~=nil
+                flyPad.Visible=not mobile.MenuOpen and not moreDock.Visible and State.Config.Fly==true
+            end
+        end
+    end
     connect(fire.Activated, function() action(C.Fire) end)
     connect(throw.Activated, function() action(C.Throw) end)
     connect(fire.InputBegan, suppressInput)
@@ -27217,6 +27432,7 @@ local createMobileUI = function(C)
     notice.TextSize = 13
     notice.FontFace = look.Medium
     notice.TextTruncate = Enum.TextTruncate.AtEnd
+    notice.Visible = false
     notice.Parent = canvas
     Instance.new("UICorner", notice).CornerRadius = UDim.new(0, 12)
     hairline(notice)
@@ -27288,6 +27504,16 @@ local createMobileUI = function(C)
         toastToken += 1
         local token = toastToken
         toastText.Text = tostring(text)
+        if mobile.Mode=="Mobile" then
+            toast.AutomaticSize=Enum.AutomaticSize.None
+            toast.Size=UDim2.fromOffset(math.min(300,canvas.AbsoluteSize.X-24),36)
+            toastText.AutomaticSize=Enum.AutomaticSize.None
+            toastText.Size=UDim2.new(1,-18,1,0)
+            toastText.TextTruncate=Enum.TextTruncate.AtEnd
+        else
+            toast.AutomaticSize=Enum.AutomaticSize.X; toast.Size=UDim2.fromOffset(0,36)
+            toastText.AutomaticSize=Enum.AutomaticSize.X; toastText.Size=UDim2.new(0,0,1,0)
+        end
         toastDot.BackgroundColor3 = typeof(tone) == "Color3" and tone or toastTones[tone] or toastTones.info
         if toast.Visible then
             toast.Position = toastPosition(0)
@@ -27394,38 +27620,60 @@ local createMobileUI = function(C)
             hudShown.Tone=data.Tone
         end
     end
+    local function positionControls()
+        local size=canvas.AbsoluteSize
+        if size.X<240 or size.Y<240 then return end -- wait for the ScreenGui's first real layout
+        local layout=mobile.PhoneControls.Layout(size.X,size.Y)
+        quickDock.Size=UDim2.fromOffset(layout.Dock.W,layout.Dock.H)
+        mobile.ShortcutGrip.Size=UDim2.fromOffset(layout.Dock.W,18)
+        local index=0
+        for _,entry in ipairs(mobile.PhoneControls.Items) do
+            if not entry.More then
+                shortcutButtons[entry.Id].Position=UDim2.fromOffset((index%layout.Columns)*68,18+math.floor(index/layout.Columns)*48)
+                index+=1
+            end
+        end
+        for _,control in ipairs({mobile.ShortcutMoreButton,mobile.ShortcutStopButton}) do
+            control.Position=UDim2.fromOffset((index%layout.Columns)*68,18+math.floor(index/layout.Columns)*48)
+            index+=1
+        end
+        local function place(frame,rect)
+            if not userPositioned[frame] then frame.Position=UDim2.fromOffset(rect.X,rect.Y) end
+            clamp(frame)
+        end
+        place(icon,layout.Icon); place(pad,layout.Weapon); place(flyPad,layout.Fly)
+        place(quickDock,layout.Dock); place(moreDock,layout.More)
+        if emergencyButton then
+            if not userPositioned[emergencyButton] then
+                emergencyButton.Position=UDim2.fromOffset(size.X-emergencyButton.Size.X.Offset-8,8)
+            end
+            clamp(emergencyButton)
+        end
+        layoutHUD()
+    end
     function mobile.ResetPositions()
         table.clear(userPositioned)
-        local size = canvas.AbsoluteSize
-        icon.Position = UDim2.fromOffset(12, math.max(62, size.Y * 0.22))
-        -- Keep the normal jump button and movement thumbstick clear by default.
-        pad.Position = UDim2.fromOffset(size.X - 252, size.Y - 207)
-        flyPad.Position = UDim2.fromOffset(size.X - 324, size.Y - 207)
-        layoutHUD()
-        if combatHUD then
-            local y=mobile.Mode=="Mobile" and 92 or size.Y-combatHUD.Size.Y.Offset-12
-            combatHUD.Position=UDim2.fromOffset(size.X/2-combatHUD.Size.X.Offset/2,y); clamp(combatHUD)
-        end
-        if emergencyButton then
-            local y=combatHUD and State.Config.CombatHUD and combatHUD.Position.Y.Offset+combatHUD.Size.Y.Offset+12 or 52
-            emergencyButton.Position=UDim2.fromOffset(size.X/2-emergencyButton.Size.X.Offset/2,y); clamp(emergencyButton)
-        end
-        clamp(icon); clamp(pad); clamp(flyPad)
+        mobile.MoreOpen=false
+        positionControls()
+        mobile.UpdatePhoneControls()
     end
     local function resized()
         local size = canvas.AbsoluteSize
-        -- Phones are short in landscape, so the menu keeps a smaller margin there.
-        local margin = mobile.Mode == "PC" and 24 or 12
-        local width = math.max(280, math.min(mobile.Mode == "PC" and 680 or 570, size.X - margin))
-        local height = math.max(240, math.min(mobile.Mode == "PC" and 520 or 470, size.Y - margin))
+        if size.X<240 or size.Y<240 then return end
+        local phone=mobile.Mode=="Mobile"
+        local menu=mobile.PhoneControls.Layout(size.X,size.Y).Menu
+        local width=phone and menu.W or math.max(280,math.min(680,size.X-24))
+        local height=phone and menu.H or math.max(240,math.min(520,size.Y-24))
         window.Size = UDim2.fromOffset(width, height)
         if not window.Closed then window:SetSize(window.Size) end
         window:SetToTheCenter()
         notice.Size = UDim2.fromOffset(math.min(300, size.X - 24), 36)
         notice.Position = UDim2.new(0.5, -notice.Size.X.Offset / 2, 0, 8)
-        clamp(icon); clamp(pad); clamp(flyPad)
-        if emergencyButton then clamp(emergencyButton) end
-        layoutHUD()
+        window.UIElements.SideBarContainer.Visible=not phone
+        window.UIElements.MainBar.Size=UDim2.new(1,phone and 0 or -window.SideBarWidth,1,-window.Topbar.Height-(phone and 48 or 0))
+        mobile.PhoneNav.Visible=phone
+        if not phone then mobile.PhoneNavList.Visible=false end
+        positionControls()
     end
     function mobile.ApplyInputMode()
         local mode = getMode()
@@ -27438,6 +27686,7 @@ local createMobileUI = function(C)
         pad.Visible = mode == "Mobile" and not mobile.MenuOpen and C.EquippedWeapon() ~= nil
         suppressInput()
         resized()
+        mobile.UpdatePhoneControls()
     end
     -- PreferredInput changes on hybrid devices and when phone peripherals are used.
     if C.GetInputMode then
@@ -27447,7 +27696,10 @@ local createMobileUI = function(C)
     end
     connect(canvas:GetPropertyChangedSignal("AbsoluteSize"), resized)
     task.defer(function()
-        if State.Running then mobile.ResetPositions(); resized() end
+        if State.Running and not mobile.Destroyed then
+            mobile.ResetPositions(); resized()
+            mobile.UpdatePhoneControls()
+        end
     end)
     local elapsed = 0
     connect(RunService.Heartbeat, function(dt)
@@ -27457,16 +27709,18 @@ local createMobileUI = function(C)
         updateDashboard()
         local item = C.EquippedWeapon()
         mobile.ApplyInputMode()
-        pad.Visible = mobile.Mode == "Mobile" and not mobile.MenuOpen and item ~= nil
-        local flying = mobile.Mode == "Mobile" and not mobile.MenuOpen and State.Config.Fly == true
+        mobile.UpdatePhoneControls()
+        mobile.SyncPhonePage()
+        local flying = mobile.Mode == "Mobile" and not mobile.MenuOpen and not moreDock.Visible and State.Config.Fly == true
         if flyPad.Visible ~= flying then flyPad.Visible = flying end
         if not flying and State.Movement and State.Movement.Vertical ~= 0 then State.Movement.Vertical = 0 end
         local fireText = item and item.Name == "Knife" and "Stab" or "Fire"
         if fire.Text ~= fireText then fire.Text = fireText end
         throw.Visible = item ~= nil and item.Name == "Knife"
-        local showHUD=combatHUD and State.Config.CombatHUD and not mobile.MenuOpen
+        local statusAllowed=mobile.PhoneControls.ShowStatus()
+        local showHUD=combatHUD and State.Config.CombatHUD and statusAllowed and not mobile.MenuOpen
         if combatHUD and mobile.LastHUDCompact~=(State.Config.CompactHUD~=false) then layoutHUD() end
-        notice.Visible = not mobile.MenuOpen and not showHUD
+        notice.Visible = not mobile.MenuOpen and not showHUD and statusAllowed
         if combatHUD then
             combatHUD.Visible=showHUD==true
             if showHUD then
@@ -27490,7 +27744,7 @@ local createMobileUI = function(C)
             for _,record in pairs(State.WeaponHandlers or {}) do
                 if record.Charging or (record.StabbingUntil or 0)>os.clock() then pendingWeapon=true; break end
             end
-            emergencyButton.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
+            emergencyButton.Visible=mobile.Mode=="Mobile" and State.Config.MobileShortcuts==false and not mobile.MenuOpen
                 and ((State.FlingQueue and State.FlingQueue.Active) or (State.KillAura and State.KillAura.Enabled) or (State.Invis and (State.Invis.Active or State.Invis.Busy)) or (fling and fling.Active) or (actions and actions.Enabled) or pendingWeapon or State.Config.AutoPickup or State.Config.AutoKnifeDodge
                     or State.Config.Triggerbot or State.Config.KnifeTriggerbot
                     or State.Config.Fly or State.Config.Noclip or State.Config.SpeedBoost or State.Config.JumpBoost or State.Config.InfiniteJump) or false

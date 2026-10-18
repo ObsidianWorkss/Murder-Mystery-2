@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.39 · Release candidate · PC + mobile**
+**v1.0.0-rc.40 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -15,6 +15,8 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ObsidianWorkss/Murder
 ```
 
 Enter your access key when prompted, then equip your gun or knife. The loader always retrieves `main.lua` from this repository's `main` branch. Re-run it after an update; the previous instance is cleaned up before the replacement starts.
+
+On phones, the full menu starts closed. Tap **MM2** to open it; use **Pages** to switch sections without a sidebar taking up the screen.
 
 Requires a compatible Roblox client scripting environment with `loadstring` and HTTP access. Some optional actions require additional executor APIs. Compatibility varies by device and executor.
 
@@ -121,6 +123,16 @@ Voting ending, map/pad changes, conflicting character actions, opening menus, Em
 
 **Map vote status** distinguishes closed voting, unavailable pads, an open vote awaiting your choice, and input/character conflicts such as an open menu or active invisibility. The support snapshot includes active-pad count, metadata source and whether a touch or position detected your choice. A disabled current board is treated as closed voting even if legacy flags are stale.
 
+## Phone shortcuts
+
+The shortcut dock is enabled by default: **Invis**, **Speed**, **Trigger**, **Aura**, **More** and **Stop**. Green text and a dot mean a feature is on. Tap again to turn it off. **Trigger** toggles gun and knife triggerbot together; it keeps their existing aim, role and weapon requirements. **Aura** uses the existing Kill aura toggle. Adding the buttons does not enable invisibility, speed, triggerbot or aura automatically.
+
+**More** holds **Fly**, **Noclip**, **Dodge** and **Kill all**. Kill all starts only when tapped; tap again during a run to stop it. While More is open, the overlapping weapon/fly controls hide. **Stop** remains directly accessible on the main dock. It is the existing Emergency stop, including character restoration when applicable.
+
+The instruction card and persistent status strip are hidden on phones by default so they cannot cover the native inventory. You can opt in through **Visuals → HUD & Alerts → Show instructions on phone**. The desktop HUD is unchanged. Short toast messages fit the phone width and disappear automatically.
+
+Drag the small grips to move the dock, weapon controls or fly controls; drag **MM2** to move the menu button. Default positions leave the bottom native-control area clear at the tested phone sizes. Rotation rearranges the dock on short landscape screens and reflows controls you have not moved. **Settings → General → Reset mobile button positions** restores the defaults. That page also holds **Phone shortcut dock** and **Start phone menu closed**; these preferences are saved. Touch layouts still need verification on a real phone.
+
 ## Controls
 
 | Action | PC | Mobile |
@@ -133,7 +145,11 @@ Voting ending, map/pad changes, conflicting character actions, opening menus, Em
 | Fly up / down | Space or jump / Ctrl | Jump or Up / Down |
 | Toggle aim assistance | F6 (rebindable) | Aim assist setting |
 | Toggle gun aim | F7 (rebindable) | Gun aim setting |
-| Toggle both triggerbots | T (rebindable) | Gun / Knife triggerbot settings |
+| Toggle both triggerbots | T (rebindable) | Trigger shortcut |
+| Toggle invisibility | F8 (rebindable) | Invis shortcut |
+| Toggle speed | G (rebindable) | Speed shortcut |
+| Toggle Kill aura | K (rebindable) | Aura shortcut |
+| Toggle knife dodge | Bind in Settings → Combat keys | More → Dodge |
 | Repair camera input | F10 (rebindable) | Repair camera input button |
 
 ### PC keybinds
@@ -175,7 +191,7 @@ Experimental actions can be rejected or corrected by the server. Use **Stop all 
 
 - **No clear target:** confirm you are in an active round, equip the weapon, and move to an unobstructed position. Gun aim requires an identified murderer.
 - **Timing checks skip a shot:** reposition or wait for steadier movement, then click again. Conservative mode checks a wider timing range and may reject shots that the previous mode would attempt. Skipped clicks are not queued for automatic firing.
-- **Triggerbot does nothing:** check its status card, close the menu, equip the weapon, and enable Aim assist and Gun aim. The target must be visible on screen with a clear firing path; predicted gun aim must stay on screen too. Knife triggerbot needs a visible opponent within 6.5 studs. Neither requires a direct cursor hit. Both reset to off after reload; press T to enable them. Kill aura pauses triggerbot while aura runs.
+- **Triggerbot does nothing:** check its status card, close the menu, equip the weapon, and enable Aim assist and Gun aim. The target must be visible on screen with a clear firing path; predicted gun aim must stay on screen too. Knife triggerbot needs a visible opponent within 6.5 studs. Neither requires a direct cursor hit. Both reset to off after reload; press T or tap the phone's Trigger shortcut to enable them. Kill aura pauses triggerbot while aura runs.
 - **Knife won't throw:** check cooldown and clear-target protection. A cancelled charge releases its local cooldown; press throw again after repositioning.
 - **Stab misses:** the opponent must be nearby and unobstructed. Server validation can still reject contact attempts.
 - **Aura does nothing:** enable Kill aura with K outside the menu, confirm your role is murderer, and check its status. Aura range changes the active radius; increasing it does not force distant damage. Teleports and stop controls can switch aura off; normal respawns now keep it enabled.
@@ -201,7 +217,7 @@ luau-compile --null main.lua loader.lua
 python tools/package.py --output dist
 ```
 
-The tests extract current functions from `main.lua` and exercise combat, slot-1 equip recovery, triggerbot acquisition and cooldowns, emergency stop, loader failure handling, and support-report privacy with mocked client state. They do not verify server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
+The tests extract current functions from `main.lua` and exercise combat, phone action dispatch and layout geometry, slot-1 equip recovery, triggerbot acquisition and cooldowns, emergency stop, loader failure handling, and support-report privacy with mocked client state. They do not verify actual touch rendering, server damage or live executor compatibility. GitHub Actions runs compilation and regression checks on pushes and pull requests.
 
 Packaging uses an explicit file list, verifies the ZIP against its per-file `MANIFEST.json`, and writes `SHA256SUMS.txt` alongside the archive. Local key files and repository metadata are not packaged.
 

@@ -1,5 +1,13 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.40
+
+- Luau 0.739 compiles both scripts. All 816 assertions pass: 142 phone controls plus the existing 674 combat, release, triggerbot, aura, equip, visibility, voting, dodge lifecycle and side-dodge assertions.
+- Extracted the shipped phone controller and bundled window startup guard. Checks cover default dock/hidden instructions/closed menu, unchanged desktop startup/HUD policy, primary versus More actions, shared setters, universal trigger toggling, mixed trigger state, actual refusal messages, errors, busy action rejection with Stop still available, deliberate Kill all start/stop, and menu/typing/input-mode/unload guards.
+- Layout checks cover 320×568, 390×844, 430×932, 568×284, 667×339, 844×354 and 1024×732 usable canvases: bounds, native bottom-control reserve, dock versus More/weapon separation, fly/menu separation, short landscape rows and menu dimensions. These are geometry/controller checks, not screenshots or native touch tests. Dragging, actual MM2 inventory placement, notches, hybrid input changes and physical phone rendering still require live checks.
+- A private one-time harness used the shipped key gate to accept the newly issued key and its trimmed lowercase form and reject an invalid key. Only the new hash is committed; the plaintext and verification harness are not packaged.
+- The listed Roblox client timed out on a targeted status/viewport probe. Live rc.40 startup and phone touch behavior remain unconfirmed.
+
 ## Release candidate 1.0.0-rc.39
 
 - Luau 0.739 compiles both scripts; 83 combat, 191 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility, 60 voting, 32 dodge lifecycle and 44 side-dodge assertions pass (674 total).

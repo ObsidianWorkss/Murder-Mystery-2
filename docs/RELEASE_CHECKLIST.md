@@ -1,16 +1,17 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.39**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.40**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle and side-teleport regression suites pass locally (674 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport and phone-control regression suites pass locally (816 assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
 
+- [ ] Phone: initial closed menu, MM2 reopen, Pages picker, full-width settings, Invis/Speed/Trigger/Aura state and behavior, More actions, direct Stop, no instruction/inventory obstruction, dragging/reset, rotation, short landscape layout, notches and hybrid input switching. Check actual touch rendering separately from the passing geometry/controller tests.
 - [ ] Side teleport: real incoming throws, correct perpendicular displacement, walls/occupied endpoints/ledges/slopes, multiple knives, walking input, mode switches, cooldown, server correction and survival. Run the expanded native TestKnifeDodge preflight before treating local geometry checks as verified.
 - [ ] Auto dodge starts on after saved Off/Emergency stop; real incoming thrown knife jump/sidestep, invisibility pause/resume, area teleport continuity, explicit off/on, focus, respawn and unload. Distinguish a chosen dodge action from actual survival.
 - [ ] Acquire/equip/fire a real gun while invisible; verify invisibility stays active, accepted shots and observer visibility separately. Weapon input during preparation must wait without revealing. Verify manual restoration and error recovery separately.
