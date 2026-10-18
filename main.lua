@@ -27390,6 +27390,7 @@ local createMobileUI = function(C)
         local shownStates={}
         function mobile.UpdatePhoneControls()
             local shown=mobile.PhoneControls.Visible()
+            icon.Visible=mobile.Mode=="Mobile" and not mobile.MenuOpen
             quickDock.Visible=shown
             moreDock.Visible=shown and mobile.MoreOpen==true
             if moreDock.Visible and not userPositioned[moreDock] then
