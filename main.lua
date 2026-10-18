@@ -17706,7 +17706,7 @@ local State = {
     RepairRequired = repairRequired,
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 1000, AuraReachVersion = "", KillAura = false, KillAuraRange = 1000, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
-        AutoPickup = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
+        AutoPickup = false, AutoRevealGun = true, MapVoteRepeat = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true,
@@ -17735,7 +17735,7 @@ local installSettings=function(C)
     local folder,path="MM2Universal","MM2Universal/settings.json"
     local canRead=type(C.ReadFile)=="function" and type(C.IsFile)=="function"
     local canWrite=type(C.WriteFile)=="function" and type(C.MakeFolder)=="function" and type(C.IsFolder)=="function"
-    local unsaved={Ping=true} -- measured every session
+    local unsaved={Ping=true,MapVoteRepeat=true} -- measured/session-only actions
     local function copy(value)
         if type(value)~="table" then return value end
         local out={}
@@ -17830,6 +17830,7 @@ end
 if previousConfig and previousConfig.MagicBullet == nil then State.Config.Aim = true end
 State.Config.Invisibility = false
 State.Config.ExperimentalInvisibility = false
+State.Config.MapVoteRepeat = false
 if State.Config.MageAnimations then State.Config.PoseEnabled = false end
 -- Replace the earlier guessed default rather than persisting it across reloads.
 if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
@@ -17842,7 +17843,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.32"
+State.Version = "1.0.0-rc.33"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17875,7 +17876,8 @@ function State.GetSupportSnapshot()
             Touch=type(firetouchinterest)=="function",FileRead=type(readfile)=="function" and type(isfile)=="function",
             FileWrite=type(writefile)=="function" and type(makefolder)=="function" and type(isfolder)=="function"},
         Settings=flags,Stats=stats,Performance=performance,
-        WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil}
+        WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil,
+        MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil}
 end
 function State.GetSupportReport()
     return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
@@ -20642,6 +20644,9 @@ local installSeatVisibility=function(C)
         if mode.Record then State.Config.Invisibility=true; refresh(); return true,mode.Status end
         local function reject(message) State.Config.Invisibility=false; mode.Status=message; refresh(); return false,message end
         if not State.Running or State.RepairRequired then return reject("Restore your normal character first") end
+        if State.Config.AutoRevealGun~=false and C.HasGun and C.HasGun() then
+            return reject("Gun owned  ·  turn off Reveal on gun pickup to go invisible")
+        end
         if State.Fling and State.Fling.Active then return reject("Stop fling before enabling invisibility") end
         if State.ReleaseFly then State.ReleaseFly() end -- fly holds PlatformStand; release it before the free-to-move check
         local char=player.Character
@@ -20699,6 +20704,9 @@ local installSeatVisibility=function(C)
         if not r or mode.Phase=="RestoreFailed" then return end
         if not State.Running then restore("Off  ·  unloaded"); return end
         if not ownsCharacter(r) then restore("Off  ·  character changed",false); return end
+        if State.Config.AutoRevealGun~=false and C.HasGun and C.HasGun() then
+            restore("Off  ·  gun acquired; character restored"); return
+        end
         if r.Root.Anchored then fail("Stopped  ·  your character is anchored"); return end
         if not finite(r.Root.Position) or r.Root.Position.Y<=world.FallenPartsDestroyHeight+16 then
             -- Avoid preserving an unsafe current position during cleanup.
@@ -20757,6 +20765,7 @@ local installSeatVisibility=function(C)
 end
 
 installSeatVisibility({State=State,Player=player,Workspace=workspace,RunService=RunService,Connect=connect,
+    HasGun=function() return toolFor(player,"Gun")~=nil end,
     Refresh=function() if refreshButtons.Invisibility then refreshButtons.Invisibility() end end,
     BeforeStart=function()
         if State.StopGunPickup then
@@ -21817,6 +21826,191 @@ installGunPickup({State=State,Player=player,Touch=type(firetouchinterest)=="func
         return closest,best
     end})
 end
+do
+-- Experimental: touches and respawns are requests; only the server controls votes.
+local installMapVoteRepeat=function(C)
+    local State=C.State
+    local clock=C.Clock or os.clock
+    local report={Status="Off",Phase="Idle",Respawns=0,Touches=0,ObservedIncrease=0,MaxRespawns=3}
+    State.MapVote=report
+    State.Config.MapVoteRepeat=false
+    local selected,contact,nextTick,armed
+    local hooks={}
+    local function cleanup()
+        if not contact then return true end
+        local r=contact
+        local ended=not r.Began or r.Ended
+        if not ended then ended=pcall(C.Touch,r.Root,r.Pad,1); r.Ended=ended end
+        local restored=pcall(C.RestorePad,r.Pad,r.Frame,r.MovedFrame)
+        if ended and restored then contact=nil; return true end
+        report.Status="Vote cleanup incomplete  ·  switch off again to retry"
+        return false
+    end
+    function State.StopMapVoteRepeat(message)
+        State.Config.MapVoteRepeat=false
+        armed=false
+        selected=nil; report.Phase="Idle"
+        for pad,hook in pairs(hooks) do hook:Disconnect(); hooks[pad]=nil end
+        local ok=cleanup()
+        if ok then report.Status=message or "Off" end
+        return ok,report.Status
+    end
+    function State.SetMapVoteRepeat(enabled)
+        if not enabled then return State.StopMapVoteRepeat() end
+        if not cleanup() then return false,report.Status end
+        if not State.Running or type(C.Touch)~="function" then
+            State.Config.MapVoteRepeat=false
+            report.Status="Map vote repeat needs the executor touch API"
+            return false,report.Status
+        end
+        if armed then return true,report.Status end
+        armed=true
+        State.Config.MapVoteRepeat=true
+        selected=nil
+        report.Respawns,report.Touches,report.ObservedIncrease=0,0,0
+        report.Phase,report.Status="Armed","Step on a map pad during voting  ·  up to 3 respawns"
+        return true,report.Status
+    end
+    function State.GetMapVoteSnapshot()
+        return {Enabled=State.Config.MapVoteRepeat==true,Phase=report.Phase,Status=report.Status,
+            Respawns=report.Respawns,Touches=report.Touches,ObservedIncrease=report.ObservedIncrease,
+            MaxRespawns=report.MaxRespawns}
+    end
+    local function findPad(pad)
+        for _,entry in ipairs(C.ReadPads()) do if entry.Pad==pad then return entry end end
+    end
+    function State.SelectMapVote(pad)
+        if not State.Running or not State.Config.MapVoteRepeat then return false end
+        local entry=findPad(pad)
+        if not entry or not entry.Voting or not entry.Map or C.Blocked() then return false end
+        if selected and selected.Pad==pad and selected.Map==entry.Map then return true end
+        if not cleanup() then State.StopMapVoteRepeat(); return false end
+        selected={Pad=pad,Map=entry.Map,InitialVotes=entry.Votes,BeforeTouch=entry.Votes,
+            ReadyAt=clock()+1,Initial=true}
+        report.Phase,report.Status="Observing","Selected "..entry.Name.."  ·  waiting before respawn"
+        return true
+    end
+    local function step()
+        if not State.Running then State.StopMapVoteRepeat("Unloaded"); return end
+        if not State.Config.MapVoteRepeat then
+            if armed or selected or contact then State.StopMapVoteRepeat() end
+            return
+        end
+        local now=clock()
+        local entries,seen=C.ReadPads(),{}
+        for _,entry in ipairs(entries) do
+            seen[entry.Pad]=true
+            if not hooks[entry.Pad] then
+                local pad=entry.Pad
+                hooks[pad]=C.Watch(pad.Touched,function(hit)
+                    if C.OwnTouch(hit) then State.SelectMapVote(pad) end
+                end)
+            end
+        end
+        for pad,hook in pairs(hooks) do if not seen[pad] then hook:Disconnect(); hooks[pad]=nil end end
+        if not selected then return end
+        local r,entry=selected,findPad(selected.Pad)
+        if not entry or not entry.Voting or entry.Map~=r.Map then
+            State.StopMapVoteRepeat("Voting ended or maps changed  ·  stopped"); return
+        end
+        report.ObservedIncrease=math.max(0,entry.Votes-r.InitialVotes)
+        if C.Blocked() then State.StopMapVoteRepeat("Stopped  ·  close menus and stop conflicting character actions"); return end
+        local char,hum,root=C.Character()
+        if report.Phase=="Touching" then
+            if char~=r.Character or not hum or hum.Health<=0 then State.StopMapVoteRepeat("Character changed during vote touch"); return end
+            if now<r.ReadyAt then return end
+            if not cleanup() then State.StopMapVoteRepeat(); return end
+            report.Phase="Observing"; r.ReadyAt=now+1.5
+            report.Status="Vote touch sent  ·  waiting for server count"
+        elseif report.Phase=="AwaitRespawn" then
+            if now>r.Deadline then State.StopMapVoteRepeat("Respawn not observed within 12 seconds  ·  stopped"); return end
+            if char==r.OldCharacter or not hum or hum.Health<=0 or not root then return end
+            r.Character,r.ReadyAt=char,now+.35; report.Phase="SpawnReady"
+        elseif report.Phase=="SpawnReady" then
+            if char~=r.Character or not hum or hum.Health<=0 or not root then State.StopMapVoteRepeat("New character unavailable  ·  stopped"); return end
+            if now<r.ReadyAt then return end
+            r.BeforeTouch=entry.Votes
+            local touch={Pad=r.Pad,Root=root,Frame=C.PadFrame(r.Pad)}
+            contact=touch
+            local ok=pcall(function()
+                touch.MovedFrame=C.MovePad(r.Pad,root)
+                touch.Began=true -- An API can throw after beginning contact; always pair it.
+                C.Touch(root,r.Pad,0)
+            end)
+            if not ok then State.StopMapVoteRepeat("Vote touch failed  ·  stopped"); return end
+            report.Touches+=1; report.Phase="Touching"; r.ReadyAt=now+.1
+        elseif report.Phase=="Observing" then
+            if now<r.ReadyAt then return end
+            if not r.Initial and entry.Votes<=r.BeforeTouch then
+                State.StopMapVoteRepeat("No additional server vote count observed  ·  stopped"); return
+            end
+            if report.Respawns>=report.MaxRespawns then State.StopMapVoteRepeat("3 respawn attempts complete  ·  stopped"); return end
+            if not char or not hum or hum.Health<=0 or not root then State.StopMapVoteRepeat("Living lobby character required  ·  stopped"); return end
+            r.Initial=false; r.OldCharacter=char; r.Deadline=now+12
+            report.Respawns+=1; report.Phase="AwaitRespawn"
+            report.Status="Respawn requested ("..report.Respawns.."/3)  ·  waiting for a new character"
+            local ok=pcall(C.Reset,hum)
+            if not ok then State.StopMapVoteRepeat("Respawn request failed  ·  stopped") end
+        end
+    end
+    C.Connect(C.Heartbeat,function()
+        local now=clock()
+        if now<(nextTick or 0) then return end
+        local ok=pcall(step)
+        if not ok then State.StopMapVoteRepeat("Map vote error  ·  stopped") end
+        nextTick=now+(report.Phase=="Touching" and .05 or .25)
+    end)
+    function State.DestroyMapVoteRepeat()
+        local ok,message=State.StopMapVoteRepeat("Unloaded")
+        if ok then for pad,hook in pairs(hooks) do hook:Disconnect(); hooks[pad]=nil end end
+        return ok,message
+    end
+end
+
+installMapVoteRepeat({State=State,Heartbeat=RunService.Heartbeat,Connect=connect,
+    Watch=function(signal,callback) return signal:Connect(callback) end,
+    Touch=type(firetouchinterest)=="function" and firetouchinterest or nil,
+    ReadPads=function()
+        local lobby=workspace:FindFirstChild("RegularLobby")
+        local folder=lobby and lobby:FindFirstChild("VoteIcons")
+        local entries={}
+        if folder then for i=1,3 do
+            local pad=folder:FindFirstChild("VotePad"..i)
+            local map=pad and pad:FindFirstChild("Map")
+            local voting=pad and pad:FindFirstChild("Voting")
+            local votes=pad and pad:FindFirstChild("Votes")
+            if pad and pad:IsA("BasePart") and map and map:IsA("ObjectValue")
+                and voting and voting:IsA("BoolValue") and votes and votes:IsA("IntValue") then
+                table.insert(entries,{Pad=pad,Map=map.Value,Name=map.Value and map.Value.Name or "Unknown map",
+                    Voting=voting.Value,Votes=votes.Value})
+            end
+        end end
+        return entries
+    end,
+    Character=function()
+        local char=player.Character
+        return char,char and char:FindFirstChildOfClass("Humanoid"),char and char:FindFirstChild("HumanoidRootPart")
+    end,
+    OwnTouch=function(hit) return player.Character and hit:IsDescendantOf(player.Character) end,
+    Blocked=function()
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil
+            or root and espInRoundArea(root.Position)
+            or State.Invis and (State.Invis.Active or State.Invis.Busy)
+            or State.Config.KillAura or State.PlayerActions and State.PlayerActions.Enabled
+    end,
+    PadFrame=function(pad) return pad.CFrame end,
+    MovePad=function(pad,root)
+        local frame=root.CFrame*CFrame.new(0,-2.7,0)
+        pad.CFrame=frame; return frame
+    end,
+    RestorePad=function(pad,original,moved)
+        if pad.Parent and (not moved or pad.CFrame==moved) then pad.CFrame=original end
+    end,
+    Reset=function(hum) hum.Health=0 end})
+end
+
 local function autoPickup() State.TickGunPickup() end
 
 function State.Destroy()
@@ -21824,6 +22018,7 @@ function State.Destroy()
     if State.SaveSettings and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then State.SaveSettings() end
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
+    if State.DestroyMapVoteRepeat then local ok,message=State.DestroyMapVoteRepeat(); if ok==false then return false,message end end
     if State.StopGhostAppearance then local ok,message=State.StopGhostAppearance(); if ok==false then return false,message end end
     if State.FlushAuraTouches and not State.FlushAuraTouches() then
         warn("Unload stopped: blade touch cleanup incomplete; retry unload")
@@ -23980,6 +24175,7 @@ local installEmergencyStop = function(C)
         end
         State.Config.AutoPickup = false
         run("pickup",function() if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then error(message) end end end)
+        run("map vote",function() if State.StopMapVoteRepeat then local ok,message=State.StopMapVoteRepeat("Emergency stop"); if ok==false then error(message) end end end)
         run("queued attacks",C.CancelWeaponActions)
         run("kill aura",function() if State.StopKillAura then
             local ok,message=State.StopKillAura("Emergency stop")
@@ -25517,6 +25713,7 @@ local installKeybinds=function(C)
         {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
         {"Combat","AutoKnifeDodge","Dodge incoming knives"},{"Combat","AutoPickup","Auto gun pickup"},
         {"Movement","InvisibleKnife","Knife while invisible"},{"Movement","AntiFling","Anti-fling"},
+        {"Movement","AutoRevealGun","Reveal on gun pickup"},{"Movement","MapVoteRepeat","Repeat chosen map vote"},
         {"Visuals","GunESP","Dropped gun ESP"},{"Visuals","CombatHUD","Combat HUD"},{"Visuals","CompactHUD","Compact HUD"},
         {"Visuals","ThreatWarning","Nearby murderer warning"},{"Visuals","AimMarker","Gun aim marker"},
         {"Visuals","CleanVisuals","Clean role visuals"},{"Visuals","StableBodyESP","Stable body colors"},
@@ -25833,6 +26030,7 @@ local createMobileUI = function(C)
     page("AntiFling",movementPage,"Anti-fling","shield")
     local movement=page("Invisibility",movementPage,"Invisibility","ghost")
     local travel=page("Teleports",movementPage,"Teleports","map-pin")
+    local voting=page("MapVoting",movementPage,"Map Voting","vote")
     local animations=page("Animations",movementPage,"Animations","sparkles")
     local visualsPage=tab("Visuals","eye")
     local visuals=page("ESP",visualsPage,"Player ESP","eye",true)
@@ -25886,6 +26084,7 @@ local createMobileUI = function(C)
         local accepted,reason=true,nil
         if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
         elseif key == "WeaponEquipRecovery" then accepted,reason=State.SetWeaponEquipRecovery(enabled)
+        elseif key == "MapVoteRepeat" then accepted,reason=State.SetMapVoteRepeat(enabled)
         elseif key == "Triggerbot" then accepted,reason=State.SetTriggerbot(enabled)
         elseif key == "KnifeTriggerbot" then accepted,reason=State.SetKnifeTriggerbot(enabled)
         elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
@@ -26037,6 +26236,7 @@ local createMobileUI = function(C)
     local canTouch = type(firetouchinterest) == "function"
     if not canTouch then State.Config.AutoPickup = false end
     local pickup = option(pickupTab, "Auto gun pickup", "AutoPickup", canTouch and "Collects a dropped gun without teleporting." or "Your executor lacks firetouchinterest.")
+    pickupTab:Button({Title="Gun pickup invisibility settings",Callback=function() mobile.OpenPage("Invisibility") end})
     if not canTouch then pickup:Lock("Executor touch API unavailable") end
     buildAutomationSettings()
     if State.StopMovement then
@@ -26098,7 +26298,8 @@ local createMobileUI = function(C)
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
-    option(movement, "Invisibility", "Invisibility", "Ghost mode. Shooting restores you first.")
+    option(movement, "Invisibility", "Invisibility", "Ghost mode. Shooting restores you first; gun pickup also restores you by default.")
+    option(movement,"Reveal on gun pickup","AutoRevealGun","Turns invisibility off when you acquire a gun. Saved and on by default.")
     mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Off"})
     movement:Button({Title="Restore character",Desc="Turns invisibility off, no reset.",Callback=function()
         suppressInput()
@@ -26113,6 +26314,13 @@ local createMobileUI = function(C)
     local invisOptions=movement
     option(invisOptions,"Knife while invisible","InvisibleKnife","Keep using your knife while invisible.")
     invisOptions:Paragraph({Title="Note",Desc="Spectators can still follow you. Coins may stop."})
+    option(voting,"Repeat chosen map vote (experimental)","MapVoteRepeat",
+        "Turn on, close the menu and step on your map's pad. Attempts up to 3 respawns and briefly moves that pad to you after each spawn. Off on reload or voting end.")
+    voting:Paragraph({Title="Server results",Desc="Extra votes are unverified. Stops if no server count increase is observed or respawn fails. Other players can also change the total."})
+    mobile.MapVoteStatus=voting:Paragraph({Title="Map vote status",Desc=State.MapVote.Status})
+    voting:Button({Title="Stop map vote repeat",Callback=function()
+        State.StopMapVoteRepeat("Stopped by user"); refresh()
+    end})
     if State.SetAnimationPack then
         local choices={"Default"}
         for _,name in ipairs(State.AnimationPackNames or {}) do table.insert(choices,name) end
@@ -26975,6 +27183,11 @@ local createMobileUI = function(C)
             mobile.InvisibilityStatus.ParagraphFrame:SetDesc(State.Invis.Status)
             mobile.LastInvisibilityStatus=State.Invis.Status
             refresh()
+        end
+        if mobile.MapVoteStatus then
+            local r=State.MapVote
+            updateDescription(mobile.MapVoteStatus,"MapVote",r.Status..("\nRespawns: %d/3 · touches: %d · observed total increase: %d"):format(r.Respawns,r.Touches,r.ObservedIncrease))
+            if toggles.MapVoteRepeat and toggles.MapVoteRepeat.Value~=State.Config.MapVoteRepeat then refresh() end
         end
         if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
         if State.AntiFling and mobile.AntiFlingStatus then updateDescription(mobile.AntiFlingStatus,"AntiFling",State.AntiFling.Status) end

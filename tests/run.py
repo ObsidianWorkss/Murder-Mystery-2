@@ -33,6 +33,27 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness = Path(directory) / "combat.luau"
     harness.write_text(template, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    voting = (root / "tests" / "voting.luau").read_text(encoding="utf-8")
+    start = source.index("local installMapVoteRepeat=function(C)")
+    end = source.index("installMapVoteRepeat({", start)
+    voting = voting.replace("-- INSERT_VOTING", source[start:end])
+    start = source.index("local installEmergencyStop = function(C)")
+    end = source.index("installEmergencyStop({", start)
+    voting = voting.replace("-- INSERT_EMERGENCY", source[start:end])
+    if "-- INSERT_" in voting:
+        raise RuntimeError("Unexpanded voting-test source marker")
+    harness.write_text(voting, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    visibility = (root / "tests" / "visibility.luau").read_text(encoding="utf-8")
+    start = source.index("local installSeatVisibility=function(C)")
+    end = source.index("installSeatVisibility({", start)
+    visibility = visibility.replace("-- INSERT_VISIBILITY", source[start:end])
+    if "-- INSERT_" in visibility:
+        raise RuntimeError("Unexpanded visibility-test source marker")
+    harness.write_text(visibility, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
     release = (root / "tests" / "release.luau").read_text(encoding="utf-8")
     start = source.index("function State.GetSupportSnapshot()")
     end = source.index('if State.Config.ESPStyleVersion', start)

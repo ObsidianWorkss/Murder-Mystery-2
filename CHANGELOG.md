@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.33 — 2026-10-18
+
+- Added saved, default-on Reveal on gun pickup: a gun in the backpack or character restores invisibility, including preparation phases. Owning a gun refuses a new activation while this preference is on. Existing restore error handling and shooting restoration remain.
+- Added experimental Movement → Map Voting. Enable, then step on a live map pad to select it. Attempts at most three respawns, waits for a new living character, briefly moves the selected pad locally for one paired touch and restores it. Requests and changes in the server's total vote count are shown separately; extra votes are unverified.
+- Stops on unchanged counts after a repeat touch, a 12-second respawn timeout, voting/map changes, conflicts, menus, errors, off, Emergency stop and unload. Never resumes from saved settings. Both new controls have unbound Movement key options.
+
 ## 1.0.0-rc.32 — 2026-10-18
 
 - Added guarded recovery for missed native slot-1 weapon equips, on by default with a saved General setting. It observes input without binding/consuming 1, waits 120 ms, and makes at most one normal EquipTool call if the same single owned weapon stayed in the backpack without an equip-state change.

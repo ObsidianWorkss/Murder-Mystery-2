@@ -566,7 +566,7 @@ do
     end
     local function defaults()
         return {Aim=true,Fly=false,WalkSpeed=24,Ping=0.04,MenuTheme="Midnight",Keybinds=false,ExcludedPlayers={},AnimationPack="Mage",
-            KillAllMode="Burst",TargetPriority="Nearest",PerformancePreset="Balanced"}
+            KillAllMode="Burst",TargetPriority="Nearest",PerformancePreset="Balanced",AutoRevealGun=true,MapVoteRepeat=false}
     end
     local function start(overrides)
         local State={Config=defaults()}
@@ -584,6 +584,7 @@ do
     first.Config.WalkSpeed,first.Config.Fly,first.Config.MenuTheme,first.Config.Ping=40,true,"Light",0.2
     first.Config.Keybinds={Menu="F4",Fly="G"}
     first.Config.KillAllMode,first.Config.TargetPriority,first.Config.PerformancePreset="Aimed throws","Sheriff first","Low effects"
+    first.Config.AutoRevealGun,first.Config.MapVoteRepeat=false,true
     first.Config.ExcludedPlayers["123"]={UserId=123,Name="friend",DisplayName="friend"}
     first.SaveSettings()
     check(writes==2,"a change is written once")
@@ -594,6 +595,11 @@ do
         "saved keybinds load")
     check(second.Config.ExcludedPlayers["123"] and second.Config.ExcludedPlayers["123"].Name=="friend","protected players load")
     check(second.Config.Ping==0.04,"ping is measured each session, never loaded")
+    check(second.Config.AutoRevealGun==false,"gun pickup reveal preference is saved and restored")
+    check(second.Config.MapVoteRepeat==false,"map vote respawns never resume from saved settings")
+    files[path]=Http:JSONEncode({Version=1,Config={MapVoteRepeat=true,AutoRevealGun=true}})
+    local session=start()
+    check(not session.Config.MapVoteRepeat and session.Config.AutoRevealGun,"older files cannot arm map vote respawns")
     check(second.Config.KillAllMode=="Aimed throws" and second.Config.TargetPriority=="Sheriff first" and second.Config.PerformancePreset=="Low effects",
         "mode, priority and performance preset survive saved-settings reload")
     check(second.DefaultConfig.WalkSpeed==24 and second.DefaultConfig.ExcludedPlayers["123"]==nil,"defaults are kept apart from saved values")

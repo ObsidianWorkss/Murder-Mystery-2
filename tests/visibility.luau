@@ -1,0 +1,81 @@
+local passed=0
+local function check(ok,message) assert(ok,message); passed+=1; print("PASS: "..message) end
+local vmeta={}
+local function vec(x,y,z) return setmetatable({X=x,Y=y,Z=z},vmeta) end
+vmeta.__sub=function(a,b) return vec(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
+vmeta.__add=function(a,b) return vec(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end
+vmeta.__index=function(v,key) if key=="Magnitude" then return math.sqrt(v.X*v.X+v.Y*v.Y+v.Z*v.Z) end end
+local fm={}
+local function frame(x,y,z) return setmetatable({Position=vec(x,y,z)},fm) end
+fm.__add=function(a,b) local p=a.Position+b; return frame(p.X,p.Y,p.Z) end
+local Vector3={zero=vec(0,0,0),new=vec}
+-- INSERT_VISIBILITY
+local function signal()
+    local s={}
+    function s:Connect(fn) self.Callback=fn; return {Disconnect=function() self.Callback=nil end} end
+    function s:Fire(...) if self.Callback then self.Callback(...) end end
+    return s
+end
+local function fixture()
+    local f={Now=10,Pre=signal(),Char={Parent=true}}
+    f.Hum={Parent=f.Char,Health=100}
+    f.Root={Parent=f.Char,CFrame=frame(10,5,0),Position=vec(10,5,0)}
+    f.Hum.RootPart=f.Root
+    f.Root.AssemblyRootPart=f.Root
+    function f.Char:FindFirstChildOfClass() return f.Hum end
+    function f.Char:FindFirstChild(name) return name=="HumanoidRootPart" and f.Root or nil end
+    f.Player={Character=f.Char,CharacterAdded=signal(),CharacterRemoving=signal()}
+    f.State={Running=true,Config={AutoRevealGun=true}}
+    installSeatVisibility({State=f.State,Player=f.Player,Workspace={FallenPartsDestroyHeight=-500},
+        NewInstance=function() error("unexpected instance creation") end,
+        RunService={PreSimulation=f.Pre},Connect=function(s,fn) return s:Connect(fn) end,
+        Clock=function() return f.Now end,HasGun=function() return f.Gun=="Backpack" or f.Gun=="Character" end})
+    function f.StartActive(phase)
+        local seat={Parent=f.Char}
+        function seat:Destroy() if f.SeatError then error("seat removal") end; self.Parent=nil end
+        local weld={Parent=seat}; function weld:Destroy() self.Parent=nil end
+        f.Seat,f.Weld=seat,weld; f.Root.AssemblyRootPart=seat
+        local r={Character=f.Char,Humanoid=f.Hum,Root=f.Root,StartFrame=frame(0,5,0),ParkFrame=frame(0,4096,0),
+            LocalReady=phase=="Active",Seat=seat,Weld=weld,Started=f.Now,Attached=f.Now}
+        f.State.Invis.Record=r
+        f.State.Invis.Phase=phase or "Active"; f.State.Invis.Active=phase=="Active"
+        f.State.Invis.Busy=phase~="Active"; f.State.Config.Invisibility=true
+        return r
+    end
+    return f
+end
+
+for _,phase in ipairs({"Parking","Attaching","Active"}) do
+    for _,where in ipairs({"Backpack","Character"}) do
+        local f=fixture(); f.StartActive(phase); local current=f.Root.CFrame
+        f.Gun=where; f.Pre:Fire()
+        check(not f.State.Invis.Record and not f.State.Invis.Active and not f.State.Invis.Busy
+            and not f.State.Config.Invisibility and f.State.Invis.Phase=="Off",
+            where.." gun restores visibility during "..phase)
+        check(not f.Seat.Parent and not f.Weld.Parent,where.." gun cleans up owned seat assembly during "..phase)
+        if phase=="Active" then check(f.Root.CFrame==current,"active gun reveal preserves current safe position") end
+    end
+end
+do
+    local f=fixture(); f.StartActive("Active"); f.Pre:Fire()
+    check(f.State.Invis.Record~=nil and f.State.Invis.Active,"no gun leaves a stable invisible character alone")
+    f.State.Config.AutoRevealGun=false; f.Gun="Backpack"; f.Pre:Fire()
+    check(f.State.Invis.Active,"explicitly disabling gun reveal preserves invisibility")
+    f.State.Config.AutoRevealGun=true; f.Pre:Fire()
+    check(not f.State.Invis.Record,"enabling gun reveal while already owning a gun restores next simulation tick")
+    f=fixture(); f.Gun="Backpack"
+    local ok=f.State.SetInvisibility(true)
+    check(ok==false and not f.State.Invis.Record and not f.State.Config.Invisibility,"owning a gun refuses new invisibility before character movement")
+    f=fixture(); f.Gun="Backpack"; f.State.Config.AutoRevealGun=false
+    check(f.State.SetInvisibility(true)==true and f.State.Invis.Phase=="Parking","gun owners can explicitly opt into invisibility")
+    f=fixture(); f.State.SetInvisibility(true); f.Gun="Backpack"; f.Pre:Fire()
+    check(not f.State.Invis.Record and f.State.Invis.Phase=="Off","actual preparation is cancelled if a gun arrives before attachment")
+    f=fixture(); f.StartActive("Active"); f.Gun="Backpack"; f.SeatError=true; f.Pre:Fire()
+    check(f.State.Invis.Phase=="RestoreFailed" and f.State.Invis.Record~=nil and f.State.Invis.Busy,
+        "failed gun reveal retains the assembly record and reports incomplete restoration")
+    f.SeatError=false; f.State.SetInvisibility(false)
+    check(not f.State.Invis.Record and not f.State.Invis.Busy,"failed gun reveal can be restored on retry")
+    f=fixture(); f.StartActive("Active"); f.Gun="Backpack"; f.State.Config.AutoRevealGun=nil; f.Pre:Fire()
+    check(not f.State.Invis.Record,"missing older gun-reveal setting defaults to enabled")
+end
+print(passed.." visibility assertions passed")

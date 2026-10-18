@@ -1,6 +1,6 @@
 # MM2 Universal
 
-**v1.0.0-rc.32 · Release candidate · PC + mobile**
+**v1.0.0-rc.33 · Release candidate · PC + mobile**
 
 Murder Mystery 2 script with a bundled WindUI menu, PC and mobile controls, role-aware gun aim, predicted knife throws, ESP, and player tools.
 
@@ -94,6 +94,18 @@ MM2 uses its own hotbar for **1**; the script keeps that key reserved and does n
 Normal equips and holsters, rapid toggles, consumed UI input, menus, chat, focus loss, multiple weapons, missing handles, character/tool replacement and unload prevent or cancel recovery. Processed input requires an observed native slot action. Weapon firing cooldown does not incorrectly prevent equipping. The preference is saved.
 
 **Weapon equip status**, next to the setting, retains the outcome and press/recovery/skip/failure counts. **Copy support report** includes these counters, native-action/input observations and the last weapon location without raw errors or player identities. If 1 fails again, use that status to distinguish a missing owned tool, inactive hotbar, consumed input or failed local equip. The reported intermittent failure has not yet been reproduced during an active weapon round.
+
+## Gun pickup and invisibility
+
+**Movement → Invisibility → Reveal on gun pickup** is on by default and saved. Acquiring an owned gun in your backpack or hands turns invisibility off on the next simulation tick and restores the local character assembly. It also cancels invisibility preparation if the gun arrives during that transition. With this preference on, already owning a gun refuses a new invisibility activation. Turn the preference off to keep invisibility after pickup; shooting still restores your character first. Failed restoration remains visible in the status and can be retried with **Restore character**.
+
+## Experimental map voting
+
+Under **Movement → Map Voting**, enable **Repeat chosen map vote**, close the menu, and step on your chosen map's pad during an active vote. This explicitly opts into up to **three character respawns** for that activation. After each new character appears, the script briefly moves the selected pad locally to your feet, requests a paired touch, then restores its position.
+
+This is an experimental attempt at the respawn voting behavior, **not verified vote duplication**. The server controls vote eligibility and totals; moving an anchored pad locally does not move it on the server. The status separates respawn requests, touch requests and the observed total increase, which can also come from other players. If no count increase follows a repeat touch, the script stops rather than continuing to reset you. No new character within 12 seconds also stops the attempt.
+
+Voting ending, map/pad changes, conflicting character actions, opening menus, Emergency stop, switching off and unloading cancel the run and clean up pending touches and pad movement. The toggle always starts off and is never saved. Both new controls have optional unbound keys in **Settings → Movement keys**.
 
 ## Controls
 

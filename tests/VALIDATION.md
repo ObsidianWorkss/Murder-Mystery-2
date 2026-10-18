@@ -1,5 +1,13 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.33
+
+- Luau 0.739 compiles both scripts; 83 combat, 188 release, 58 triggerbot, 145 aura, 32 equip, 23 visibility and 38 voting assertions pass (567 total). New suites extract the shipped visibility and voting controllers, not copies of their implementations.
+- Gun reveal tests cover backpack/equipped acquisition during Parking, Attaching and Active, seat/weld cleanup, preservation of current safe position, actual preparation cancellation, opt-out, already-owned refusal, missing older defaults and restoration failure/retry. Saved-settings tests persist the preference and refuse to load voting automation from older files.
+- Voting tests cover no actions on enable, own versus other-player touches, first reset, new-character detection, paired touch and pad restoration, unchanged count cancellation, three-attempt maximum despite growing totals, voting/map/pad changes, conflicts, character changes, unload, respawn timeout, missing API/map, begin/reset/restore errors, newer external pad positions, direct off, menu preassignment and Emergency stop. Total-count changes are not attributed to the local player.
+- Read-only inspection found RegularLobby.VoteIcons.VotePad1–3 with Map ObjectValue, Voting BoolValue and Votes IntValue. The voting Script runs on the server, and its source was not available; no verified reset/vote remote was found. The experiment uses an ordinary local humanoid death request and paired executor touches, with bounded timeout if no respawn follows.
+- Live rc.33 startup verified running state, default-on gun reveal, Map Voting page/status card, both optional keys unbound, support snapshot and zero respawns/touches. Console reported rc.33 loaded. No resets or votes were requested for the startup check. Real gun pickup/observer visibility, respawn behavior during voting and duplicate server votes remain unverified.
+
 ## Release candidate 1.0.0-rc.32
 
 - Luau 0.739 compiles both scripts; 83 combat, 185 release, 58 triggerbot, 145 aura and 32 equip assertions pass (503 total). The equip suite extracts the shipped recovery controller.
