@@ -25,7 +25,7 @@ local function fixture(noTouch)
     end
     installMapVoteRepeat({State=f.State,Clock=function() return f.Now end,Heartbeat=f.Heartbeat,
         Connect=function(s,fn) return s:Connect(fn) end,Watch=function(s,fn) return s:Connect(fn) end,
-        Touch=not noTouch and touch or nil,ReadPads=function() return f.Removed and {} or {f.Entry} end,
+        Touch=not noTouch and touch or nil,ReadPads=function() return f.Removed and {} or f.ReadOverride and f.ReadOverride() or {f.Entry} end,
         OwnTouch=function(hit) return hit==f.Root end,Blocked=function() return f.Blocked end,
         OnPad=function() return f.InPad==true end,
         Character=function() return f.Char,f.Hum,f.Root end,
@@ -52,6 +52,7 @@ do
     check(not f.State.Config.MapVoteRepeat,"voting automation always starts off, including after reload")
     f.Enable(); f.Advance(10)
     check(f.Resets==0 and f.Begins==0,"enabling alone never respawns or touches a map")
+    check(f.State.MapVote.Status:find("Voting is open",1,true),"armed status explains that voting is open but no map has been selected")
     f.Pad.Touched:Fire({}); f.Advance(2)
     check(f.Resets==0,"another player's touch cannot select your map")
     f.Select(); f.Advance(.5)
@@ -126,6 +127,12 @@ do
     check(f.ResetCharacter==f.Char,"reset receives the exact character that cast the vote")
     f=fixture(); f.FirstReset(); f.ApproachError=true; f.Spawn()
     check(f.Begins==0 and not f.State.Config.MapVoteRepeat,"failed physical approach stops before sending a fake contact")
+    f=fixture(); f.Entry.Voting=false; f.Enable()
+    check(f.State.MapVote.Status=="Waiting for map voting to open" and f.State.MapVote.ActivePads==0,"closed voting has an explicit waiting reason")
+    f=fixture(); f.Blocked="Close the script menu"; f.Enable(); f.Select(); f.Advance(2)
+    check(f.Resets==0 and f.State.MapVote.Status:find("Close the script menu",1,true),"input conflict reports the exact reason without resetting")
+    f=fixture(); f.Removed=true; f.Enable()
+    check(f.State.MapVote.Status:find("Voting pads unavailable",1,true),"missing pads report a separate waiting reason")
 end
 
 do
@@ -144,6 +151,43 @@ do
         "actual detector is paired with the same numbered display's server voting metadata")
     check(#readMapVotePads(node("Workspace",{RegularLobby=node("Model",{VoteIcons=node("Model",{VotePad1=icon})})}))==0,
         "display-only geometry cannot become a voting target")
+    local label=node("TextLabel"); label.Text="House 2"
+    local count=node("TextLabel"); count.Text="Votes: 2"
+    local parts={MapName=label,Votes=count}
+    local container=node("Frame",parts); container.Visible=true
+    local guichildren={Container=container}
+    local gui=node("SurfaceGui",guichildren); gui.Enabled=true
+    local model=node("Model",{VoteInfoGui=gui,Pad=detector})
+    local children={VoteIcons=node("Model",{VotePad1=icon}),VotePads=node("Model",{Detector1=detector}),VotePad1=model}
+    local world=node("Workspace",{RegularLobby=node("Model",children)})
+    icon:FindFirstChild("Map").Value=nil; icon:FindFirstChild("Voting").Value=false; icon:FindFirstChild("Votes").Value=0
+    entries=readMapVotePads(world)
+    check(entries[1].Voting and entries[1].Map=="House 2" and entries[1].Votes==2 and entries[1].Source=="VotingBoard",
+        "live enabled board overrides legacy false/nil/zero fields observed in the real failure")
+    local identity=entries[1].Map
+    check(readMapVotePads(world)[1].Map==identity,"board map identity remains stable between adapter reads")
+    gui.Enabled=false; icon:FindFirstChild("Voting").Value=true; icon:FindFirstChild("Map").Value={Name="Stale"}
+    check(not readMapVotePads(world)[1].Voting,"disabled current board cannot fall back to stale legacy active flags")
+    gui.Enabled=true; container.Visible=false
+    check(not readMapVotePads(world)[1].Voting,"hidden voting container is not an active vote")
+    container.Visible=true; parts.MapName=nil
+    check(not readMapVotePads(world)[1].Voting,"partially loaded board never falls back to stale legacy metadata")
+    guichildren.Container=nil
+    check(not readMapVotePads(world)[1].Voting,"missing current board container waits without crashing or using stale values")
+    guichildren.Container=container
+    parts.MapName=label; count.Text="Waiting..."
+    check(not readMapVotePads(world)[1].Voting,"unreadable current vote count cannot start a reset")
+    count.Text="Votes: 2"; children.VoteIcons=nil; children.VotePads=nil
+    check(readMapVotePads(world)[1].Pad==detector and readMapVotePads(world)[1].Voting,
+        "current board and native Pad work even without legacy icon and detector folders")
+    local f=fixture(); model=node("Model",{VoteInfoGui=gui,Pad=f.Pad}); f.Pad.IsA=function(_,class) return class=="BasePart" end
+    world=node("Workspace",{RegularLobby=node("Model",{VotePad1=model})})
+    f.ReadOverride=function() return readMapVotePads(world) end
+    f.FirstReset()
+    check(f.Resets==1 and f.State.MapVote.Detection=="Touch" and f.State.MapVote.MetadataSource=="VotingBoard",
+        "shipped controller and board adapter start a reset after a genuine map-pad touch")
+    f.Spawn(); count.Text="Votes: 3"; f.FinishTouch(false)
+    check(f.Resets==2 and f.State.MapVote.ObservedIncrease==1,"board count updates drive the next repeated reset")
     local breaks=0; local char={BreakJoints=function() breaks+=1 end}; local hum={Health=100,Parent=char}
     resetMapVoteCharacter(hum,char)
     check(hum.Health==0 and breaks==1,"reset adapter requests death and breaks the current character's joints")

@@ -1,5 +1,12 @@
 # Validation — 2026-10-18
 
+## Release candidate 1.0.0-rc.37
+
+- Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility and 60 voting assertions pass (594 total).
+- Reproduced rc.36's failure live with a temporary read-only observer. During an open voting window, the user's character touched both VotePad1.Pad and VotePads.Detector1, but the controller stayed Armed with zero resets. VoteInfoGui was enabled and its displayed count increased from 0 to 2, while every legacy Voting flag stayed false, Map stayed nil and Votes stayed 0. Count changes are not attributed to the user's vote.
+- Extracted adapter/controller tests reproduce current enabled boards with obsolete false/nil/zero legacy values, ensure board count changes drive repeat progress, and cover disabled/hidden/incomplete/unreadable boards, missing containers, legacy-folder absence, stable map identity and precise waiting reasons. Current boards take precedence; fallback is for board absence only.
+- Live rc.37 startup verified running state, the user's previously enabled repeat toggle restored for this active test, menu closed, metadata source VotingBoard and the correct closed-voting waiting status. Reset/re-vote acceptance and attributed extra votes remain end-to-end checks.
+
 ## Release candidate 1.0.0-rc.36
 
 - Luau 0.739 compiles both scripts; 83 combat, 187 release, 58 triggerbot, 145 aura, 32 equip, 29 visibility and 46 voting assertions pass (580 total).

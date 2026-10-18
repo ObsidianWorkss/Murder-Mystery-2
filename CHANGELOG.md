@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.37 — 2026-10-18
+
+- Fixed the live failure where an actual pad touch during voting never selected a map. Current MM2 updates VoteInfoGui visibility/map/count while legacy VoteIcons Voting/Map/Votes remain false/nil/zero. The reader now prefers current boards and uses legacy metadata only when no current board exists.
+- Disabled, hidden, incomplete or unreadable boards cannot start resets through stale legacy flags. A native Pad can serve as the physical target without legacy folders.
+- Waiting status now distinguishes voting closed, missing pads, selection needed and named input/character conflicts. Support diagnostics include active-pad count, metadata source and selection detection method.
+
 ## 1.0.0-rc.36 — 2026-10-18
 
 - Fixed map voting targeting display icons instead of the actual VotePads.Detector1–3 touch triggers. Display metadata is matched by slot; standing inside a detector can select it when Touched was missed.

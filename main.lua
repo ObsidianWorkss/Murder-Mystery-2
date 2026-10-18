@@ -17843,7 +17843,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.36"
+State.Version = "1.0.0-rc.37"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21829,7 +21829,8 @@ do
 local installMapVoteRepeat=function(C)
     local State=C.State
     local clock=C.Clock or os.clock
-    local report={Status="Off",Phase="Idle",Respawns=0,Touches=0,ObservedIncrease=0,MaxRespawns=3}
+    local report={Status="Off",Phase="Idle",Respawns=0,Touches=0,ObservedIncrease=0,MaxRespawns=3,
+        ActivePads=0,MetadataSource="Unavailable",Detection="None"}
     State.MapVote=report
     State.Config.MapVoteRepeat=false
     local selected,contact,nextTick,armed
@@ -21865,25 +21866,30 @@ local installMapVoteRepeat=function(C)
         State.Config.MapVoteRepeat=true
         selected=nil
         report.Respawns,report.Touches,report.ObservedIncrease=0,0,0
+        report.Detection="None"
         report.Phase,report.Status="Armed","Step on a map pad during voting  ·  up to 3 respawns"
         return true,report.Status
     end
     function State.GetMapVoteSnapshot()
         return {Enabled=State.Config.MapVoteRepeat==true,Phase=report.Phase,Status=report.Status,
             Respawns=report.Respawns,Touches=report.Touches,ObservedIncrease=report.ObservedIncrease,
-            MaxRespawns=report.MaxRespawns}
+            MaxRespawns=report.MaxRespawns,ActivePads=report.ActivePads,MetadataSource=report.MetadataSource,
+            Detection=report.Detection}
     end
     local function findPad(pad)
         for _,entry in ipairs(C.ReadPads()) do if entry.Pad==pad then return entry end end
     end
-    function State.SelectMapVote(pad)
+    function State.SelectMapVote(pad,source)
         if not State.Running or not State.Config.MapVoteRepeat then return false end
         local entry=findPad(pad)
-        if not entry or not entry.Voting or not entry.Map or C.Blocked() then return false end
+        if not entry or not entry.Voting or not entry.Map then return false end
+        local blocked=C.Blocked()
+        if blocked then report.Status="Vote detected  ·  "..(type(blocked)=="string" and blocked or "character/input conflict"); return false end
         if selected and selected.Pad==pad and selected.Map==entry.Map then return true end
         if not cleanup() then State.StopMapVoteRepeat(); return false end
         selected={Pad=pad,Map=entry.Map,InitialVotes=entry.Votes,BeforeTouch=entry.Votes,
             ReadyAt=clock()+1,Initial=true}
+        report.Detection=source or "Manual"
         report.Phase,report.Status="Observing","Selected "..entry.Name.."  ·  waiting before respawn"
         return true
     end
@@ -21900,16 +21906,24 @@ local installMapVoteRepeat=function(C)
             if not hooks[entry.Pad] then
                 local pad=entry.Pad
                 hooks[pad]=C.Watch(pad.Touched,function(hit)
-                    if C.OwnTouch(hit) then State.SelectMapVote(pad) end
+                    if C.OwnTouch(hit) then State.SelectMapVote(pad,"Touch") end
                 end)
             end
         end
         for pad,hook in pairs(hooks) do if not seen[pad] then hook:Disconnect(); hooks[pad]=nil end end
+        report.ActivePads=0
+        report.MetadataSource=entries[1] and entries[1].Source or "Unavailable"
+        for _,entry in ipairs(entries) do if entry.Voting and entry.Map then report.ActivePads+=1 end end
         if not selected then
-            if C.OnPad and not C.Blocked() then
+            local blocked=C.Blocked()
+            if #entries==0 then report.Status="Voting pads unavailable  ·  waiting for lobby"
+            elseif report.ActivePads==0 then report.Status="Waiting for map voting to open"
+            elseif blocked then report.Status="Waiting  ·  "..(type(blocked)=="string" and blocked or "character/input conflict")
+            else report.Status="Voting is open  ·  step on your chosen map pad" end
+            if C.OnPad and not blocked then
                 for _,entry in ipairs(entries) do
                     if entry.Voting and entry.Map and C.OnPad(entry.Pad) then
-                        State.SelectMapVote(entry.Pad); break
+                        State.SelectMapVote(entry.Pad,"Position"); break
                     end
                 end
             end
@@ -21920,7 +21934,8 @@ local installMapVoteRepeat=function(C)
             State.StopMapVoteRepeat("Voting ended or maps changed  ·  stopped"); return
         end
         report.ObservedIncrease=math.max(0,entry.Votes-r.InitialVotes)
-        if C.Blocked() then State.StopMapVoteRepeat("Stopped  ·  close menus and stop conflicting character actions"); return end
+        local blocked=C.Blocked()
+        if blocked then State.StopMapVoteRepeat("Stopped  ·  "..(type(blocked)=="string" and blocked or "character/input conflict")); return end
         local char,hum,root=C.Character()
         if report.Phase=="Touching" then
             if char~=r.Character or not hum or hum.Health<=0 then State.StopMapVoteRepeat("Character changed during vote touch"); return end
@@ -21986,18 +22001,32 @@ local function readMapVotePads(world)
     local folder=lobby and lobby:FindFirstChild("VoteIcons")
     local detectors=lobby and lobby:FindFirstChild("VotePads")
     local entries={}
-    if folder and detectors then for i=1,3 do
-        local pad=detectors:FindFirstChild("Detector"..i)
-        local icon=folder:FindFirstChild("VotePad"..i)
+    if not lobby then return entries end
+    for i=1,3 do
+        local model=lobby:FindFirstChild("VotePad"..i)
+        local pad=detectors and detectors:FindFirstChild("Detector"..i) or model and model:FindFirstChild("Pad")
+        local gui=model and model:FindFirstChild("VoteInfoGui")
+        local container=gui and gui:FindFirstChild("Container")
+        local label=container and container:FindFirstChild("MapName")
+        local count=container and container:FindFirstChild("Votes")
+        local icon=folder and folder:FindFirstChild("VotePad"..i)
         local map=icon and icon:FindFirstChild("Map")
         local voting=icon and icon:FindFirstChild("Voting")
         local votes=icon and icon:FindFirstChild("Votes")
-        if pad and pad:IsA("BasePart") and map and map:IsA("ObjectValue")
+        -- Current MM2 updates these server-owned boards while legacy icon values stay false/nil/0.
+        -- A present but disabled board means voting is closed; never fall back to stale legacy flags.
+        if pad and pad:IsA("BasePart") and gui and gui:IsA("SurfaceGui") then
+            local name=label and label:IsA("TextLabel") and label.Text:match("^%s*(.-)%s*$") or ""
+            local total=count and count:IsA("TextLabel") and tonumber(count.Text:match("%d+")) or nil
+            table.insert(entries,{Pad=pad,Map=name~="" and name or nil,Name=name,Slot=i,
+                Voting=gui.Enabled and container~=nil and container.Visible and name~="" and total~=nil,
+                Votes=total or 0,Source="VotingBoard"})
+        elseif pad and pad:IsA("BasePart") and map and map:IsA("ObjectValue")
             and voting and voting:IsA("BoolValue") and votes and votes:IsA("IntValue") then
             table.insert(entries,{Pad=pad,Map=map.Value,Name=map.Value and map.Value.Name or "Unknown map",
-                Voting=voting.Value,Votes=votes.Value})
+                Voting=voting.Value,Votes=votes.Value,Source="LegacyValues",Slot=i})
         end
-    end end
+    end
     return entries
 end
 
@@ -22022,10 +22051,15 @@ installMapVoteRepeat({State=State,Heartbeat=RunService.Heartbeat,Connect=connect
     Blocked=function()
         local char=player.Character
         local root=char and char:FindFirstChild("HumanoidRootPart")
-        return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil
-            or root and espInRoundArea(root.Position)
-            or State.Invis and (State.Invis.Active or State.Invis.Busy)
-            or State.Config.KillAura or State.PlayerActions and State.PlayerActions.Enabled
+        if GuiService.MenuIsOpen then return "Close the Roblox menu" end
+        if UIS:GetFocusedTextBox() then return "Finish typing" end
+        if State.MobileUI.MenuOpen then return "Close the script menu" end
+        if State.Fling and State.Fling.Active or State.FlingQueue and State.FlingQueue.Active then return "Stop fling" end
+        if State.Invis and (State.Invis.Active or State.Invis.Busy) then return "Invisibility is active" end
+        if State.Config.KillAura then return "Stop kill aura" end
+        if State.PlayerActions and State.PlayerActions.Enabled then return "Stop automatic attacks" end
+        if root and espInRoundArea(root.Position) then return "Waiting until you are in the lobby" end
+        if mobileBlocked() then return "Waiting for menu input to settle" end
     end,
     ApproachPad=function(root,pad)
         if State.ReleaseFly then State.ReleaseFly() end
