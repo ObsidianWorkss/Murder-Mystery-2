@@ -2,6 +2,10 @@
 
 ## Unreleased — standalone farm
 
+- Add an opt-in `auto-farm-low-graphics.lua` loader using the existing Underground farm. Request 3D-off and a 20 FPS cap only with capability checks; save available prior values, retain lower caps, respect later FPS changes and expose retryable cleanup diagnostics. Restore on Stop/replacement and carry the mode through reconnect. Normal loaders leave graphics untouched. This does not launch clients or validate 99-player operation.
+- All five scripts compile; 171 farm assertions plus the existing 1,017 pass (1,188 total). Nineteen new checks exercise graphics capability/failure/cleanup and reconnect preference. No game bridge was connected for live rendering, FPS, pickup or resource measurements. The new loader is included in packaging and CI.
+
+
 - Added independent `auto-farm.lua` with no menu or key prompt. Ground paths are the normal loader's default; `auto-farm-underground.lua` selects experimental prone/noclip CFrame tweens. Skip collected or unreachable pickups, pause on death/freeze/conflicting movement and stop with End or the public stop function.
 - Underground travel uses 48 studs/second with 12 studs/second sink/pickup stages. Preserve the main script's speed-boost preference in this mode. Cancel active tweens on stop/round changes, restore tracked collision/control values and attempt nearby upright surface recovery. Remove the cleanup return-to-origin teleport, reject distant recovery points, validate actual tween arrival and avoid competing rotation controllers.
 - Stop for full bags and request one reset per round only after a server capacity event confirms fullness. Resume selection in a later round; never repeatedly reset the lobby character.

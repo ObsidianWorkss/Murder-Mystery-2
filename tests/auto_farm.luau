@@ -411,7 +411,7 @@ do
 end
 
 do
-    local source=createResumeSource("Underground",true,"token-1")
+    local source=createResumeSource("Underground",true,"token-1",true)
     check(type(loadstring(source))=="function","generated reconnect bootstrap compiles")
     local context={};setmetatable(context,{__index=getfenv()})
     local env,waits,fetches,disconnected={},0,0,0
@@ -422,12 +422,13 @@ do
         fetches+=1
         if fetches==1 then error("network unavailable") end
         if fetches==2 then return "-- stale version" end
-        return '-- MM2FarmRevision:20261019.4\ngetgenv().Loaded=getgenv().MM2AutoFarmLaunch'
+        return '-- MM2FarmRevision:20261020.1\ngetgenv().Loaded=getgenv().MM2AutoFarmLaunch'
     end}
     context.task={wait=function() waits+=1 end}
     context.loadstring=function(code) local chunk=loadstring(code);if chunk then setfenv(chunk,context) end;return chunk end
     local chunk=loadstring(source);setfenv(chunk,context);chunk()
     check(fetches==3 and waits==2 and env.Loaded.Movement=="Underground" and env.Loaded.PurchasesPaused,"bootstrap retries unavailable/stale downloads and preserves movement and paused purchases")
+    check(env.Loaded.LowGraphics==true,"reconnect startup preserves the explicitly selected low-graphics mode")
     check(disconnected==1 and env.MM2AutoFarmLaunch==nil,"bootstrap removes its input hook and one-use launch state")
     chunk()
     check(fetches==3,"duplicate executor-queued bootstraps with the same token do not run twice")
@@ -436,5 +437,60 @@ do
     context.task.wait=function() env.MM2AutoFarm.Stop() end
     chunk=loadstring(createResumeSource("Ground",false,"token-2"));setfenv(chunk,context);chunk()
     check(fetches==1 and not env.MM2AutoFarm.Running,"public Stop cancels an offline bootstrap download loop")
+end
+
+local function graphicsFixture()
+    local f={Rendering=true,FPS=144,RenderingWrites=0,FPSWrites=0}
+    f.C={Enabled=true,
+        ReadRendering=function() return f.Rendering end,
+        WriteRendering=function(enabled)
+            f.RenderingWrites+=1
+            if f.FailRendering then error("unavailable") end
+            f.Rendering=enabled
+        end,
+        GetFPS=function() return f.FPS end,
+        SetFPS=function(cap)
+            f.FPSWrites+=1
+            if f.FailFPS then error("unavailable") end
+            f.FPS=cap
+        end}
+    return f
+end
+
+do
+    local f=graphicsFixture();f.C.Enabled=false
+    local g=createLowGraphics(f.C)
+    check(f.Rendering and f.FPS==144 and f.RenderingWrites==0 and f.FPSWrites==0,"normal loaders do not change rendering or FPS")
+    check(not g.Snapshot().Enabled,"normal graphics status remains opt-out")
+    f=graphicsFixture();g=createLowGraphics(f.C)
+    check(not f.Rendering and f.FPS==20,"low-graphics mode disables 3D and requests 20 FPS with paired cap APIs")
+    check(g.Snapshot().Disabled3D and g.Snapshot().OriginalKnown and g.Snapshot().FPSCap==20,"graphics diagnostics distinguish the saved state and requested cap")
+    check(g.Restore() and f.Rendering and f.FPS==144,"stop releases rendering changes and restores the saved FPS cap")
+    g.Restore()
+    check(f.RenderingWrites==2 and f.FPSWrites==2,"repeated graphics cleanup does not repeat already completed restores")
+    f=graphicsFixture();f.Rendering=false;g=createLowGraphics(f.C);g.Restore()
+    check(not f.Rendering and f.RenderingWrites==0,"known preexisting disabled rendering is preserved")
+    f=graphicsFixture();f.C.ReadRendering=function() error("getter unavailable") end;g=createLowGraphics(f.C)
+    check(not f.Rendering and not g.Snapshot().OriginalKnown,"unavailable getter still allows the explicitly requested 3D-off mode")
+    g.Restore()
+    check(f.Rendering,"when prior rendering cannot be read, explicit cleanup reenables 3D")
+    f=graphicsFixture();f.C.GetFPS=nil;g=createLowGraphics(f.C)
+    check(f.FPS==144 and f.FPSWrites==0 and not f.Rendering,"FPS is unchanged when its previous cap cannot be read")
+    f=graphicsFixture();f.FPS=15;g=createLowGraphics(f.C);g.Restore()
+    check(f.FPS==15 and f.FPSWrites==0,"low-graphics mode never raises an already lower FPS cap")
+    f=graphicsFixture();f.FPS=0;g=createLowGraphics(f.C);g.Restore()
+    check(f.FPS==0 and f.FPSWrites==2,"uncapped zero is saved and restored after the temporary cap")
+    f=graphicsFixture();g=createLowGraphics(f.C);f.FPS=60;g.Restore()
+    check(f.FPS==60 and f.FPSWrites==1,"later explicit FPS changes take precedence over cleanup")
+    f=graphicsFixture();f.FailRendering=true;f.FailFPS=true;g=createLowGraphics(f.C)
+    check(f.Rendering and f.FPS==144 and not g.Snapshot().Disabled3D,"unsupported rendering and FPS setters fail without stopping the controller")
+    f=graphicsFixture();g=createLowGraphics(f.C);f.FailRendering=true
+    check(not g.Restore() and g.Snapshot().RestorePending,"failed restoration remains visible and retryable")
+    f.FailRendering=false
+    check(g.Restore() and f.Rendering and not g.Snapshot().RestorePending,"a later cleanup retry restores only the remaining owned changes")
+    f=graphicsFixture();f.C.GetFPS=function() return 0/0 end;g=createLowGraphics(f.C)
+    check(f.FPSWrites==0,"invalid cap values cannot be saved or replaced")
+    local snapshot=g.Snapshot();snapshot.Disabled3D=false
+    check(g.Snapshot().Disabled3D,"changing diagnostics cannot change graphics ownership state")
 end
 print(passed.." auto-farm assertions passed")

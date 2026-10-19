@@ -14,7 +14,7 @@ match = re.search(r'^State.Version = "([0-9A-Za-z.-]+)"$', (root / "main.lua").r
 if not match:
     raise SystemExit("Missing release version in main.lua")
 version = match.group(1)
-files = ["main.lua", "loader.lua", "auto-farm.lua", "auto-farm-underground.lua", "Readme.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md",
+files = ["main.lua", "loader.lua", "auto-farm.lua", "auto-farm-underground.lua", "auto-farm-low-graphics.lua", "Readme.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md",
          "CONTRIBUTING.md", "assets/banner.svg", "docs/FEATURES.md",
          "docs/SUPPORT.md", "docs/RELEASE_CHECKLIST.md", "docs/STREAMER_MODE.md", "docs/AUTO_FARM.md", "tests/VALIDATION.md",
          "streamer/Overlay.cs", "streamer/build.ps1", "streamer/Start-Streamer.ps1", "streamer/Stop-Streamer.ps1"]

@@ -32,6 +32,20 @@ getgenv().MM2AutoFarm.Stop()
 
 On a phone, run the stop command through the same scripting environment. No phone buttons are added. Re-running either script stops the previous copy first. You can inspect `MM2AutoFarm.Snapshot()`, `MM2AutoFarm.GetMovementSnapshot()`, `MM2AutoFarm.GetThreatSnapshot()`, `MM2AutoFarm.GetReconnectSnapshot()` and `MM2AutoFarm.GetCrateSnapshot()` without opening a menu.
 
+## Low-graphics farming
+
+For an already joined MM2 client, this separate loader selects the same experimental Underground farm with 3D rendering disabled where the executor permits it:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ObsidianWorkss/Murder-Mystery-2/refs/heads/main/auto-farm-low-graphics.lua?farm=20261020.1"))()
+```
+
+It requests a 20 FPS cap only when both `getfpscap` and `setfpscap` are available and a valid previous cap can be saved. An existing cap of 20 or below is retained. Missing/failed rendering or FPS APIs leave that setting unchanged and appear in `MM2AutoFarm.GetGraphicsSnapshot()`. This loader adds no UI and does not remove the map, coins, GUI state or game scripts. Native UI/other overlays can remain visible. Physics, pickup confirmation, buying and reconnect keep their existing logic; lower frame rates can affect native collection timing and still need live validation.
+
+End/Stop and replacement release the graphics settings owned by the farm. Known previous rendering state is preserved; when the engine does not expose its rendering getter, explicit cleanup reenables 3D. A later external FPS change is respected. Failed restoration remains visible as `RestorePending`; call `MM2AutoFarm.RestoreGraphics()` to retry. To restore graphics while leaving the current farm running, use the same function. Reconnect startup retains the selected low-graphics mode. The normal Ground/Underground loaders leave rendering/FPS settings alone.
+
+A helper count of 99 means 99 account records, not 99 running players. This loader neither starts clients nor bypasses multi-client restrictions. Each instance still has CPU, memory and network costs; turning off 3D does not establish a supported number of simultaneous players. No 99-client load test or live low-graphics farm test has been performed.
+
 ## Pickup confirmation and retries
 
 The scanner finds actual `Coin_Server` parts under each recognized CoinContainer, including nested parts. A touch attempt is not a collected coin. `Attempts`, raw `ServerEvents`, removed/flagged targets and `PickupEvents` are separate counters. PickupEvents correlate a matching currency's increasing server bag count with a nearby selected pickup; the event does not identify the individual coin, so this is not exact per-coin attribution.
@@ -86,4 +100,4 @@ The ground-path candidate initialized at native WalkSpeed 16 with PlatformStand 
 
 The farm was stopped at the user's request before inspecting the Candy shop. A later read-only test of the updated shipped selector against native event/inventory data chose Halloween2026Box at 600 Candies2026, with one missing listed target and a 520 Candy balance. The farm remained stopped and Opened remained zero. No purchase, automatic reconnect or resumed live farm was tested for this update.
 
-All four scripts compile. The 152 extracted-source farm assertions include a simulated 24-hour reconnect failure chain with over 700 attempts, fixed-size timer/queue behavior, cancellation, retry recovery and access refusal, plus 10,000 serialized Candy rolls over more than 30 simulated hours. They also cover discovery/isolation of event currency, existing-balance use, continued rolls after owning godlies, per-currency debit accounting, duplicate responses and download/resume cleanup. Alongside the main runtime's 1,017 assertions, 1,169 pass locally. These simulations do not establish overnight native reliability, server movement acceptance, successful paid unboxing, executor resume behavior, idle prevention or godly drop rates.
+All four scripts compile. The 171 extracted-source farm assertions include a simulated 24-hour reconnect failure chain with over 700 attempts, fixed-size timer/queue behavior, cancellation, retry recovery and access refusal, plus 10,000 serialized Candy rolls over more than 30 simulated hours. Nineteen additional graphics/resume checks cover opt-in behavior, missing/failed APIs, prior rendering/cap preservation, external FPS changes, idempotent/retryable restoration, invalid values and reconnect preference. They also cover discovery/isolation of event currency, existing-balance use, continued rolls after owning godlies, per-currency debit accounting, duplicate responses and download/resume cleanup. Alongside the main runtime's 1,017 assertions, 1,188 pass locally. These simulations do not establish overnight native reliability, server movement acceptance, successful paid unboxing, executor resume behavior, idle prevention or godly drop rates.

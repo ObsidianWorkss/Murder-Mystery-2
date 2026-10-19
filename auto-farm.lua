@@ -1,6 +1,6 @@
 -- MM2 standalone currency farm. No UI; starts immediately. End or MM2AutoFarm.Stop() stops it.
 -- MM2FarmFormat:2
--- MM2FarmRevision:20261019.4
+-- MM2FarmRevision:20261020.1
 -- Ground paths by default; the separate loader selects experimental prone underground tweens.
 -- Server acceptance, awards and crate results are not guaranteed.
 local createFarm = function(C)
@@ -486,7 +486,66 @@ local createCrateBuyer=function(C)
     return buyer
 end
 
-local createResumeSource=function(movement,paused,token)
+local createLowGraphics=function(C)
+    local state={Enabled=C.Enabled==true,Disabled3D=false,OriginalKnown=false,Status="Normal graphics",FPSStatus="Unchanged"}
+    local renderingOwned,fpsOwned=false,false
+    local originalRendering,originalFPS=true,nil
+    local function readRendering()
+        if type(C.ReadRendering)~="function" then return nil end
+        local ok,value=pcall(C.ReadRendering)
+        if ok and type(value)=="boolean" then return value end
+    end
+    if state.Enabled then
+        local before=readRendering()
+        state.OriginalKnown=before~=nil
+        if before~=nil then originalRendering=before end
+        if before==false then state.Disabled3D=true;state.Status="3D rendering was already disabled"
+        elseif type(C.WriteRendering)=="function" then
+            local ok,result=pcall(C.WriteRendering,false)
+            if ok and result~=false then
+                renderingOwned=true;state.Disabled3D=true;state.Status="3D rendering disabled"
+                if readRendering()==true then state.Disabled3D=false;state.Status="Rendering change not confirmed" end
+            else state.Status="3D rendering control unavailable" end
+        else state.Status="3D rendering control unavailable" end
+        if type(C.GetFPS)=="function" and type(C.SetFPS)=="function" then
+            local ok,value=pcall(C.GetFPS)
+            if ok and validAmount(value) then
+                originalFPS=value
+                if value==0 or value>20 then
+                    local changed,result=pcall(C.SetFPS,20)
+                    if changed and result~=false then fpsOwned=true;state.FPSCap=20;state.FPSStatus="20 FPS requested"
+                    else state.FPSStatus="FPS setter unavailable" end
+                else state.FPSCap=value;state.FPSStatus="Existing low FPS cap retained" end
+            else state.FPSStatus="Previous FPS cap unavailable; unchanged" end
+        else state.FPSStatus="Paired FPS APIs unavailable; unchanged" end
+    end
+    function state.Restore()
+        if renderingOwned then
+            local ok,result=pcall(C.WriteRendering,originalRendering)
+            if ok and result~=false then
+                renderingOwned=false;state.Disabled3D=originalRendering==false
+            end
+        end
+        if fpsOwned then
+            local ok,current=pcall(C.GetFPS)
+            if ok and current~=20 then fpsOwned=false -- A later user/executor change takes precedence.
+            else
+                local restored,result=pcall(C.SetFPS,originalFPS)
+                if restored and result~=false then fpsOwned=false;state.FPSCap=originalFPS end
+            end
+        end
+        state.RestorePending=renderingOwned or fpsOwned
+        state.Status=state.RestorePending and "Graphics restoration incomplete; call Restore again" or "Graphics changes released"
+        return not state.RestorePending
+    end
+    function state.Snapshot()
+        return {Enabled=state.Enabled,Disabled3D=state.Disabled3D,OriginalKnown=state.OriginalKnown,
+            Status=state.Status,FPSCap=state.FPSCap,FPSStatus=state.FPSStatus,RestorePending=state.RestorePending==true}
+    end
+    return state
+end
+
+local createResumeSource=function(movement,paused,token,lowGraphics)
     assert(movement=="Ground" or movement=="Underground","Invalid movement")
     return string.format([[
 if game.PlaceId~=142823291 then return end
@@ -506,13 +565,13 @@ end)
 while resume.Running and not game:IsLoaded() do task.wait(1) end
 local delay=5
 while resume.Running do
-    local ok,source=pcall(game.HttpGet,game,"https://raw.githubusercontent.com/ObsidianWorkss/Murder-Mystery-2/refs/heads/main/auto-farm.lua?farm=20261019.4")
+    local ok,source=pcall(game.HttpGet,game,"https://raw.githubusercontent.com/ObsidianWorkss/Murder-Mystery-2/refs/heads/main/auto-farm.lua?farm=20261020.1")
     if not resume.Running then return end
-    if ok and type(source)=="string" and source:find("-- MM2FarmRevision:20261019.4",1,true) then
+    if ok and type(source)=="string" and source:find("-- MM2FarmRevision:20261020.1",1,true) then
         local chunk=loadstring(source,"MM2AutoFarmResume")
         if chunk then
             resume.Stop()
-            env.MM2AutoFarmLaunch={Movement=%q,PurchasesPaused=%s}
+            env.MM2AutoFarmLaunch={Movement=%q,PurchasesPaused=%s,LowGraphics=%s}
             local loaded,why=pcall(chunk)
             env.MM2AutoFarmLaunch=nil
             if not loaded then warn("MM2 farm resume failed: "..tostring(why)) end
@@ -522,7 +581,7 @@ while resume.Running do
     resume.Status="Farm download unavailable; retrying"
     task.wait(delay);delay=math.min(120,delay*2)
 end
-]],token,movement,tostring(paused==true))
+]],token,movement,tostring(paused==true),tostring(lowGraphics==true))
 end
 
 -- Runtime adapter. The controller above is also exercised by the local regression suite.
@@ -548,6 +607,7 @@ end)
 local config={ContactSeconds=.9,RetrySeconds=15,MaxPickupRetries=2,ResetWhenFull=true,AutoOpenCrates=true,AutoRejoin=true,RejoinBeforeIdle=true,
     Crate="MysteryBox2",SmartCrates=true,StopOnGodly=false,AvoidOpponents=true,DangerRadius=24}
 config.Movement=type(launch)=="table" and launch.Movement=="Underground" and "Underground" or "Ground"
+config.LowGraphics=type(launch)=="table" and launch.LowGraphics==true
 config.Depth=4
 config.TweenSpeed=48
 config.ApproachSpeed=12
@@ -555,7 +615,7 @@ local connections,containers,coins={},{},{}
 local reconnectConnections={}
 local shopState={Pending=false,NextRefresh=0,Status="Waiting for event discovery"}
 local bounds=setmetatable({},{__mode="k"})
-local session,farm,buyer,undergroundRoute,touch,reconnect
+local session,farm,buyer,undergroundRoute,touch,reconnect,graphics
 local pathRevision=0
 local nextScan=0
 local roundEnded=false
@@ -929,6 +989,7 @@ local stop=farm.Stop
 function farm.Stop(reason,keepReconnect)
     if reconnect and not keepReconnect then reconnect.Stop() end
     if buyer then buyer.Stop() end
+    if graphics then graphics.Restore() end
     stop(reason)
     restore()
     RunService:UnbindFromRenderStep("MM2AutoFarmWalk")
@@ -944,6 +1005,13 @@ function farm.GetCrateSnapshot()
 end
 function farm.GetMovementSnapshot()
     return undergroundRoute and undergroundRoute.Snapshot() or {Mode="Ground",Phase=session and "Walking" or "Idle"}
+end
+function farm.GetGraphicsSnapshot()
+    return graphics and graphics.Snapshot() or {Enabled=false,Status="Normal graphics"}
+end
+function farm.RestoreGraphics()
+    if graphics then return graphics.Restore() end
+    return true
 end
 function farm.GetReconnectSnapshot()
     return reconnect and reconnect.Snapshot() or {ResumeSupported=false,Status="Not initialized"}
@@ -1091,7 +1159,7 @@ if config.AutoRejoin then
         Schedule=task.delay,
         Queue=function()
             local info=buyer and buyer.Snapshot()
-            return queue(createResumeSource(config.Movement,info and (not info.Running or info.Pending),resumeToken))
+            return queue(createResumeSource(config.Movement,info and (not info.Running or info.Pending),resumeToken,config.LowGraphics))
         end,
         Prepare=function() farm.Stop("Automatic reconnect in progress",true) end,
         Cleanup=function()
@@ -1129,3 +1197,10 @@ if config.AutoRejoin then
         end)
     end
 end
+
+-- Optional local rendering changes only. Movement, bags and buying keep their existing timing.
+graphics=createLowGraphics({Enabled=config.LowGraphics and farm.Running,
+    ReadRendering=function() return RunService:Is3dRenderingEnabled() end,
+    WriteRendering=function(enabled) RunService:Set3dRenderingEnabled(enabled) end,
+    GetFPS=type(getfpscap)=="function" and getfpscap or nil,
+    SetFPS=type(setfpscap)=="function" and setfpscap or nil})
