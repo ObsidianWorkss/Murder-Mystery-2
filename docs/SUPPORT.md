@@ -32,6 +32,8 @@ Use the repository's previous commit to obtain an older `main.lua` if an update 
 
 ## Compatibility and experimental features
 
+For Halloween modes, check the mode on Home and `GameMode` in the support report. rc.42 recognizes Infection's Zombie/Survivor and FreezeTag's Freezer/Runner roles. Reload the latest script after updating. A Zombie cannot use the native knife throw; an unarmed Runner cannot automate a gun. Unknown roles/modes leave weapon handling native until supported data arrives. See [event behavior and limits](FEATURES.md#halloween-and-event-modes). Include the exact mode, your actual role, weapon and whether normal native attacks work when reporting an event failure.
+
 The main script needs a compatible client scripting environment. The HTTP loader additionally needs `game:HttpGet` and `loadstring`. Clipboard, local file storage, and simulated touch are optional capabilities; their availability appears in the support report.
 
 Player exclusions apply across script-controlled attacks and actions. Built-in protected accounts are separate from the removable session exclusions. Experimental reach, pickup, invisibility, teleports, and fling behavior may be rejected or corrected by the server.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.42 — 2026-10-19
+
+- Replaced Classic-only role and map assumptions with a shared game context for Classic, Infection and FreezeTag. Recognize Zombie/Survivor and Freezer/Runner roles, replicated Zombie conversion, known frozen state and unavailable/unknown roles. Preserve native weapon handlers when the script cannot assist the current role.
+- Added event ESP colors/labels, mode in the session line and aggregate compatibility diagnostics. Discover Base/Map and Spawns/SpawnPoints layouts in bounded nested containers, exclude lobby/character models, validate living in-map characters and reuse cached bounds. ESP, gun ESP, warnings, HUD, map teleports, fling bounds and tactical destinations share the detection.
+- Updated aim, triggerbot, stab/throw selection, final shot/contact gates, aura and Kill all eligibility for event opponents. Mode changes invalidate preview caches; conversions and frozen targets are rechecked before additional contacts. Follow the native Zombie knife-throw restriction instead of sending blocked throws.
+- Added event rule guidance without invoking the Classic-trained Sheriff actor, event role-action groups and bounded manual role-reveal previews. No role changes, automatic chat posts or new server damage mechanisms are added.
+- Added 77 game-mode assertions and 14 combat/triggerbot/aura/reveal regressions; all 971 Luau assertions pass and both scripts compile. A read-only native Classic probe recognized one map, eight role rows and six living in-map players. Live Halloween rendering, native input and server combat outcomes remain unverified.
+
 ## 1.0.0-rc.41 — 2026-10-19
 
 - Added experimental Windows streamer mode with an optional WPF companion. The companion owns a click-through, non-activating overlay and requests/readbacks Windows capture exclusion. An authenticated loopback handshake and accepted first frame are required before the mode activates. No recorder configuration or recording is automated.

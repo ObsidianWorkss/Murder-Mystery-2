@@ -2,7 +2,28 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.41**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.42**. Experimental actions remain subject to server validation.
+
+## Halloween and event modes
+
+The shared game context reads the actual `GameMode`, current player data and character state. It recognizes Classic, Infection and FreezeTag instead of treating every knife holder as a murderer. Round maps can use Base or Map geometry, Spawns or SpawnPoints, and bounded nested containers. Lobby/character models are excluded, removed geometry stops qualifying immediately and bounds are cached rather than recomputed for each target.
+
+| Mode | Roles and colors | Automatic weapon eligibility |
+| --- | --- | --- |
+| Classic | Murderer red, Sheriff/Hero blue, Innocent green | Owned gun targets the known murderer; murderer knife targets eligible opponents. |
+| Infection | Zombie lime, Survivor blue | Survivor gun targets zombies; zombie knife targets survivors. A replicated Zombie conversion immediately overrides an older Survivor row. |
+| FreezeTag | Freezer ice blue, Runner green | A Freezer's owned gun/knife targets runners. Known frozen runners are excluded from new attacks; frozen state alone does not hide a living character from ESP. |
+| Unknown | Neutral gray | Script weapon takeover/automation is refused until a supported role is known; native handlers are retained or restored. No Classic target policy is guessed. |
+
+The same context feeds role ESP, gun ESP visibility, threat warnings, aim and triggerbots, aura/contact reporting, Kill all eligibility, HUD status, loaded-map teleport selection, fling bounds and tactical map destinations. Automatic weapon targeting rejects same-team event players and rechecks conversion before contacts/shots. This does not make an unarmed Runner able to shoot or grant another role's weapon.
+
+**Zombies cannot throw knives:** the native knife client explicitly blocks that action, and this script follows it. Use the existing stab path when you own the knife; server acceptance of aura/reach remains separate. Freeze Tag freezes are not treated as confirmed kills. Existing extended-range and damage limitations still apply.
+
+Event ESP labels keep the actual role, including in clean and companion views. The Home session line includes the mode, and support diagnostics expose only aggregate map/row readiness and your role. Rule guidance handles event opponents/threats; the Classic-trained Sheriff actor is not run for event modes. Existing Murderer/Sheriff controls remain the knife/gun settings pages.
+
+Role-based fling groups map Murderer/Sheriff to Zombie/Survivor or Freezer/Runner, and Opponent selects the opposite group. The role-reveal preview uses bounded event team lists while preserving protected/local-player exclusions and its manual send button/cooldown. No chat is sent automatically.
+
+The new adapter was checked read-only in a live **Classic** round. Automated fixtures cover the two event modes, but a live Infection/FreezeTag rendering and combat check is still required. Unsupported modes and mode-specific server rules are not claimed compatible.
 
 ## Windows streamer mode
 
@@ -15,16 +36,16 @@ The mode suppresses native script ESP in favor of projected companion boxes/labe
 | Setting | Behavior |
 | --- | --- |
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
-| Gun aim | Redirects a fired shot toward a clear body point on the known murderer, including targets outside the camera view. |
+| Gun aim | Redirects a fired shot toward a clear body point on an eligible opponent for the current mode, including targets outside the camera view. |
 | Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
-| Gun triggerbot | Automatically aims at a clear visible on-screen murderer. Both the body sample and predicted aim point must remain on screen. Requires Aim assist and Gun aim. Off by default. |
+| Gun triggerbot | Automatically aims at a clear visible on-screen opponent for the current gun role. Both body sample and predicted aim point must remain on screen. Requires Aim assist and Gun aim. Off by default. |
 | Knife triggerbot | Automatically stabs a clear on-screen opponent within 6.5 studs while you are murderer. No crosshair contact or dwell needed. Independent of gun triggerbot; off by default. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
 | Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
 | Clicked stab assist | Attempts contact with the nearest clear opponent within 6.5 studs when the murderer clicks to stab. Enabled by default. |
 | Stab sweep | Checks blade overlaps and movement during a stab. |
-| Kill aura | Automatically swings and reports clear nearby body contact as murderer; physical blade overlap is not required. Disabled by default. |
+| Kill aura | Automatically swings/reports contact for an eligible owned knife role and opponent; physical blade overlap is not required. Disabled by default. |
 
 Clicking with a knife stabs; it does not automatically throw. Turn off **Knife throw prediction** for manual cursor throws. To keep prediction while allowing cursor fallback when no target is available, turn off **Require clear throw target**.
 

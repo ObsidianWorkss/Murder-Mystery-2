@@ -45,7 +45,7 @@ local function fixture()
         ReportContact=function(_,part) f.Contacts+=1; f.ContactPart=part end}
     installTriggerbot(C)
     f.Own,f.Target,f.Gun,f.Record,f.State,f.UIS,f.World,f.Callbacks=own,target,gun,record,State,UIS,world,callbacks
-    f.Bot=State.Triggerbot
+    f.Context=C; f.Bot=State.Triggerbot
     function f.Step(dt) f.Now+=dt or .04; callbacks[heartbeat]() end
     function f.Hold(n) for _=1,n or 5 do f.Step() end end
     function f.EnableKnife() record.Kind="Knife"; own.Role="Murderer"; target.Role="Innocent"; State.SetKnifeTriggerbot(true) end
@@ -149,5 +149,21 @@ do
     check(not f.State.Config.Triggerbot and not f.State.Config.KnifeTriggerbot and f.Attempts==0,"emergency stop cancels both modes")
     f=fixture(); f.State.SetTriggerbot(true); f.State.Running=false; f.Step()
     check(f.Attempts==0,"unloaded script cannot fire")
+end
+do
+    local f=fixture(); f.Own.Role="Survivor"; f.Target.Role="Zombie"
+    f.Context.CanUseWeapon=function(kind) return kind=="Gun" end
+    f.State.SetTriggerbot(true); f.Step()
+    check(f.Attempts==1,"event gun role uses the shared capability adapter rather than requiring Sheriff")
+    f=fixture(); f.EnableKnife();f.Own.Role="Zombie";f.Target.Role="Survivor"
+    f.Context.CanUseWeapon=function(kind) return kind=="Knife" end
+    f.Context.IsTarget=function(_,p) return p.Role=="Survivor" end
+    f.Step()
+    check(f.Attempts==1 and f.Contacts==1,"event knife role can stab an eligible opposite team")
+    f.Target.Role="Zombie"; f.Step(1)
+    check(f.Attempts==1,"conversion prevents a further trigger stab on the new teammate")
+    f=fixture();f.Own.Role="Freezer";f.Context.CanUseWeapon=function() return false end
+    f.State.SetTriggerbot(true);f.Step()
+    check(f.Attempts==0,"capability refusal cannot fall back to an event gun role")
 end
 print(passed.." triggerbot assertions passed")

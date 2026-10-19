@@ -32,7 +32,7 @@
 -- Stationary and close approaching targets can use their existing queryable root as a stable central gun aim point.
 -- Existing named body parts are ranked by projected area and clearance around the shot.
 -- Wider interior samples find exposed edges in narrow spaces; character hitboxes are unchanged.
--- Nearby murderer warning shows camera-relative direction, distance, and closing movement.
+-- Nearby threat warning shows camera-relative direction, distance, and closing movement.
 -- Fresh horizontal velocity changes take priority over older position samples after turns.
 -- A small gun aim marker shows the selected body point without moving the cursor.
 -- Gun motion prediction checks nearby collision walls and allows bounded wall sliding.
@@ -17855,7 +17855,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.41"
+State.Version = "1.0.0-rc.42"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17891,7 +17891,8 @@ function State.GetSupportSnapshot()
         WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil,
         MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil,
         KnifeDodge=State.GetKnifeDodgeSnapshot and State.GetKnifeDodgeSnapshot() or nil,
-        Streamer=State.GetStreamerSnapshot and State.GetStreamerSnapshot() or nil}
+        Streamer=State.GetStreamerSnapshot and State.GetStreamerSnapshot() or nil,
+        GameMode=State.GetGameModeSnapshot and State.GetGameModeSnapshot() or nil}
 end
 function State.GetSupportReport()
     return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
@@ -18172,30 +18173,174 @@ if not round or not weapon then
     if env.MM2Assist == State then env.MM2Assist = nil end
     error("MM2: open Murder Mystery 2; game modules are unavailable or this executor cannot access them.")
 end
-local function dataFor(p)
-    local data = round.PlayerData or {}
-    return data[p.Name] or data[tostring(p.UserId)] or data[p.UserId]
+-- Shared map/role policy. Event roles remain real roles; they are never relabelled as Murderer.
+local createGameContext=function(C)
+    local world,round=C.World,C.Round
+    local clock=C.Clock or os.clock
+    local context={}
+    local scanned,areas,boxes=-math.huge,{},{}
+    local margin=Vector3.new(60,60,60)
+    local supported={Classic=true,Infection=true,FreezeTag=true}
+    function context.Mode()
+        local mode=world:GetAttribute("GameMode")
+        return type(mode)=="string" and mode or "Unknown"
+    end
+    function context.Data(p)
+        local all=type(round.PlayerData)=="table" and round.PlayerData or {}
+        local row=all[p.Name] or all[tostring(p.UserId)] or all[p.UserId]
+        return type(row)=="table" and row or nil
+    end
+    local function finite(v)
+        return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+            and math.abs(v.X)<1e7 and math.abs(v.Y)<1e7 and math.abs(v.Z)<1e7
+    end
+    function context.Areas()
+        local now=clock()
+        if now-scanned<1 then return areas end
+        scanned,areas=now,{}
+        local found={}
+        local function visit(node,depth)
+            if not (node:IsA("Model") or node:IsA("Folder")) or node:FindFirstChildOfClass("Humanoid")
+                or node.Name:lower():find("lobby",1,true) or node:FindFirstChild("VotePads") then return end
+            local spawns=node:FindFirstChild("Spawns") or node:FindFirstChild("SpawnPoints")
+            if spawns then
+                local geometry=node:FindFirstChild("Base") or node:FindFirstChild("Map")
+                if not geometry or not geometry:IsA("Model") then geometry=node:IsA("Model") and node or nil end
+                if geometry then
+                    found[node]=true
+                    local box=boxes[node]
+                    if not box or box.Geometry~=geometry or now-box.At>=3 then
+                        local ok,frame,size=pcall(geometry.GetBoundingBox,geometry)
+                        box=ok and finite(size) and size.X>0 and size.Y>0 and size.Z>0
+                            and {Object=node,Geometry=geometry,Spawns=spawns,Frame=frame,Size=size,Half=size/2+margin,At=now} or nil
+                        boxes[node]=box
+                    end
+                    if box then table.insert(areas,box) end
+                end
+                return
+            end
+            if depth<2 then for _,child in ipairs(node:GetChildren()) do visit(child,depth+1) end end
+        end
+        for _,child in ipairs(world:GetChildren()) do visit(child,0) end
+        for map in pairs(boxes) do if not found[map] then boxes[map]=nil end end
+        return areas
+    end
+    function context.MapAt(position)
+        if not finite(position) then return nil end
+        for _,box in ipairs(context.Areas()) do
+            if box.Object:IsDescendantOf(world) and box.Geometry:IsDescendantOf(world) then
+                local p=box.Frame:PointToObjectSpace(position)
+                if math.abs(p.X)<=box.Half.X and math.abs(p.Y)<=box.Half.Y and math.abs(p.Z)<=box.Half.Z then return box end
+            end
+        end
+    end
+    function context.Contains(position) return context.MapAt(position)~=nil end
+    function context.Maps()
+        local list={}
+        for _,box in ipairs(context.Areas()) do if box.Object:IsDescendantOf(world) then table.insert(list,box.Object) end end
+        return list
+    end
+    function context.InRound(p)
+        local char=p.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        return root~=nil and char:IsDescendantOf(world) and context.Contains(root.Position)
+    end
+    function context.Alive(p)
+        local char=p.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local row=context.Data(p)
+        return hum~=nil and hum.Health>0 and not (row and (row.Dead or row.Killed)) and context.InRound(p)
+    end
+    function context.Frozen(p)
+        local row=context.Data(p)
+        return context.Mode()=="FreezeTag" and ((row and row.Frozen==true)
+            or (p.Character and p.Character:GetAttribute("Frozen")==true)) or false
+    end
+    function context.Role(p)
+        local mode,row=context.Mode(),context.Data(p)
+        local role=row and row.Role
+        if mode=="Infection" then
+            if p.Character and p.Character:GetAttribute("Zombie")==true then return "Zombie" end
+            if role=="Zombie" or role=="Survivor" then return role end
+            if not row and C.ToolFor(p,"Gun") then return "Survivor" end
+        elseif mode=="FreezeTag" then
+            if role=="Freezer" or role=="Runner" then return role end
+        elseif mode=="Classic" then
+            if role=="Murderer" then return role end
+            if C.ToolFor(p,"Knife") then return "Murderer" end
+            if C.ToolFor(p,"Gun") then return "Sheriff" end
+            if role=="Innocent" or role=="Sheriff" or role=="Hero" then return role end
+        elseif type(role)=="string" and #role<=32 then return role end
+        return "Unknown"
+    end
+    function context.CanUse(p,kind)
+        if context.Frozen(p) then return false end
+        local mode,role=context.Mode(),context.Role(p)
+        if kind=="Knife" then
+            return mode=="Classic" and role=="Murderer" or mode=="Infection" and role=="Zombie"
+                or mode=="FreezeTag" and role=="Freezer"
+        elseif kind=="Gun" then
+            return mode=="Classic" and (role=="Sheriff" or role=="Hero")
+                or mode=="Infection" and role=="Survivor" or mode=="FreezeTag" and role=="Freezer"
+        end
+        return false
+    end
+    function context.Target(own,target,kind)
+        if own==target or not context.CanUse(own,kind) or not context.Alive(target) or context.Frozen(target) then return false end
+        local mode,role=context.Mode(),context.Role(target)
+        if mode=="Classic" then return kind=="Gun" and role=="Murderer" or kind=="Knife" and role~="Murderer" end
+        if mode=="Infection" then return kind=="Gun" and role=="Zombie" or kind=="Knife" and role=="Survivor" end
+        return mode=="FreezeTag" and role=="Runner"
+    end
+    function context.CanThrow(p)
+        return context.CanUse(p,"Knife") and context.Mode()~="Infection"
+            and not (p.Character and p.Character:GetAttribute("Zombie")==true)
+    end
+    function context.Threat(own,target)
+        local mode,role=context.Mode(),context.Role(target)
+        if mode=="Classic" then return role=="Murderer" and context.Role(own)~="Murderer" end
+        if mode=="Infection" then return role=="Zombie" and context.Role(own)=="Survivor" end
+        return mode=="FreezeTag" and role=="Freezer" and context.Role(own)=="Runner"
+    end
+    function context.Groups()
+        local mode=context.Mode()
+        if mode=="Infection" then return "Zombie","Survivor" end
+        if mode=="FreezeTag" then return "Freezer","Runner" end
+        if mode=="Classic" then return "Murderer","Sheriff" end
+    end
+    function context.ResolveRole(role)
+        local attacker,defender=context.Groups()
+        if not attacker then return nil end
+        if role=="Opponent" then return context.Role(C.Player)==attacker and defender or attacker end
+        if role=="Murderer" then return attacker end
+        if role=="Sheriff" then return defender end
+        return (role==attacker or role==defender) and role or nil
+    end
+    function context.Snapshot()
+        local count=0; for _ in pairs(type(round.PlayerData)=="table" and round.PlayerData or {}) do count+=1 end
+        local mode=context.Mode()
+        return {Mode=supported[mode] and mode or "Unknown",Supported=supported[mode]==true,Maps=#context.Maps(),PlayerRows=count,
+            InRound=context.InRound(C.Player),Role=supported[mode] and context.Role(C.Player) or "Unknown"}
+    end
+    return context
 end
 local function toolFor(p, name)
     local char, backpack = p.Character, p:FindFirstChild("Backpack")
     local item = (char and char:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name))
     return item and item:IsA("Tool") and item or nil
 end
+State.GameContext=createGameContext({World=workspace,Round=round,Player=player,ToolFor=toolFor})
+local function dataFor(p) return State.GameContext.Data(p) end
 local function alive(p)
-    local data = dataFor(p)
-    local char = p.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    return data and not data.Dead and not data.Killed and hum and hum.Health > 0
-        and char:FindFirstChild("HumanoidRootPart") ~= nil
+    return State.GameContext.Alive(p)
 end
 local function roleFor(p)
-    local data = dataFor(p)
-    if data and data.Role == "Murderer" then return "Murderer" end
-    if toolFor(p, "Knife") then return "Murderer" end
-    if toolFor(p, "Gun") then return "Sheriff" end
-    if not data then return "Unknown" end
-    return data.Role == "Hero" and "Sheriff" or data.Role or "Unknown"
+    return State.GameContext.Role(p)
 end
+function State.IsCombatTarget(kind,p) return State.GameContext.Target(player,p,kind) end
+function State.CanUseCombatWeapon(kind) return State.GameContext.CanUse(player,kind) end
+function State.CanThrowKnife() return State.GameContext.CanThrow(player) end
+function State.GetGameModeSnapshot() return State.GameContext.Snapshot() end
 local function equippedWeapon()
     local char = player.Character
     if not char then return nil end
@@ -19218,7 +19363,7 @@ local function chooseTarget(kind, origin, item, preferred, strict, onScreenOnly)
     if camera and touchInput() then cursor = camera.ViewportSize / 2 end
     local candidates = {}
     for order, other in ipairs(Players:GetPlayers()) do
-        if other ~= player and not State.IsPlayerExcluded(other) and alive(other) and (not strict or other == preferred) and (kind == "Knife" or roleFor(other) == "Murderer") then
+        if other ~= player and not State.IsPlayerExcluded(other) and alive(other) and (not strict or other == preferred) and State.IsCombatTarget(kind,other) then
             local char = other.Character
             local root = char:FindFirstChild("HumanoidRootPart")
             local lower, body = visibleBodySamples(char, kind, origin, camera, cursor, nil,
@@ -19271,16 +19416,18 @@ end
 -- Visual previews may lag by half a second; attack paths never use this cache.
 function State.GetCachedAimPreview(kind, item, origin)
     local now, cached = os.clock(), State.PreviewCache
+    local mode=State.GameContext and State.GameContext.Mode() or "Classic"
     local target = cached and cached.Target
     local valid = cached and cached.Kind == kind and cached.Item == item
         and cached.OwnCharacter == player.Character and now >= cached.At and now < cached.Until
         and cached.ExclusionsRevision == State.ExclusionsRevision
+        and cached.Mode==mode
         and cached.ConservativeGun == State.Config.ConservativeGun
         and cached.KnifeAllDirections == State.Config.KnifeAllDirections
     if target then
         valid = valid and target.Player.Character == target.Character and alive(target.Player)
             and not State.IsPlayerExcluded(target.Player)
-            and (kind ~= "Gun" or roleFor(target.Player) == "Murderer")
+            and State.IsCombatTarget(kind,target.Player)
     end
     if valid then
         State.Performance.PreviewCacheHits += 1
@@ -19288,7 +19435,7 @@ function State.GetCachedAimPreview(kind, item, origin)
         return target
     end
     target = chooseTarget(kind, origin, item)
-    State.PreviewCache = {Kind=kind,Item=item,OwnCharacter=player.Character,Target=target,At=now,Until=now+(State.Config.PerformancePreset=="Low effects" and 1 or .5),
+    State.PreviewCache = {Kind=kind,Mode=mode,Item=item,OwnCharacter=player.Character,Target=target,At=now,Until=now+(State.Config.PerformancePreset=="Low effects" and 1 or .5),
         ExclusionsRevision=State.ExclusionsRevision,ConservativeGun=State.Config.ConservativeGun,
         KnifeAllDirections=State.Config.KnifeAllDirections}
     return target
@@ -19987,7 +20134,7 @@ local function ready(record)
     return State.Running and not mobileBlocked() and State.Config.Aim and record.Active
         and not (State.ExperimentalInvis and State.ExperimentalInvis.Busy)
         and not State.Invis.Busy
-        and record.Item.Parent == player.Character and alive(player)
+        and record.Item.Parent == player.Character and alive(player) and State.CanUseCombatWeapon(record.Kind)
         and record.Item:GetAttribute("Disabled") ~= true and not UIS:GetFocusedTextBox()
 end
 function State.ExcludedPlayerInShotPath(origin, destination)
@@ -20190,7 +20337,7 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     local targetPlayer=targetName and Players:FindFirstChild(targetName)
     local targetCharacter=solution and solution.Character or targetPlayer and targetPlayer.Character
     if not targetPlayer or not targetCharacter or targetPlayer.Character~=targetCharacter
-        or State.IsPlayerExcluded(targetPlayer) or not alive(targetPlayer) or roleFor(targetPlayer)~="Murderer" then
+        or State.IsPlayerExcluded(targetPlayer) or not alive(targetPlayer) or not State.IsCombatTarget("Gun",targetPlayer) then
         return skip("Shot cancelled: target changed or is protected")
     end
     if player.Character~=ownCharacter or not ready(record) or not record.Item.Enabled
@@ -20341,7 +20488,7 @@ local function reportStabContact(record, hit, source)
     for _, other in ipairs(contactTargets) do
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if other ~= player and root and not State.IsPlayerExcluded(other) and alive(other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
+        if other ~= player and root and not State.IsPlayerExcluded(other) and alive(other) and State.IsCombatTarget("Knife",other) and (not record.StabTarget or other == record.StabTarget) and hit:IsDescendantOf(char)
             and (hit.Transparency < 1 or (hit.Parent == char and bodyPartSet[hit.Name]))
             and (root.Position - ownRoot.Position).Magnitude <= (record.AuraStab and State.GetKillAuraRange and State.GetKillAuraRange() or 7)
             and (burst or clearPath(ownRoot.Position, hit.Position, char)) then
@@ -20407,7 +20554,7 @@ local function scanStabContacts(record)
 end
 -- Select one nearby body point for a manual click; no automatic attack loop.
 function State.SelectStabAssistTarget(onScreenOnly,automated)
-    if (not automated and not State.Config.StabAssist) or roleFor(player) ~= "Murderer" then return nil end
+    if (not automated and not State.Config.StabAssist) or not State.CanUseCombatWeapon("Knife") then return nil end
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not ownRoot then return nil end
     local best, bestPart, bestDistance
@@ -20415,7 +20562,7 @@ function State.SelectStabAssistTarget(onScreenOnly,automated)
         local char = other.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if other ~= player and root and alive(other) and not State.IsPlayerExcluded(other)
-            and (not automated or roleFor(other)~="Murderer") then
+            and State.IsCombatTarget("Knife",other) then
             local distance = (root.Position - ownRoot.Position).Magnitude
             if distance <= 6.5 and (not bestDistance or distance < bestDistance) then
                 for _, name in ipairs({"UpperTorso", "Torso", "Head", "LowerTorso"}) do
@@ -20480,6 +20627,7 @@ local function knifeFeedback(message)
 end
 local function startThrow(record, preferred, strict, canRelease)
     if record.Kind ~= "Knife" then return false end
+    if State.CanThrowKnife and not State.CanThrowKnife() then knifeFeedback("This role / mode cannot throw knives"); return false end
     if State.ExitUndergroundForAttack and not State.ExitUndergroundForAttack("Knife") then return false end
     if not ready(record) then knifeFeedback("Equip a ready knife to throw"); return false end
     if strict and not State.Config.KnifeAim then knifeFeedback("Turn on Knife throw prediction for auto attack"); return false end
@@ -20525,6 +20673,7 @@ local function startThrow(record, preferred, strict, canRelease)
             if record.ThrowToken~=token then return end
             if canRelease and not canRelease() then cancel("Throw cancelled: automatic action paused or stopped"); return end
             if not ready(record) then cancel("Throw cancelled: weapon is no longer ready"); return end
+            if State.CanThrowKnife and not State.CanThrowKnife() then cancel("Throw cancelled: role / mode changed"); return end
             if record.Item:FindFirstChild("Handle")~=handle or record.Item:FindFirstChild("Events")~=events
                 or events:FindFirstChild("KnifeThrown")~=remote then cancel("Throw cancelled: weapon objects changed"); return end
             if chargedTarget and (chargedTarget.Character~=chargedCharacter or not alive(chargedTarget)) then
@@ -20584,7 +20733,7 @@ local function clickKnife(record)
 end
 local function takeOver(item)
     if State.WeaponHandlers[item] or not State.Config.Aim or not owned(item)
-        or not item:IsA("Tool") or (item.Name ~= "Gun" and item.Name ~= "Knife") then return end
+        or not item:IsA("Tool") or (item.Name ~= "Gun" and item.Name ~= "Knife") or not State.CanUseCombatWeapon(item.Name) then return end
     if item.Name == "Gun" and not State.Config.MagicBullet then return end
     local native = item:FindFirstChild(item.Name .. "Client")
     if not native or not native:IsA("LocalScript") then return end
@@ -20643,7 +20792,7 @@ end
 local function syncWeapons()
     local remove = {}
     for item, record in pairs(State.WeaponHandlers) do
-        if not State.Config.Aim or not owned(item) or (record.Kind == "Gun" and not State.Config.MagicBullet) then
+        if not State.Config.Aim or not owned(item) or not State.CanUseCombatWeapon(record.Kind) or (record.Kind == "Gun" and not State.Config.MagicBullet) then
             table.insert(remove, item)
         end
     end
@@ -20700,7 +20849,7 @@ local function syncWeapons()
         State.AimStatus = target and ((item.Enabled and "Gun ready  ·  " or "Reloading  ·  ")
             .. target.Player.DisplayName .. elevation
             .. (target.TargetMode == "Stationary" and "  ·  standing still" or (target.TargetMode == "Approaching" and "  ·  approaching" or ""))
-            .. (target.Offscreen and "  ·  off screen" or "")) or "No clear shot at the murderer"
+            .. (target.Offscreen and "  ·  off screen" or "")) or "No clear shot at an eligible opponent"
     else
         State.AimStatus = target and ("Knife ready  ·  " .. target.Player.DisplayName .. (target.Offscreen and "  ·  off screen" or ""))
             or "No clear target"
@@ -21070,8 +21219,10 @@ installSeatVisibility({State=State,Player=player,Workspace=workspace,RunService=
     end})
 end
 
-local colors = {Sheriff = Color3.fromRGB(55, 145, 255),
-    Innocent = Color3.fromRGB(65, 235, 105), Murderer = Color3.fromRGB(255, 55, 65)}
+local colors = {Sheriff = Color3.fromRGB(55, 145, 255),Hero=Color3.fromRGB(55,145,255),
+    Innocent = Color3.fromRGB(65, 235, 105), Murderer = Color3.fromRGB(255, 55, 65),
+    Zombie=Color3.fromRGB(125,210,45),Survivor=Color3.fromRGB(55,160,255),
+    Freezer=Color3.fromRGB(150,220,250),Runner=Color3.fromRGB(65,235,105),Unknown=Color3.fromRGB(190,195,210)}
 local visualFolder = Instance.new("Folder")
 visualFolder.Name = "MM2AssistVisuals"
 visualFolder.Parent = workspace
@@ -21166,62 +21317,23 @@ local function updateHiddenBoxes(visual, char, color)
     visual.Hidden=total>0 and hidden>=math.max(1,total*.5)
 end
 
--- MM2 keeps the previous round's roles on every player, including players back in the lobby, so
--- round data alone cannot say who is in the round. A player counts as in the round only while their
--- living character is inside a loaded map (a workspace Model with Spawns and Base; the lobby has no Base).
-local espInRoundArea, espViewerAtRound
-do
-    local boxes, scanned, list = {}, -math.huge, {}
-    local margin = Vector3.new(60, 60, 60)
-    local function areas()
-        local now = os.clock()
-        if now - scanned >= 1 then
-            scanned, list = now, {}
-            for _, child in ipairs(workspace:GetChildren()) do
-                if child:IsA("Model") and child:FindFirstChild("Spawns") and child:FindFirstChild("Base")
-                    and not string.find(string.lower(child.Name), "lobby", 1, true) then
-                    local box = boxes[child]
-                    -- Bounding a whole map is not free: measure a map once, then every 10 s while it loads in.
-                    if not box or now - box.At >= 10 then
-                        local ok, frame, size = pcall(child.GetBoundingBox, child)
-                        box = ok and {Frame = frame, Half = size / 2 + margin, At = now} or box
-                        boxes[child] = box
-                    end
-                    if box then table.insert(list, box) end
-                end
-            end
-            for map in pairs(boxes) do if map.Parent ~= workspace then boxes[map] = nil end end
-        end
-        return list
-    end
-    espInRoundArea = function(position)
-        for _, box in ipairs(areas()) do
-            local p = box.Frame:PointToObjectSpace(position)
-            if math.abs(p.X) <= box.Half.X and math.abs(p.Y) <= box.Half.Y and math.abs(p.Z) <= box.Half.Z then return true end
-        end
-        return false
-    end
-    -- ESP is for the round: shown while you are in it, or while your camera is there (spectating).
-    espViewerAtRound = function()
-        local camera = workspace.CurrentCamera
-        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        return (camera ~= nil and espInRoundArea(camera.CFrame.Position)) or (root ~= nil and espInRoundArea(root.Position))
-    end
+-- The same round geometry is used by visuals, attacks, HUD and map tools.
+local function espInRoundArea(position) return State.GameContext.Contains(position) end
+local function espViewerAtRound()
+    local camera=workspace.CurrentCamera
+    local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    return (camera~=nil and espInRoundArea(camera.CFrame.Position)) or (root~=nil and espInRoundArea(root.Position))
 end
 local function visualCharacterReady(p)
     local char=p.Character
     local hum=char and char:FindFirstChildOfClass("Humanoid")
     local anchor=char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
         or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
-    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0 and anchor~=nil
-        and espInRoundArea(anchor.Position)
+    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0 and anchor~=nil and alive(p)
 end
 local function visualRoleFor(p)
     local role=roleFor(p)
-    if role=="Murderer" then return "Murderer" end
-    if role=="Sheriff" or role=="Hero" then return "Sheriff" end
-    -- Preserve the requested three-color display. Green is also the fallback until role data arrives.
-    return "Innocent"
+    return colors[role] and role or "Unknown"
 end
 
 local function updateESP()
@@ -21281,6 +21393,9 @@ local function updateESP()
                 .. (distance and ("  ·  " .. math.floor(distance + 0.5) .. " studs") or "")
             local labelSize = UDim2.fromOffset(280,44)
             if State.Config.CleanVisuals then labelText, labelSize = "@"..p.Name, UDim2.fromOffset(190,24) end
+            if State.GameContext.Mode()~="Classic" then
+                labelText=labelText.." · "..role..(State.GameContext.Frozen(p) and " (frozen)" or "")
+            end
             -- Write only real changes: the old flip between two strings re-rendered every label twice per tick.
             if visual.Text.Text ~= labelText then visual.Text.Text = labelText end
             if visual.Label.Size ~= labelSize then visual.Label.Size = labelSize end
@@ -21402,11 +21517,11 @@ local function updateThreat()
     local ownRoot = State.Config.ThreatWarning and alive(player) and player.Character:FindFirstChild("HumanoidRootPart")
     if ownRoot and espInRoundArea(ownRoot.Position) then
         for _, other in ipairs(Players:GetPlayers()) do
-            if other ~= player and roleFor(other) == "Murderer" and alive(other)
+            if other ~= player and State.GameContext.Threat(player,other) and alive(other)
                 and espInRoundArea(other.Character.HumanoidRootPart.Position) then
                 local info = threatDetails(ownRoot, other.Character:FindFirstChild("HumanoidRootPart"), workspace.CurrentCamera)
                 if info.Distance <= State.Config.ThreatRange and (not closest or info.Distance < closest.Distance) then
-                    info.Name, info.DisplayName = other.Name, other.DisplayName
+                    info.Name, info.DisplayName,info.Role = other.Name, other.DisplayName,roleFor(other)
                     closest = info
                 end
             end
@@ -21421,8 +21536,8 @@ local function updateThreat()
         bannerStroke.Color = near and Color3.fromRGB(255, 90, 100) or Color3.fromRGB(255, 178, 90)
         bannerStroke.Transparency = near and 0.2 or 0.45
         local name = closest.DisplayName:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
-        local text = ('<font color="%s"><b>Murderer</b></font>   %s  ·  %d studs  ·  %s'):format(
-            accent, name, math.floor(closest.Distance + 0.5), (closest.Direction:lower():gsub("-", " ")))
+        local text = ('<font color="%s"><b>%s</b></font>   %s  ·  %d studs  ·  %s'):format(
+            accent, closest.Role, name, math.floor(closest.Distance + 0.5), (closest.Direction:lower():gsub("-", " ")))
             .. (closest.Height and ("  ·  " .. closest.Height:lower()) or "")
             .. (closest.Closing and ('  ·  <font color="%s">closing</font>'):format(accent) or "")
         if threatBanner.Text ~= text then threatBanner.Text = text end
@@ -21486,7 +21601,7 @@ button("Stab sweep assist", "StabSweep", 154)
 button("Gun aim point marker", "AimMarker", 191)
 button("Role ESP", "ESP", 228)
 button("Dropped gun ESP", "GunESP", 265)
-button("Nearby murderer warning", "ThreatWarning", 302)
+button("Nearby threat warning", "ThreatWarning", 302)
 button("Auto gun pickup (no TP)", "AutoPickup", 339)
 button("Auto knife dodge", "AutoKnifeDodge", 376)
 button("Invisibility (F8)", "Invisibility", 413)
@@ -21508,7 +21623,7 @@ local dodgeStatus = textLine("Knife dodge ready", 529, 10)
 dodgeStatus.TextTruncate = Enum.TextTruncate.AtEnd
 local invisStatus = textLine(State.Invis.Status, 552, 10)
 invisStatus.TextWrapped = true
-textLine("Blue: Sheriff   Green: Innocent   Red: Murderer", 582, 10)
+textLine("Role colors follow the game mode; gray means unknown", 582, 10)
 textLine("Yellow: dropped gun | Green ring: gun aim point", 600, 10)
 textLine("Click: stab | E/RMB: throw | Insert: hide", 622, 10)
 local unload = Instance.new("TextButton")
@@ -22414,7 +22529,7 @@ function State.DebugSnapshot()
     local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     local preview = root and chooseTarget("Gun", shotOrigin("Gun", toolFor(player, "Gun")))
     return {Running = State.Running, Aim = State.Config.Aim, KnifeAim = State.Config.KnifeAim,
-        MagicBullet = State.Config.MagicBullet, MagicBulletMode = "ImmediateKnownMurdererGunAim",
+        MagicBullet = State.Config.MagicBullet, MagicBulletMode = "ImmediateModeAwareGunAim",
         KnifeControls = "ClickStabRightPressThrow", BodySampleCount = #hitOffsets,
         CameraGuardStatus = State.CameraGuard and State.CameraGuard.Status,
         CameraLockCorrections = State.CameraGuard and State.CameraGuard.Corrections,
@@ -22429,7 +22544,7 @@ function State.DebugSnapshot()
         LastMotionPrediction = State.LastMotionPrediction, GunMechanics = "ServerResultThenVisualBeam",
         InvisibleTracking = "ExistingNamedBodyParts", HiddenESPCount = hiddenCount,
         GunAimRanking = "EarlyNominalLateGeometry", GunTimingCoverage = preview and preview.TimingCoverage,
-        GunAcquisition = "KnownMurderer3DClearPath", GunTargetOffscreen = preview and preview.Offscreen,
+        GunAcquisition = "ModeAware3DClearPath", GunTargetOffscreen = preview and preview.Offscreen,
         PoseEnabled = State.Config.PoseEnabled, PosePlaying = State.Pose and State.Pose.Playing,
         PoseAssetId = State.Config.PoseAssetId, PoseStatus = State.Pose and State.Pose.Status,
         MageAnimations = State.Config.MageAnimations, MageApplied = State.Mage and State.Mage.Applied,
@@ -22465,7 +22580,7 @@ function State.PreviewGunShot()
     local item = toolFor(player, "Gun")
     local origin = shotOrigin("Gun", item)
     local solution = chooseTarget("Gun", origin, item)
-    if not solution then return {Enabled = true, ClearShot = false, Status = "No clear murderer target"} end
+    if not solution then return {Enabled = true, ClearShot = false, Status = "No clear eligible opponent"} end
     local head = player.Character and player.Character:FindFirstChild("Head")
     local clearMuzzle = not head or clearPath(head.Position, origin, player.Character)
     return {Enabled = true, ClearShot = clearMuzzle, Target = solution.Player.Name,
@@ -23246,8 +23361,9 @@ local installPlayerFling = function(C)
         return true, fling.Status
     end
     function State.FlingRole(role)
-        if role == "Opponent" then role = C.RoleFor(player) == "Murderer" and "Sheriff" or "Murderer" end
-        if role ~= "Murderer" and role ~= "Sheriff" then describe("Choose Murderer or Sheriff"); return false, fling.Status end
+        if C.ResolveRole then role=C.ResolveRole(role)
+        elseif role == "Opponent" then role = C.RoleFor(player) == "Murderer" and "Sheriff" or "Murderer" end
+        if not role or not C.ResolveRole and role ~= "Murderer" and role ~= "Sheriff" then describe("Choose a supported role"); return false, fling.Status end
         local _, _, ownRoot = characterParts(player)
         local chosen, nearest
         for _, p in ipairs(Players:GetPlayers()) do
@@ -23256,7 +23372,8 @@ local installPlayerFling = function(C)
             -- A healthy alternate rig can still qualify when round death flags are clear.
             local living = root and (C.IsAlive(p) or (root ~= p.Character:FindFirstChild("HumanoidRootPart")
                 and C.IsEliminated and not C.IsEliminated(p)))
-            if p ~= player and root and living and not (State.IsPlayerExcluded and State.IsPlayerExcluded(p)) and C.RoleFor(p) == role then
+            if p ~= player and root and living and not (State.IsPlayerExcluded and State.IsPlayerExcluded(p))
+                and (C.RoleFor(p) == role or role=="Sheriff" and C.RoleFor(p)=="Hero") then
                 local distance = ownRoot and (root.Position - ownRoot.Position).Magnitude or 0
                 if not nearest or distance < nearest then chosen, nearest = p, distance end
             end
@@ -23383,7 +23500,11 @@ local installPlayerFling = function(C)
 end
 
 installPlayerFling({State = State, Players = Players, Player = player, RunService = RunService,
-    Workspace = workspace, Connect = connect, RoleFor = roleFor, IsAlive = alive,
+    Workspace = workspace, Connect = connect, RoleFor = roleFor, IsAlive = alive,ResolveRole=State.GameContext.ResolveRole,
+    GetMapBounds=function(position)
+        local box=State.GameContext.MapAt(position)
+        return box and {Frame=box.Frame,Size=box.Size,Name=box.Object.Name} or nil
+    end,
     IsEliminated = function(p)
         local data = dataFor(p)
         return data and (data.Dead == true or data.Killed == true) or false
@@ -23683,8 +23804,8 @@ installPlayerActions({State = State, Players = Players, Player = player, RunServ
         if not alive(target) then return false, "Waiting for selected target in an active round" end
         local item = toolFor(player, "Knife") or toolFor(player, "Gun")
         if not item then return false, "Waiting for a gun or knife you own" end
-        if item.Name == "Gun" and roleFor(target) ~= "Murderer" then
-            return false, "Gun auto attack only fires at the confirmed murderer"
+        if not State.IsCombatTarget(item.Name,target) then
+            return false, "Selected player is not an eligible opponent for this weapon / mode"
         end
         if item.Name == "Gun" and not State.Config.MagicBullet then return false, "Enable Magic Bullet / gun aim" end
         local char = player.Character
@@ -23721,6 +23842,14 @@ do
 local installKillAura=function(C)
     local State,player=C.State,C.Player
     local clock=C.Clock or os.clock
+    local function knifeUser()
+        if C.CanUseWeapon then return C.CanUseWeapon("Knife") end
+        return C.RoleFor(player)=="Murderer"
+    end
+    local function eligible(target)
+        if C.IsTarget then return C.IsTarget("Knife",target) end
+        return C.RoleFor(target)~="Murderer"
+    end
     local focused=true
     local aura={Enabled=false,Status="Off",Attempts=0,Contacts=0,TargetId=nil,LastAttempt=-math.huge}
     State.KillAura=aura
@@ -23854,7 +23983,7 @@ local installKillAura=function(C)
         local char=player.Character
         local hum=char and char:FindFirstChildOfClass("Humanoid")
         return aura.Enabled and State.Running and State.Config.Aim and focused and char==aura.Character
-            and hum and hum.Health>0 and C.IsAlive(player) and C.RoleFor(player)=="Murderer"
+            and hum and hum.Health>0 and C.IsAlive(player) and knifeUser()
             and not (State.Invis and (State.Invis.Busy or State.Invis.Active and not State.Config.InvisibleKnife))
             and not (State.Fling and State.Fling.Active) and not C.InputBlocked()
     end
@@ -23879,7 +24008,7 @@ local installKillAura=function(C)
         aura.Enabled,State.Config.KillAura=true,true
         aura.NextScanAt=nil
         aura.Character=player.Character
-        aura.Status="On  ·  waiting until you are murderer with a knife"
+        aura.Status="On  ·  waiting for an eligible knife role"
         refresh(); return true,aura.Status
     end
     function State.StopKillAll(message)
@@ -23906,8 +24035,8 @@ local installKillAura=function(C)
     end
     local function startKillAll(retryOnly)
         if batch.Active then return false,"Kill all is already running" end
-        if not State.Running or not C.IsAlive(player) or C.RoleFor(player)~="Murderer" then
-            return false,"Kill all requires a living murderer"
+        if not State.Running or not C.IsAlive(player) or not knifeUser() then
+            return false,"Kill all requires a living knife role"
         end
         local allowed={}
         if retryOnly then
@@ -23919,7 +24048,7 @@ local installKillAura=function(C)
         local targets={}
         for _,p in ipairs(C.Players:GetPlayers()) do
             if p~=player and (not retryOnly or allowed[p]) and not State.IsPlayerExcluded(p) and C.IsAlive(p)
-                and not (C.IsEliminated and C.IsEliminated(p)) and C.RoleFor(p)~="Murderer" then
+                and not (C.IsEliminated and C.IsEliminated(p)) and eligible(p) then
                 table.insert(targets,{Player=p,Character=p.Character,Attempts=0,NextAttempt=-math.huge})
             end
         end
@@ -23983,13 +24112,13 @@ local installKillAura=function(C)
                 end
                 pause("Waiting for respawn"); return
             end
-            if C.RoleFor(player)~="Murderer" or not C.IsAlive(player) then
+            if not knifeUser() or not C.IsAlive(player) then
                 if batch.Active then
-                    State.StopKillAll("Kill all cancelled: murderer role ended")
+                    State.StopKillAll("Kill all cancelled: knife role ended")
                     State.ClearKillAllRetry()
                     if not aura.Enabled then return end
                 end
-                pause("Waiting until you are murderer"); return
+                pause("Waiting for an eligible knife role"); return
             end
             if not root then pause("Waiting for your character"); return end
             if not State.Config.Aim then pause("Paused  ·  turn on Aim assist"); return end
@@ -24038,7 +24167,7 @@ local installKillAura=function(C)
                         local hum=targetChar and targetChar:FindFirstChildOfClass("Humanoid")
                         if present[p] and targetChar==entry.Character and ((C.IsEliminated and C.IsEliminated(p)) or hum and hum.Health<=0) then
                             entry.Done=true; batch.Observed+=1
-                        elseif not present[p] or targetChar~=entry.Character or State.IsPlayerExcluded(p) or C.RoleFor(p)=="Murderer" then
+                        elseif not present[p] or targetChar~=entry.Character or State.IsPlayerExcluded(p) or not eligible(p) then
                             entry.Done=true; batch.Skipped+=1
                         end
                     end
@@ -24123,7 +24252,7 @@ local installKillAura=function(C)
             else
             if clock()<(aura.NextScanAt or 0) then return end
             for _,p in ipairs(C.Players:GetPlayers()) do
-                if p~=player and not State.IsPlayerExcluded(p) and C.IsAlive(p) then
+                if p~=player and not State.IsPlayerExcluded(p) and C.IsAlive(p) and eligible(p) then
                     local targetChar=p.Character
                     local targetHum=targetChar and targetChar:FindFirstChildOfClass("Humanoid")
                     local targetRoot=targetChar and targetChar:FindFirstChild("HumanoidRootPart")
@@ -24186,7 +24315,7 @@ local function auraKnifeReady(item)
 end
 local function auraStab(item,target,part)
     if not State.CanAuraContact() then return false,"Aura paused" end
-    if roleFor(player)~="Murderer" or not alive(player) or not alive(target) or State.IsPlayerExcluded(target) then return false,"Target unavailable" end
+    if not State.CanUseCombatWeapon("Knife") or not alive(player) or not alive(target) or State.IsPlayerExcluded(target) or not State.IsCombatTarget("Knife",target) then return false,"Target unavailable" end
     if not auraKnifeReady(item) then return false,"Knife cooling down" end
     local ownRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     local char=target.Character
@@ -24222,7 +24351,7 @@ local function auraBurst(item,candidates)
         local own=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
         local root=char and char:FindFirstChild("HumanoidRootPart")
         if batch.Active and batch.Targets==generation and State.CanAuraContact() and target~=player and char==candidate.Character and alive(target)
-            and roleFor(target)~="Murderer" and not State.IsPlayerExcluded(target) and own and root
+            and State.IsCombatTarget("Knife",target) and not State.IsPlayerExcluded(target) and own and root
             and (root.Position-own.Position).Magnitude<=State.GetKillAuraRange()
             and part and part:IsA("BasePart") and part:IsDescendantOf(char) then
             record.StabTarget=target
@@ -24256,6 +24385,7 @@ end
 installKillAura({State=State,Player=player,Players=Players,RunService=RunService,UIS=UIS,Connect=connect,
     RoundEnd=RS.Remotes.Gameplay.RoundEndFade.OnClientEvent,
     RoleFor=roleFor,IsAlive=alive,EquippedWeapon=equippedWeapon,ClearPath=clearPath,Prepare=syncWeapons,BodyPartNames=hitPartNames.Knife,
+    CanUseWeapon=State.CanUseCombatWeapon,IsTarget=State.IsCombatTarget,
     InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end,
     CanStab=auraKnifeReady,
     IsEliminated=function(p)
@@ -24657,6 +24787,38 @@ local createTacticalPolicy = function()
     end
     function policy.Decide(s)
         if not s.Active or s.Role=="Unknown" then return {Instruction="Waiting for a round",Kind="Idle"} end
+        if s.Mode and s.Mode~="Classic" then
+            local result={Kind="Idle",Instruction="Observe the event round"}
+            if s.Mode~="Infection" and s.Mode~="FreezeTag" then result.Instruction="Guidance unavailable for this mode"; return result end
+            if s.Frozen then result.Instruction="Frozen · wait for a teammate"; return result end
+            if s.Paused then result.Instruction="Another action is active · End or Stop cancels it"; return result end
+            local target,nearest,threat,threatDistance
+            for _,p in ipairs(s.Players) do
+                local distance=(p.Position-s.Position).Magnitude
+                if p.Enemy and not p.Excluded and (not nearest or distance<nearest) then target,nearest=p,distance end
+                if p.Threat and (not threatDistance or distance<threatDistance) then threat,threatDistance=p,distance end
+            end
+            if (s.Role=="Zombie" or s.Role=="Freezer") and target then
+                result.Target=target; result.Label=target.Role:upper()
+                result.Instruction=s.Role=="Zombie" and (nearest<=6.5 and "Stab the nearby survivor" or "Approach a survivor · zombies cannot throw")
+                    or (nearest<=6.5 and "Use your equipped weapon on the runner" or "Approach an unfrozen runner")
+                if nearest>6.5 then result.Kind="Approach"; result.Goal=target.Position end
+                if s.Role=="Freezer" and s.Weapon=="Gun" and s.Enabled and target.Visible and nearest>=14 then
+                    result.Kind="Idle"; result.Goal=nil; result.Instruction="Keep space and aim at the visible runner"
+                end
+            elseif s.Role=="Survivor" and target and target.Visible and s.Weapon=="Gun" and s.Enabled and nearest>=14 then
+                result.Target=target; result.Label="ZOMBIE"; result.Instruction="Keep space and aim at the visible zombie"
+            elseif threat then
+                result.Threat=threat.Position; result.Kind="Retreat"
+                result.Instruction=s.Mode=="Infection" and "Keep distance from zombies" or "Avoid the freezer and help unfrozen runners"
+                local best
+                for _,point in ipairs(s.Destinations or {}) do
+                    local separation=(point.Position-threat.Position).Magnitude
+                    if separation>threatDistance+6 and (not best or separation>best) then best=separation; result.Goal=point.Position; result.DestinationName=point.Name end
+                end
+            else result.Instruction=s.Mode=="Infection" and "Stay with survivors and watch for zombies" or "Keep moving and avoid freezers" end
+            return result
+        end
         if s.Paused then return {Instruction="Automation on  ·  End or Stop returns you",Kind="Idle"} end
         local result={Kind="Idle",Instruction="Observe the round"}
         local threat,threatDistance
@@ -24841,6 +25003,7 @@ local createLearnedPolicy = function(C)
     function policy.Decide(s)
         local fallback=base.Decide(s)
         status.Source,status.Action,status.Reason="Rules",nil,nil
+        if s.Mode and s.Mode~="Classic" then status.Reason="Event mode uses rule guidance"; return fallback end
         if not s.Active or s.Role~="Sheriff" then policy.Reset(); return fallback end
         if not State.Config.LearnedSheriffGuide then status.Reason="Learned guide off"; return fallback end
         if s.Paused then status.Reason="Automation active"; return fallback end
@@ -24990,8 +25153,8 @@ local installTacticalGuide = function(C)
             return mapCache.Points,mapCache.Map,mapCache.Origin
         end
         local best,bestDistance,bestMap,bestOrigin
-        for _,map in ipairs(world:GetChildren()) do
-            local spawns=map:IsA("Model") and map:FindFirstChild("Spawns")
+        for _,map in ipairs(C.GameMaps and C.GameMaps() or world:GetChildren()) do
+            local spawns=(map:IsA("Model") or map:IsA("Folder")) and (map:FindFirstChild("Spawns") or map:FindFirstChild("SpawnPoints"))
             if spawns and not map.Name:lower():find("lobby",1,true) then
                 local points,closest={},math.huge
                 for _,part in ipairs(spawns:GetDescendants()) do
@@ -25048,6 +25211,7 @@ local installTacticalGuide = function(C)
             local r=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
             if p~=player and r and C.IsAlive(p) then
                 table.insert(list,{Id=p.UserId,Name=p.Name,Character=p.Character,Position=r.Position,Velocity=r.AssemblyLinearVelocity,Role=C.RoleFor(p),
+                    Enemy=State.IsCombatTarget("Gun",p) or State.IsCombatTarget("Knife",p),Threat=State.GameContext.Threat(player,p),
                     Excluded=State.IsPlayerExcluded(p),Visible=false,Distance=(r.Position-root.Position).Magnitude})
             end
         end
@@ -25067,7 +25231,7 @@ local installTacticalGuide = function(C)
             if C.ToolFor then return C.ToolFor(player,name)~=nil end
             return item and item.Name==name or false
         end
-        return {Active=true,Role=ownRole,Map=map,Position=root.Position,Velocity=root.AssemblyLinearVelocity,Players=list,Destinations=points,
+        return {Active=true,Role=ownRole,Mode=State.GameContext.Mode(),Frozen=State.GameContext.Frozen(player),Map=map,Position=root.Position,Velocity=root.AssemblyLinearVelocity,Players=list,Destinations=points,
             MapOrigin=origin,Episode=episodeSerial,Elapsed=clock()-episodeStarted,
             Coins=math.max(0,(State.Stats and State.Stats.ServerCoinEvents or 0)-coinBaseline),
             GunOwned=owned("Gun"),KnifeOwned=owned("Knife"),
@@ -25180,7 +25344,7 @@ env.MM2PathBudget=env.MM2PathBudget or {Outstanding=0}
 installTacticalGuide({State=State,Player=player,Players=Players,Workspace=workspace,Parent=gui.Parent,
     Policy=tacticalPolicy,PathPool=createAsyncPathPool,PathBudget=env.MM2PathBudget,
     PathfindingService=game:GetService("PathfindingService"),RunService=RunService,
-    Connect=connect,RoleFor=roleFor,IsAlive=alive,ToolFor=toolFor,EquippedWeapon=equippedWeapon,ClearPath=clearPath})
+    Connect=connect,RoleFor=roleFor,IsAlive=alive,ToolFor=toolFor,EquippedWeapon=equippedWeapon,ClearPath=clearPath,GameMaps=State.GameContext.Maps})
 end
 
 
@@ -25258,6 +25422,10 @@ local installWorldTeleports=function(C)
     end
     local function container(kind)
         local candidates={}
+        if kind=="Map" and C.GameMaps then
+            local maps=C.GameMaps()
+            return #maps==1 and maps[1] or nil
+        end
         for _,child in ipairs(world:GetChildren()) do
             if kind=="Lobby" and child.Name:lower()=="lobby" then table.insert(candidates,child)
             elseif kind=="Map" and child:FindFirstChild("Spawns") and child:FindFirstChild("Base") then table.insert(candidates,child) end
@@ -25340,7 +25508,7 @@ local installWorldTeleports=function(C)
     end
 end
 
-installWorldTeleports({State=State,Player=player,Players=Players,Workspace=workspace,Typing=function() return UIS:GetFocusedTextBox()~=nil end})
+installWorldTeleports({State=State,Player=player,Players=Players,Workspace=workspace,GameMaps=State.GameContext.Maps,Typing=function() return UIS:GetFocusedTextBox()~=nil end})
 end
 
 
@@ -25912,7 +26080,7 @@ local installTriggerbot=function(C)
         if kind=="Gun" then
             if not State.Config.Triggerbot then reset("Gun triggerbot off"); return end
             if not State.Config.MagicBullet then reset("Turn on Gun aim"); return end
-            if C.Role(player)~="Sheriff" and C.Role(player)~="Hero" then reset("Waiting for sheriff or hero"); return end
+            if C.CanUseWeapon and not C.CanUseWeapon("Gun") or not C.CanUseWeapon and C.Role(player)~="Sheriff" and C.Role(player)~="Hero" then reset("Waiting for an eligible gun role"); return end
             -- Match the native tool's readiness instead of imposing a 3-second wait.
             -- Bound requests and unresolved feedback; toggling cannot reset either gate.
             if not item.Enabled or record.GunSending or now-math.max(record.LastGun or -math.huge,bot.LastShot)<.15 then
@@ -25938,7 +26106,7 @@ local installTriggerbot=function(C)
             return
         elseif kind=="Knife" then
             if not State.Config.KnifeTriggerbot then reset("Knife triggerbot off"); return end
-            if C.Role(player)~="Murderer" then reset("Waiting for murderer"); return end
+            if C.CanUseWeapon and not C.CanUseWeapon("Knife") or not C.CanUseWeapon and C.Role(player)~="Murderer" then reset("Waiting for an eligible knife role"); return end
             if record.Charging or not item.Enabled or now-(record.LastStab or -math.huge)<.85 then
                 reset("Waiting for knife cooldown"); return
             end
@@ -25952,7 +26120,7 @@ local installTriggerbot=function(C)
             reset("No clear on-screen opponent within knife reach"); return
         end
         local role=C.Role(target)
-        if role=="Murderer" then reset("Aim at an opponent"); return end
+        if C.IsTarget and not C.IsTarget("Knife",target) or not C.IsTarget and role=="Murderer" then reset("Aim at an opponent"); return end
         local character=target.Character
         if not character or not part or part.Parent~=character then reset("Target changed"); return end
         if kind=="Knife" then
@@ -25988,6 +26156,7 @@ end
 
 installTriggerbot({State=State,Player=player,UIS=UIS,World=workspace,Heartbeat=RunService.Heartbeat,
     Connect=connect,Equipped=equippedWeapon,Alive=alive,Ready=ready,Role=roleFor,
+    CanUseWeapon=State.CanUseCombatWeapon,IsTarget=State.IsCombatTarget,
     ClearPath=clearPath,SendGun=sendGun,StabKnife=stabKnife,ReportContact=reportStabContact,
     ScreenKnifeTarget=function() return State.SelectStabAssistTarget(true,true) end,
     InputBlocked=function() return mobileBlocked() or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()~=nil end})
@@ -26060,7 +26229,7 @@ local installKeybinds=function(C)
         {"Movement","InvisibleKnife","Knife while invisible"},{"Movement","AntiFling","Anti-fling"},
         {"Movement","MapVoteRepeat","Repeat chosen map vote"},
         {"Visuals","GunESP","Dropped gun ESP"},{"Visuals","CombatHUD","Combat HUD"},{"Visuals","CompactHUD","Compact HUD"},
-        {"Visuals","ThreatWarning","Nearby murderer warning"},{"Visuals","AimMarker","Gun aim marker"},
+        {"Visuals","ThreatWarning","Nearby threat warning"},{"Visuals","AimMarker","Gun aim marker"},
         {"Visuals","CleanVisuals","Clean role visuals"},{"Visuals","StableBodyESP","Stable body colors"},
         {"Visuals","Toasts","Toasts"},{"Visuals","LearnedSheriffGuide","Learned Sheriff guidance"},
     }) do
@@ -26207,6 +26376,24 @@ local installRoleReveal=function(C)
     local function protected(p) return State.IsPlayerExcluded~=nil and State.IsPlayerExcluded(p)==true end
     function State.GetRoleReveal()
         if not C.InRound(player) and not C.ViewerInRound() then return nil,"Available during a round" end
+        if C.Mode and C.Mode()~="Classic" then
+            local attacker,defender=C.Groups()
+            if not attacker then return nil,"Role reveal is unavailable for this mode" end
+            local parts={}
+            for _,role in ipairs({attacker,defender}) do
+                local names,total={},0
+                for _,p in ipairs(C.Players:GetPlayers()) do
+                    if p~=player and not protected(p) and C.InRound(p) and C.RoleFor(p)==role
+                        and (not C.IsAlive or C.IsAlive(p)) then
+                        total+=1
+                        if #names<3 then table.insert(names,"@"..p.Name) end
+                    end
+                end
+                if #names>0 then table.insert(parts,role..": "..table.concat(names,", ")..(total>#names and " +"..(total-#names) or "")) end
+            end
+            if #parts==0 then return nil,"No eligible event roles known yet" end
+            return table.concat(parts," • ")
+        end
         local murderer=find(isMurderer)
         if not murderer then return nil,"Murderer not known yet" end
         if murderer==player then return nil,"You are the murderer" end
@@ -26230,6 +26417,7 @@ local installRoleReveal=function(C)
 end
 
 installRoleReveal({State=State,Player=player,Players=Players,RoleFor=roleFor,
+    Mode=State.GameContext.Mode,Groups=State.GameContext.Groups,IsAlive=alive,
     RawRole=function(p) local data=dataFor(p); return data and data.Role or nil end,
     HasGun=function(p) return toolFor(p,"Gun")~=nil end,
     InRound=function(p)
@@ -26564,9 +26752,9 @@ local createMobileUI = function(C)
     mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Waiting for round"})
     home:Paragraph({Title="MM2 Universal",Desc="v" .. State.Version})
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
-    option(combat, "Gun aim", "MagicBullet", "Your shots go to the murderer.")
+    option(combat, "Gun aim", "MagicBullet", "Assists shots at eligible opponents in the current game mode.")
     option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
-    option(combat,"Gun triggerbot","Triggerbot","Fast assisted shots at visible on-screen murderers. Cursor contact is not required. Requires Aim assist and Gun aim.")
+    option(combat,"Gun triggerbot","Triggerbot","Fast assisted shots at visible on-screen opponents for your mode. Cursor contact is not required. Requires Aim assist and Gun aim.")
     mobile.TriggerbotStatus=combat:Paragraph({Title="Triggerbot status",Desc="Off"})
     option(knife,"Knife triggerbot","KnifeTriggerbot","Fast assisted stabs at clear on-screen opponents within 6.5 studs. Cursor contact is not required.")
     mobile.KnifeTriggerbotStatus=knife:Paragraph({Title="Triggerbot status",Desc="Off"})
@@ -26575,7 +26763,7 @@ local createMobileUI = function(C)
     option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
     if State.SetKillAura then
-        option(automation,"Kill aura","KillAura","Automatically swings and reports clear nearby body contact as murderer. No physical blade overlap needed.")
+        option(automation,"Kill aura","KillAura","Swings at eligible opponents while you have a knife role (Murderer, Zombie or Freezer). Server decides damage.")
         function mobile.RunKillAll(retry)
             suppressInput()
             local ok,message
@@ -26666,10 +26854,10 @@ local createMobileUI = function(C)
     presets:Button({Title="Clean display",Desc="Names only, compact HUD.",Callback=function() mobile.ApplyDisplayPreset("Clean") end})
     presets:Button({Title="Detailed display",Desc="Distances, full HUD, aim marker.",Callback=function() mobile.ApplyDisplayPreset("Detailed") end})
     mobile.AdvancedCombat=advancedCombat
-    option(visuals, "Role ESP", "ESP", "Murderer red, sheriff blue, others green.")
+    option(visuals, "Role ESP", "ESP", "Classic role colors plus Zombie, Survivor, Freezer and Runner colors. Unknown roles are gray.")
     option(visuals, "Dropped gun ESP", "GunESP", "Shows where the gun dropped.")
     if State.GetCombatHUDData then option(hud,"Combat HUD","CombatHUD","Status card. Drag it to move.") end
-    option(hud, "Nearby murderer warning", "ThreatWarning", "Warns when the murderer is close.")
+    option(hud, "Nearby threat warning", "ThreatWarning", "Warns about a nearby Murderer, Zombie or Freezer for your current role.")
     local displayOptions=visuals
     if State.GetCombatHUDData then option(hud,"Compact HUD","CompactHUD","Hide the last-shot line.") end
     option(hud,"Toasts","Toasts","Short messages for toggles, keys and round events.")
@@ -27051,6 +27239,7 @@ local createMobileUI = function(C)
     -- Short wording shared by the menu session line and the status card.
     local roleLook={Murderer={"MURDERER",Color3.fromRGB(255,90,100)},Sheriff={"SHERIFF",Color3.fromRGB(90,160,255)},
         Hero={"HERO",Color3.fromRGB(90,160,255)},Innocent={"INNOCENT",Color3.fromRGB(90,220,130)},
+        Zombie={"ZOMBIE",colors.Zombie},Survivor={"SURVIVOR",colors.Survivor},Freezer={"FREEZER",colors.Freezer},Runner={"RUNNER",colors.Runner},
         Lobby={"LOBBY"},Eliminated={"OUT"},["Waiting for character"]={"SPAWNING"}}
     local weaponWords={["No weapon equipped"]="Unarmed",["Gun reloading / disabled"]="Reloading",["Knife charging"]="Charging"}
     local resultWords={["No gun feedback yet"]="No shots yet",["Awaiting server shot reply"]="Shot sent",
@@ -27064,7 +27253,7 @@ local createMobileUI = function(C)
         local data
         if State.GetCombatHUDData then local ok,result=pcall(State.GetCombatHUDData); if ok and type(result)=="table" then data=result end end
         local role=data and data.Role
-        local session=(role and role~="Unknown" and role or "Waiting for round").."  ·  "..weaponWord(data and data.Weapon or "No weapon equipped")
+        local session=State.GameContext.Mode().."  ·  "..(role and role~="Unknown" and role or "Waiting for round").."  ·  "..weaponWord(data and data.Weapon or "No weapon equipped")
         local function flag(value) return value and "on" or "off" end
         session..="\nGun aim "..flag(State.Config.MagicBullet).."  ·  ESP "..flag(State.Config.ESP).."  ·  Aura "..flag(State.KillAura and State.KillAura.Enabled)
         updateDescription(mobile.OverviewStatus,"Overview",session)
@@ -27837,6 +28026,7 @@ local createMobileUI = function(C)
                 if role=="Murderer" then mobile.Toast("You are the murderer",roleLook.Murderer[2])
                 elseif role=="Sheriff" then mobile.Toast(previous=="Innocent" and "You picked up the gun" or "You are the sheriff",roleLook.Sheriff[2])
                 elseif role=="Innocent" then mobile.Toast("You are innocent",roleLook.Innocent[2])
+                elseif role=="Zombie" or role=="Survivor" or role=="Freezer" or role=="Runner" then mobile.Toast("You are a "..role:lower(),roleLook[role][2])
                 elseif role=="Eliminated" and previous and previous~="Lobby" then mobile.Toast("You were eliminated","off") end
             end
         end
@@ -28206,7 +28396,7 @@ local function snapshot()
                         local height=math.abs(low.Y-top.Y); local width=height*.6
                         local tint=color(colors[visualRoleFor(other)])
                         add({Kind="rect",X=top.X-width/2,Y=top.Y,W=width,H=height,Alpha=0,Color=tint,Stroke=tint,Border=1.5,StrokeAlpha=1,Z=800000})
-                        add({Kind="text",X=top.X-110,Y=top.Y-25,W=220,H=24,Alpha=1,Color=tint,Text="@"..other.Name,Font=13,Center=true,Z=800001})
+                        add({Kind="text",X=top.X-110,Y=top.Y-25,W=220,H=24,Alpha=1,Color=tint,Text="@"..other.Name..(State.GameContext.Mode()~="Classic" and " · "..visualRoleFor(other) or ""),Font=13,Center=true,Z=800001})
                     end
                 end
             end

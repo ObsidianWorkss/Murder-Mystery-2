@@ -1,5 +1,14 @@
 # Validation — 2026-10-19
 
+## Release candidate 1.0.0-rc.42
+
+- Luau 0.739 compiles both runtime scripts. All 971 assertions pass: 77 game-mode, 58 streamer, 142 phone, 84 combat, 44 side-dodge, 32 dodge, 60 voting, 29 visibility, 201 release, 62 triggerbot, 150 aura and 32 equip checks. Companion source is unchanged; its 33 headless Windows protocol checks remain separate.
+- Inspected the connected client's native role selector: Classic uses Innocent/Sheriff/Murderer, Infection uses Survivor/Zombie and FreezeTag uses Freezer/Runner. The native KnifeClient explicitly rejects throw initiation when the character's Zombie attribute is true. Observed a loaded Spaceship model containing Map geometry, which does not satisfy the old Base requirement.
+- Extracted-source game-context tests cover Classic compatibility, Base/Map/Spawns-only/SpawnPoints/nested maps, lobby and character exclusion, bounds caching, removal, streamed/error/empty geometry, finite points, death/missing metadata, numeric/string row IDs, role/weapon fallback, both event target matrices, conversion, known frozen state, unknown-mode refusal, diagnostic privacy, role-action group resolution, ESP role colors and event guidance. The Classic-trained actor is bypassed in an event-mode check.
+- Additional shipped-function regressions verify immediate preview invalidation on mode change, event gun/knife trigger adapters, teammate conversion, capability refusal, event queue/ordinary aura eligibility and final contact pause, and bounded manual role-reveal previews with exclusions and no actual chat posts.
+- Ran the shipped context factory as a temporary read-only probe against the connected native Classic round: one recognized map with Base/Spawns, eight player-data rows, six living in-map characters and Classic role counts of one Murderer, one Sheriff and six Innocents. The local Innocent had zero eligible automatic gun/knife targets. The temporary result was removed; no attack, movement, UI or recorder action was requested.
+- The connected client still runs rc.41; the complete rc.42 runtime has not been loaded there. Live Infection/FreezeTag startup, ESP rendering, conversion/frozen transitions, normal native input and server combat acceptance remain pending. Mock contacts and eligibility checks are not proof of native hits/freezes/kills or accepted reach.
+
 ## Release candidate 1.0.0-rc.41
 
 - Luau 0.739 compiles `main.lua` and `loader.lua`; all 880 assertions pass: the previous 816, six keybind checks and 58 new streamer checks. The streamer harness extracts the shipped lifecycle and presentation manager rather than maintaining a second implementation.

@@ -1,10 +1,19 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.41**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.42**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Halloween compatibility candidate
+
+- [x] Both runtime scripts compile; all 971 Luau assertions pass, including 77 shared context/event policy checks and 14 added integration regressions.
+- [x] Read native event role definitions and Zombie throw restriction; read-only Classic context probe recognizes current map, role rows and in-map characters.
+- [ ] Load the complete candidate and check native role ESP/gun ESP/HUD/threat warnings in Classic, Infection and FreezeTag, including clean visuals and the optional companion view.
+- [ ] Verify Zombie conversion, frozen Runner state, death/respawn, map replacement and lobby/spectator transitions. Confirm the actual replicated frozen-state fields used by the current event server.
+- [ ] Verify owned event gun/knife readiness, supported native attacks, teammate cancellation, Zombie throw refusal, triggerbot, aura and queue behavior. Record requests, accepted freezes/damage and observed outcomes separately.
+- [ ] Check event map teleports, rule guidance, role-action group selection, manual role previews, existing movement/invisibility/dodge and unsupported-mode native weapon restoration.
 
 ## Windows streamer candidate
 
-- [x] Both scripts compile; 880 Luau assertions and 33 headless Windows companion checks pass locally.
+- [x] Both scripts compile; 971 Luau assertions and 33 headless Windows companion checks pass locally.
 - [x] Source packaging excludes generated connection tokens. Windows CI builds and tests the companion without opening a window.
 - [ ] Launch companion manually; verify Windows affinity acceptance, Solara loopback handshake, initial UI visibility, click-through menu controls, keyboard recovery and text editing.
 - [ ] Verify normal/borderless windows, resize, DPI/multiple monitors, focus, minimize, respawn, dynamic native UI and multiple-client refusal/explicit PID.
@@ -15,7 +24,7 @@ Version: **1.0.0-rc.41**. Do not describe this candidate as fully verified until
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control and streamer regression suites pass locally (880 Luau assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control and streamer regression suites pass locally (971 Luau assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks

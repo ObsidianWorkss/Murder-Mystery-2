@@ -51,6 +51,14 @@ local function fixture()
         if f.AfterContact then f.AfterContact(part) end
     end
     local function roleFor(p) return p.Role end
+    State.IsCombatTarget=function(kind,p)
+        if f.TargetPolicy then return f.TargetPolicy(kind,p) end
+        return roleFor(p)~="Murderer"
+    end
+    State.CanUseCombatWeapon=function(kind)
+        if f.UsePolicy then return f.UsePolicy(kind) end
+        return roleFor(player)=="Murderer"
+    end
     local function alive(p) return p.Alive and p.Character and p.Character.Humanoid.Health>0 end
     local function ready(r) return f.Ready and r and r.Active and r.Item.Parent==player.Character and r.Item.Enabled end
     local function clearPath(_,point)
@@ -82,6 +90,7 @@ local function fixture()
         RunService={Heartbeat=heartbeat},RoundEnd=f.RoundEnd,Clock=function() return f.Now end,
         Connect=function(signal,callback) f.Callbacks[signal]=callback end,
         RoleFor=roleFor,IsAlive=alive,ClearPath=clearPath,
+        CanUseWeapon=State.CanUseCombatWeapon,IsTarget=State.IsCombatTarget,
         InputBlocked=function() return f.InputBlocked==true end,
         EquippedWeapon=function() if f.Equipped then return knife,"Knife" end end,
         CanStab=auraKnifeReady,Stab=auraStab,Burst=auraBurst,Throw=auraThrow,
@@ -97,7 +106,7 @@ local function fixture()
             if record.AuraStab then record.AuraStab=false; record.StabbingUntil=0 end
             return true
         end}
-    f.Aura=installKillAura(C); f.UIS=UIS
+    f.Aura=installKillAura(C); f.UIS=UIS; f.Context=C
     function f.Step(dt) f.Now+=dt or .1; f.Callbacks[heartbeat](dt or .1) end
     function f.Enable() return State.SetKillAura(true) end
     return f
@@ -497,5 +506,22 @@ do
     check(f.VisibilityChecks==before,"idle ordinary aura does not repeat expensive rays every heartbeat")
     f.BlockAll=false; f.Step(.051)
     check(f.Aura.Contacts==1,"idle scan backoff still resumes with fresh visible target checks")
+end
+do
+    local f=fixture();f.Player.Role="Zombie";f.Target.Role="Survivor"
+    f.UsePolicy=function(kind) return kind=="Knife" end
+    f.TargetPolicy=function(_,p) return p.Role=="Survivor" end
+    check(f.State.StartKillAll(),"event knife role starts the existing queue through the shared capability adapter")
+    f.Step()
+    check(f.State.KillAll.Contacts==1,"event queue sends contact for an eligible opponent")
+    f.Target.Role="Zombie";f.Step(1)
+    check(f.State.KillAll.Contacts==1 and f.State.KillAll.Skipped==1,"event conversion removes the target before another queued contact")
+    f=fixture();f.Player.Role="Freezer";f.Target.Role="Runner"
+    f.UsePolicy=function(kind) return kind=="Knife" end
+    f.TargetPolicy=function(_,p) return p.Role=="Runner" end
+    f.Enable();f.Step()
+    check(f.Aura.Contacts==1,"ordinary event aura accepts eligible runner through the adapter")
+    f.UsePolicy=function() return false end;f.Step(1)
+    check(f.Aura.Contacts==1 and not f.State.CanAuraContact(),"event role loss pauses aura and the final contact guard")
 end
 print(passed.." aura assertions passed")

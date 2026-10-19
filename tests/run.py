@@ -31,6 +31,21 @@ for name, (start, end) in sections.items():
     template = template.replace("-- INSERT_" + name, code)
 with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness = Path(directory) / "combat.luau"
+    modes = (root / "tests" / "game_modes.luau").read_text(encoding="utf-8")
+    for marker, begin, finish in [
+        ("CONTEXT", "local createGameContext=function(C)", "local function toolFor(p, name)"),
+        ("COLORS", "local colors = {Sheriff", 'local visualFolder = Instance.new("Folder")'),
+        ("VISUAL_ROLE", "local function visualRoleFor(p)", "local function updateESP()"),
+        ("TACTICAL", "local createTacticalPolicy = function()", "local createLearnedModel = function()"),
+        ("LEARNED_POLICY", "local createLearnedPolicy = function(C)", "local installTacticalGuide = function(C)"),
+    ]:
+        start = source.index(begin)
+        end = source.index(finish, start)
+        modes = modes.replace("-- INSERT_" + marker, source[start:end])
+    if "-- INSERT_" in modes:
+        raise RuntimeError("Unexpanded game-mode source marker")
+    harness.write_text(modes, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
     streamer = (root / "tests" / "streamer.luau").read_text(encoding="utf-8")
     start = source.index("local installStreamerMode=function(C)")
     end = source.index("local createStreamerSurfaces=function(C)", start)

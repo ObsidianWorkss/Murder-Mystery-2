@@ -128,6 +128,15 @@ do
     sendResult={true}
     ok=State.RevealRolesInChat()
     check(ok and #sent==3 and State.RoleReveal.Sent==2,"a failed send does not start the cooldown")
+    C.Mode=function() return "Infection" end
+    C.Groups=function() return "Zombie","Survivor" end
+    roles[me],roles[killer],roles[cop],roles[hero]="Survivor","Zombie","Survivor","Survivor"
+    check(State.GetRoleReveal()=="Zombie: @Killer • Survivor: @Cop, @Hero","event role preview uses team labels and omits the local player")
+    excluded[killer]=true
+    check(State.GetRoleReveal()=="Survivor: @Cop, @Hero","event role preview omits protected accounts")
+    check(#sent==3,"event role previews do not post chat")
+    C.Groups=function() return nil end
+    check(State.GetRoleReveal()==nil,"unsupported mode does not post guessed roles")
 end
 do
     -- Movement: a fake character and signals; nothing here touches a real game.

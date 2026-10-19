@@ -113,6 +113,8 @@ do
     local targetPlayer={Character={},Role="Murderer",Name="Target"}
     local function alive(p) return not p.Dead end
     local function roleFor(p) return p.Role end
+    State.IsCombatTarget=function(kind,p) return kind=="Gun" and roleFor(p)=="Murderer" or kind=="Knife" and roleFor(p)~="Murderer" end
+    State.CanUseCombatWeapon=function(kind) return kind=="Knife" and roleFor(player)=="Murderer" end
     State.IsPlayerExcluded=function(p) return p.Excluded end
     State.RememberAimTarget=function() end
     local selected,scans=nil,0
@@ -156,6 +158,13 @@ do
     check(scans==before+1,"actual aim remains fresh under the low-effects preset")
     aimPoint({Kind="Gun",Item=item},nil,false,vec(0),true)
     check(seenScreenPolicy==true,"aim point forwards screen-only selection policy")
+    State.PreviewCache=nil;selected=nil
+    State.GetCachedAimPreview("Gun",item,vec(0))
+    local mode="Classic"
+    State.GameContext={Mode=function() return mode end}
+    mode="Infection"; local beforeMode=scans
+    State.GetCachedAimPreview("Gun",item,vec(0))
+    check(scans==beforeMode+1,"mode change invalidates a cached empty target immediately")
     now=10
 end
 
@@ -176,6 +185,8 @@ do
     local Players={GetPlayers=function() return {player,far,near} end}
     local function alive(p) return not p.Dead end
     local function roleFor(p) return p.Role end
+    State.IsCombatTarget=function(kind,p) return kind=="Gun" and roleFor(p)=="Murderer" or kind=="Knife" and roleFor(p)~="Murderer" end
+    State.CanUseCombatWeapon=function(kind) return kind=="Knife" and roleFor(player)=="Murderer" end
     local blocked={}
     local function clearPath(_,_,char) return not blocked[char] end
     local weaponReady=true
@@ -322,6 +333,8 @@ do
     local Players={FindFirstChild=function() return target end}
     local function alive() return true end
     local function roleFor() return "Murderer" end
+    State.IsCombatTarget=function(kind,p) return kind=="Gun" and roleFor(p)=="Murderer" or kind=="Knife" and roleFor(p)~="Murderer" end
+    State.CanUseCombatWeapon=function(kind) return kind=="Knife" and roleFor(player)=="Murderer" end
     local function ready() return true end
     local function clearPath() return true end
     State.IsPlayerExcluded=function() return false end
