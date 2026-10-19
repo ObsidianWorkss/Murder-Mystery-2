@@ -2,7 +2,13 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.40**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.41**. Experimental actions remain subject to server validation.
+
+## Windows streamer mode
+
+The optional Windows companion mirrors supported 2D HUD into its own capture-excluded window while preserving the original controls' input hitboxes. It requires manual startup and a private generated connection file; a saved recording has not yet been verified. F4 toggles the mode, including while the menu is open, unless an existing saved binding already uses F4. Rebind under Settings → Visual keys. Typing and processed input remain guarded.
+
+The mode suppresses native script ESP in favor of projected companion boxes/labels, and suspends X-ray/tactical hints without changing their preferences. Character invisibility is unchanged. World UI, 3D previews and some styling cannot be mirrored; do not assume every HUD element or crosshair disappears. See [setup, recovery and capture limits](STREAMER_MODE.md).
 
 ## Combat assistance
 

@@ -346,6 +346,7 @@ do
     function State.StopKillAll() return true,"Kill all stopped" end
     function State.SetKillAura(enabled) if enabled then return false,"Waiting until you are murderer" end cfg.KillAura=false; return true end
     function State.SetInvisibility(enabled) cfg.Invisibility=enabled end
+    function State.SetStreamerMode(enabled) cfg.StreamerMode=enabled; return true end
     function State.SetMageAnimations(enabled) cfg.MageAnimations=enabled end
     function State.RevealRolesInChat() return false,"Available during a round" end
     function State.TeleportToArea() return false,"Wait for your living character" end
@@ -371,6 +372,15 @@ do
     check(press("Q")==nil,"keys are ignored while typing")
     focused=nil; State.MobileUI.MenuOpen=true
     check(press("Q")==nil,"keys are ignored while the menu is open")
+    check(cfg.Keybinds.StreamerMode=="F4","streamer default is F4")
+    check(press("F4")=="Streamer mode on" and cfg.StreamerMode,"streamer escape key remains usable while menu is open")
+    focused={}
+    check(press("F4")==nil and cfg.StreamerMode,"streamer key respects focused text input")
+    focused=nil
+    check(press("F4")=="Streamer mode off" and not cfg.StreamerMode,"streamer can be switched off through the open menu")
+    State.Streamer={Pending=true}
+    check(press("F4")=="Streamer mode off" and not cfg.StreamerMode,"streamer key requests cancellation while a connection is pending")
+    State.Streamer=nil
     State.MobileUI.MenuOpen=false; mode="Mobile"
     check(press("Q")==nil,"keybinds are PC only")
     mode="PC"
@@ -446,6 +456,9 @@ do
     check(cfg.Keybinds.Fly=="F" and cfg.Keybinds.Noclip=="N" and cfg.Keybinds.RevealRoles=="None" and cfg.Keybinds.Menu=="RightShift"
         and cfg.Keybinds.UniversalTriggerbot=="T",
         "reset restores default keys")
+    cfg.Keybinds.Fly="F4"; cfg.Keybinds.StreamerMode=nil
+    installKeybinds(C)
+    check(cfg.Keybinds.Fly=="F4" and cfg.Keybinds.StreamerMode=="None","existing saved F4 action takes precedence over the new default")
 end
 do
     -- X-ray robustness: Terrain and a part that refuses writes must never break switching off or unloading.

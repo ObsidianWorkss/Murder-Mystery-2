@@ -28,3 +28,16 @@ jobs:
           python3 tests/run.py --luau "$RUNNER_TEMP/luau/build/luau"
       - name: Verify distributable package
         run: python3 tools/package.py --output dist
+  windows-overlay:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and test companion without opening a window
+        shell: pwsh
+        run: |
+          $overlayPath = & ./streamer/build.ps1
+          $testProcess = Start-Process -FilePath $overlayPath -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput self-test.log -RedirectStandardError self-test.err
+          Get-Content self-test.log
+          Get-Content self-test.err
+          if ($testProcess.ExitCode -ne 0) { throw "Overlay self-test failed: $($testProcess.ExitCode)" }

@@ -19,6 +19,8 @@ Do not include your access key in an issue. Ask the repository owner for a valid
 
 ## Recover controls
 
+For streamer mode, stop recording before restoring native UI. Press **F4** (or your rebound key) even with the menu open, turn Streamer mode Off, or run `getgenv().MM2Assist.SetStreamerMode(false)`. Connection loss keeps native UI hidden until Off. Retry Off if restoration reports incomplete, then use `streamer/Stop-Streamer.ps1` to close that folder's companion. See [full setup, recovery and limits](STREAMER_MODE.md). Never post the generated `connect.lua` token file.
+
 - **Phone:** tap MM2, then Pages to choose a section. Main shortcuts are Invis, Speed, Trigger and Aura; More contains the less-used actions. Settings → General resets button positions. Visuals → HUD & Alerts → Show instructions on phone is off by default to leave the inventory clear.
 - **End / STOP:** requests cancellation of active player actions and return where supported.
 - **Repair camera input:** clears stale input state.

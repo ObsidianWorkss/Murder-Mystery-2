@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.41 — 2026-10-19
+
+- Added experimental Windows streamer mode with an optional WPF companion. The companion owns a click-through, non-activating overlay and requests/readbacks Windows capture exclusion. An authenticated loopback handshake and accepted first frame are required before the mode activates. No recorder configuration or recording is automated.
+- Mirror readable 2D GUI rectangles, text, images and an approximate cursor while preserving native input hitboxes. Use projected player/gun labels in place of script-owned world ESP. Suspend X-ray and tactical hints without changing their preferences or character invisibility. Unsupported graphics and world-space UI can still appear in recordings; capture results remain unverified.
+- Added default F4 toggle and HUD status; the streamer key remains available with the menu open but respects typing and processed input. Existing saved F4 assignments take precedence. Activation is session-only and must authenticate again after reload.
+- Added bounded single-flight transport, stale-frame expiry, session clearing, connection-error status, tracked presentation restoration/retry, dynamic GUI handling and cleanup when widgets are destroyed. Connection failures leave native UI hidden until explicit Off; unload refuses incomplete presentation restoration.
+- Added source build/start/stop scripts, manual setup and recovery documentation, 58 streamer lifecycle/property assertions and six keybind regressions. Local validation passes 880 Luau assertions plus 33 headless Windows protocol checks. Added a Windows CI job; no native companion window or OBS session was used for these checks.
+
 ## 1.0.0-rc.40 — 2026-10-18
 
 - Refreshed the repository overview with a branded banner, build badge, quick start and documentation index. Preserved the detailed manual in the feature guide and added contribution guidance, structured issue forms and a pull request template. The release archive includes the new user-facing documentation and banner.

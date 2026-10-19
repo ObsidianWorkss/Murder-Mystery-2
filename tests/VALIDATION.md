@@ -1,4 +1,13 @@
-# Validation — 2026-10-18
+# Validation — 2026-10-19
+
+## Release candidate 1.0.0-rc.41
+
+- Luau 0.739 compiles `main.lua` and `loader.lua`; all 880 assertions pass: the previous 816, six keybind checks and 58 new streamer checks. The streamer harness extracts the shipped lifecycle and presentation manager rather than maintaining a second implementation.
+- Streamer checks cover strict capture-exclusion readiness, HTTP/first-frame failures, finite viewport/item bounds, startup-off state, activation cancellation, pending/double activation, single-flight pacing, backoff, stale replies, unload, independent sanitized snapshots, explicit Off and restoration retries. Connection/snapshot failures preserve the hidden state. Property tests cover text/images/borders/scrollbars/cursor, unchanged visibility/input, latest observed game updates, new/denied/destroyed widgets and partial cleanup.
+- Keybind checks cover F4 default, menu-open enable/disable, typing guard and preserving an existing saved F4 action.
+- The x64 .NET Framework companion builds locally. Its `--self-test` passes 33 checks without constructing a native window: protocol/finite-value/item limits, tokens, allowed image hosts, actual loopback HTTP authentication/status/frame/clear requests, readiness refusal, closed-session late frames, fresh sessions, browser origins, transfer encoding and duplicate content lengths.
+- The Windows companion window, native UI mirroring/input, actual Solara loopback support, DPI/multi-monitor alignment, focus/resize/respawn behavior and a saved OBS clip have **not** been tested. No capture exclusion result or complete HUD removal is claimed. World-space UI/health/name displays, 3D previews, external Drawing overlays and styling/image differences remain documented limits.
+- No desktop input, OBS configuration or recording was performed for rc.41. Packaging includes allowlisted source and manual launcher scripts, with no connection tokens or access keys.
 
 ## Release candidate 1.0.0-rc.40
 

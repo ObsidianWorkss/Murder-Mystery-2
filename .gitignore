@@ -4,3 +4,6 @@ dist/
 MM2Universal/
 access-key.txt
 verify-key.luau
+streamer/build/
+streamer/connect.lua
+streamer/overlay-error.txt

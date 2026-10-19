@@ -31,6 +31,17 @@ for name, (start, end) in sections.items():
     template = template.replace("-- INSERT_" + name, code)
 with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness = Path(directory) / "combat.luau"
+    streamer = (root / "tests" / "streamer.luau").read_text(encoding="utf-8")
+    start = source.index("local installStreamerMode=function(C)")
+    end = source.index("local createStreamerSurfaces=function(C)", start)
+    streamer = streamer.replace("-- INSERT_CONTROLLER", source[start:end])
+    start = end
+    end = source.index('local coreGui=game:GetService("CoreGui")', start)
+    streamer = streamer.replace("-- INSERT_SURFACES", source[start:end])
+    if "-- INSERT_" in streamer:
+        raise RuntimeError("Unexpanded streamer-test source marker")
+    harness.write_text(streamer, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
     phone = (root / "tests" / "mobile.luau").read_text(encoding="utf-8")
     start = source.index("local createPhoneControls = function(C)")
     end = source.index("local createMobileUI = function(C)", start)

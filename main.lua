@@ -17714,7 +17714,7 @@ local State = {
     Invis = {Mode="LocalSeat",Active=false,Busy=false,Status="Off"},
     RepairRequired = repairRequired,
     Config = {ESPStyleVersion = "", InvisibleKnife = true, AuraEquipKnife = true, AuraExtendedReach = true, AuraReachRange = 1000, AuraReachVersion = "", KillAura = false, KillAuraRange = 1000, SpeedBoost = false, WalkSpeed = 24, JumpBoost = false, JumpPower = 80, InfiniteJump = false, Noclip = false, Fly = false, FlySpeed = 50, XRay = false, XRayAmount = 60, Keybinds = false, Toasts = true, ExcludedPlayers = {}, CompactHUD = true, CleanVisuals = true, StableBodyESP = false, TacticalGuide = true, LearnedSheriffGuide = true, CombatHUD = true, TargetContinuity = true, FlingDownward = false, FlingSpinContact = true, FlingAdaptivePursuit = true, Aim = true, MagicBullet = true, KnifeAim = true, StabSweep = true, AimMarker = true, ESP = true, GunESP = true, ThreatWarning = true, ThreatRange = 36,
-        MobileShortcuts = true, MobileShowStatus = false, MobileStartClosed = true,
+        MobileShortcuts = true, MobileShowStatus = false, MobileStartClosed = true, StreamerMode = false,
         MageAnimations = true, AnimationPack = "Mage", PoseEnabled = false, PoseAssetId = 616006778,
         AutoPickup = false, MapVoteRepeat = false, AutoKnifeDodge = true, Invisibility = false, ExperimentalInvisibility = false, KnifeSpeed = 96,
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
@@ -17745,7 +17745,7 @@ local installSettings=function(C)
     local folder,path="MM2Universal","MM2Universal/settings.json"
     local canRead=type(C.ReadFile)=="function" and type(C.IsFile)=="function"
     local canWrite=type(C.WriteFile)=="function" and type(C.MakeFolder)=="function" and type(C.IsFolder)=="function"
-    local unsaved={Ping=true,MapVoteRepeat=true,AutoKnifeDodge=true} -- measured/session-only actions
+    local unsaved={Ping=true,MapVoteRepeat=true,AutoKnifeDodge=true,StreamerMode=true} -- measured/session-only actions
     local function copy(value)
         if type(value)~="table" then return value end
         local out={}
@@ -17842,6 +17842,7 @@ State.Config.Invisibility = false
 State.Config.ExperimentalInvisibility = false
 State.Config.MapVoteRepeat = false
 State.Config.AutoKnifeDodge = true -- Starts on each load; off/emergency stop still work for this session.
+State.Config.StreamerMode = false -- A local companion must authenticate on each script instance.
 if State.Config.MageAnimations then State.Config.PoseEnabled = false end
 -- Replace the earlier guessed default rather than persisting it across reloads.
 if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
@@ -17854,7 +17855,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.40"
+State.Version = "1.0.0-rc.41"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17889,7 +17890,8 @@ function State.GetSupportSnapshot()
         Settings=flags,Stats=stats,Performance=performance,
         WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil,
         MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil,
-        KnifeDodge=State.GetKnifeDodgeSnapshot and State.GetKnifeDodgeSnapshot() or nil}
+        KnifeDodge=State.GetKnifeDodgeSnapshot and State.GetKnifeDodgeSnapshot() or nil,
+        Streamer=State.GetStreamerSnapshot and State.GetStreamerSnapshot() or nil}
 end
 function State.GetSupportReport()
     return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
@@ -21228,7 +21230,7 @@ local function updateESP()
     local ownRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
         local role = visualRoleFor(p)
-        if p ~= player and State.Config.ESP and viewerAtRound and visualCharacterReady(p) and colors[role] then
+        if p ~= player and State.Config.ESP and not State.StreamerActive and viewerAtRound and visualCharacterReady(p) and colors[role] then
             local char = p.Character
             local visual = State.Visuals[p]
             if visual and (visual.Character ~= char or visual.Highlight.Parent ~= visualFolder or visual.Label.Parent ~= visualFolder or visual.Text.Parent ~= visual.Label) then removeVisual(p); visual = nil end
@@ -21949,11 +21951,11 @@ updateGunESP = function()
     ensureVisualFolder()
     local atRound = espViewerAtRound()
     for object in pairs(State.GunVisuals) do
-        if not State.Config.GunESP or not atRound or not drops[object] or not object:IsDescendantOf(workspace) then
+        if not State.Config.GunESP or State.StreamerActive or not atRound or not drops[object] or not object:IsDescendantOf(workspace) then
             removeGunVisual(object)
         end
     end
-    if not State.Config.GunESP or not atRound then return end
+    if not State.Config.GunESP or State.StreamerActive or not atRound then return end
     local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     for object in pairs(drops) do
         local part = object:IsDescendantOf(workspace) and dropPart(object)
@@ -22371,6 +22373,7 @@ function State.Destroy()
         warn("Unload stopped: character restoration is incomplete; retry Restore character")
         return false
     end
+    if State.StopStreamerMode then local stopped,message=State.StopStreamerMode(); if stopped==false then return false,message end end
     -- Only now can unload no longer be refused, so a refused unload keeps movement and X-ray as they were.
     if State.StopMovement then State.StopMovement() end
     if State.StopXRay then State.StopXRay() end
@@ -24435,7 +24438,7 @@ local installScreenESP=function(C)
         status.Frames+=1; status.DrawnParts=0
         if not layer.Parent then for p in pairs(cache) do clear(p) end; layer=makeLayer() end
         local camera=C.Camera()
-        if not camera or not State.Config.ESP or State.Config.StableBodyESP==false or (C.IsVR and C.IsVR()) then
+        if not camera or State.StreamerActive or not State.Config.ESP or State.Config.StableBodyESP==false or (C.IsVR and C.IsVR()) then
             for p,entry in pairs(cache) do
                 if not State.Visuals[p] then clear(p) else hide(entry) end
             end
@@ -25147,7 +25150,7 @@ local installTacticalGuide = function(C)
         local now=clock()
         if now<nextScan then return end; nextScan=now+.6
         local ok,message=pcall(function()
-            if not State.Config.TacticalGuide then State.StopTacticalGuide(); return end
+            if not State.Config.TacticalGuide or State.StreamerActive then State.StopTacticalGuide(); return end
             if State.MobileUI and State.MobileUI.MenuOpen then clearRoute(); hide(); guide.TargetId,guide.TargetVisible=nil,false; return end
             if player.Character~=lastCharacter then clearRoute(); lastCharacter=player.Character end
             local data,root,hum=snapshot(); guide.ObservedPlayers=#data.Players
@@ -25809,7 +25812,7 @@ local installXRay=function(C)
     end
     function xray.Step()
         if not State.Running then return end
-        if cfg.XRay~=true then
+        if cfg.XRay~=true or State.StreamerActive then
             if xray.Active then State.StopXRay() end
             return
         end
@@ -26096,6 +26099,10 @@ local installKeybinds=function(C)
         Invisibility="Movement",AnimationPack="Movement",TeleportMap="Movement",TeleportLobby="Movement",
         RevealRoles="Actions",RepairCamera="Actions"}
     for _,action in ipairs(actions) do action.Group=action.Group or groupOf[action.Id] or "Actions" end
+    table.insert(actions,{Id="StreamerMode",Title="Streamer mode",Default="F4",Group="Visuals",Run=function()
+        local ok,message=State.SetStreamerMode(not (cfg.StreamerMode or (State.Streamer and State.Streamer.Pending)))
+        return cfg.StreamerMode,ok==false and message or nil,ok==false
+    end})
     local byId={}
     for _,action in ipairs(actions) do byId[action.Id]=action end
     -- Saved binds survive reloads; anything missing, reserved or duplicated falls back cleanly.
@@ -26138,8 +26145,9 @@ local installKeybinds=function(C)
     end
     function keys.Press(input,processed)
         if processed or not State.Running or input.UserInputType~=Enum.UserInputType.Keyboard then return nil end
-        if C.InputMode()~="PC" or UIS:GetFocusedTextBox() or (State.MobileUI and State.MobileUI.MenuOpen) then return nil end
+        if C.InputMode()~="PC" or UIS:GetFocusedTextBox() then return nil end
         local name=input.KeyCode.Name
+        if State.MobileUI and State.MobileUI.MenuOpen and name~=cfg.Keybinds.StreamerMode then return nil end
         for _,action in ipairs(actions) do
             if cfg.Keybinds[action.Id]==name then
                 if action.Special then return nil end -- the menu binds these itself
@@ -26513,7 +26521,7 @@ local createMobileUI = function(C)
     mobile.Refresh = refresh
     -- One path for menu toggles and their keybinds. Returns the new value, plus a reason when refused.
     local function setOption(key, enabled)
-        State.Config[key] = enabled == true
+        if key~="StreamerMode" then State.Config[key] = enabled == true end
         -- Setters that refuse return false and a reason; the toast shows that reason.
         local accepted,reason=true,nil
         if key == "MagicBullet" then accepted,reason=State.SetMagicBullet(enabled)
@@ -26526,6 +26534,7 @@ local createMobileUI = function(C)
         elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
         elseif key == "ExperimentalInvisibility" then accepted,reason=State.SetExperimentalInvisibility(enabled)
         elseif key == "Invisibility" then accepted,reason=State.SetInvisibility(enabled)
+        elseif key == "StreamerMode" then accepted,reason=State.SetStreamerMode(enabled)
         elseif key == "MageAnimations" then accepted,reason=State.SetMageAnimations(enabled) end
         if key == "TargetContinuity" then State.SetTargetContinuity(enabled) end
         if key == "LearnedSheriffGuide" then State.SetLearnedSheriffGuide(enabled) end
@@ -26817,6 +26826,8 @@ local createMobileUI = function(C)
     option(settings,"Phone shortcut dock","MobileShortcuts","Invis, Speed, Trigger and Aura; More holds Fly, Noclip, Dodge and Kill all.")
     option(settings,"Start phone menu closed","MobileStartClosed","Open the full menu with the MM2 button.")
     option(hud,"Show instructions on phone","MobileShowStatus","Off by default so the status card cannot cover your inventory.")
+    option(hud,"Streamer mode (Windows)","StreamerMode","Requires the Windows companion and connect.lua. Mirrors supported 2D HUD into a separate overlay; configure OBS Window Capture with cursor off.")
+    mobile.StreamerStatus=hud:Paragraph({Title="Streamer status",Desc="Off · Windows companion required. Use F4 to toggle, even with the menu open."})
     if State.Settings then
         mobile.SettingsStatus=settings:Paragraph({Title="Saved settings",Desc=State.Settings.Status})
         settings:Button({Title="Reset settings",Desc="Defaults for every setting. Protected players stay.",Callback=function()
@@ -27786,6 +27797,7 @@ local createMobileUI = function(C)
             local d=State.KnifeDodge
             updateDescription(mobile.KnifeDodgeStatus,"KnifeDodge",d.Status..("\nTeleports sent: %d · jumps: %d · sidesteps: %d"):format(d.Teleports,d.Jumps,d.Sidesteps))
         end
+        if mobile.StreamerStatus and State.Streamer then updateDescription(mobile.StreamerStatus,"Streamer",State.Streamer.Status) end
         if State.Movement and mobile.MovementStatus then updateDescription(mobile.MovementStatus,"Movement",State.Movement.Status) end
         if State.AntiFling and mobile.AntiFlingStatus then updateDescription(mobile.AntiFlingStatus,"AntiFling",State.AntiFling.Status) end
         if mobile.PackPicker then
@@ -27888,4 +27900,352 @@ do
         State.Destroy()
         error("MM2 could not open its UI: " .. tostring(message))
     end
+end
+
+do
+-- Windows streamer transport. The companion owns its capture-excluded window;
+-- Roblox continues processing input under a transparent, click-through mirror.
+local installStreamerMode=function(C)
+    local State=C.State
+    local info={Active=false,Pending=false,Frames=0,Items=0,Failures=0,Status="Off · Windows companion required"}
+    State.Streamer=info
+    State.StreamerActive=false
+    State.Config.StreamerMode=false
+    local generation,session,hidden,inFlight,nextAt=0,nil,false,false,0
+    local function send(path,frame,id)
+        local ran,accepted,reply=pcall(C.Send,path,frame,id)
+        return ran and accepted==true,reply
+    end
+    local function clear(id)
+        if id then C.Spawn(function() send("/clear",nil,id) end) end
+    end
+    local function restore()
+        local ran,accepted=pcall(C.Leave)
+        if not ran or accepted==false then
+            info.Status="UI restoration incomplete · toggle streamer off again"
+            State.Config.StreamerMode=true
+            return false,info.Status
+        end
+        hidden=false; State.StreamerActive=false; State.Config.StreamerMode=false
+        if C.Changed then pcall(C.Changed,false) end
+        return true
+    end
+    local function frame(id)
+        local data=C.Snapshot()
+        if type(data)~="table" or type(data.Items)~="table" or #data.Items>1600
+            or type(data.Width)~="number" or type(data.Height)~="number"
+            or data.Width~=data.Width or data.Height~=data.Height
+            or data.Width<200 or data.Height<200 or data.Width>16384 or data.Height>16384 then
+            error("Invalid overlay snapshot",0)
+        end
+        data.Protocol,data.Session=1,id
+        return data
+    end
+    function State.SetStreamerMode(enabled)
+        if not enabled then
+            generation+=1; info.Pending=false; info.Active=false
+            local old=session; session=nil; clear(old)
+            local ok,message=restore()
+            if ok then info.Status="Off" end
+            return ok,message or info.Status
+        end
+        if not State.Running then return false,"Script is unloaded" end
+        if info.Active then return true,info.Status end
+        if info.Pending then return false,"Streamer connection is already being checked" end
+        if hidden then return false,"Turn streamer off to restore the UI before reconnecting" end
+        generation+=1; local epoch=generation
+        info.Pending=true; State.Config.StreamerMode=false
+        info.Status="Checking local Windows overlay"
+        local accepted,reply=send("/status")
+        if epoch~=generation or not State.Running then return false,"Streamer activation cancelled" end
+        if not accepted or type(reply)~="table" or reply.Protocol~=1 or reply.Ready~=true or reply.CaptureExcluded~=true then
+            info.Pending=false
+            info.Status="Unavailable · start the Windows companion and run connect.lua"
+            return false,info.Status
+        end
+        session=C.Session()..":"..tostring(epoch)
+        local id=session
+        State.StreamerActive=true; hidden=true
+        local prepared,entered=pcall(C.Enter)
+        local built,data=false,nil
+        if prepared and entered~=false then built,data=pcall(frame,id) end
+        local sent,response=false,nil
+        if built then sent,response=send("/frame",data,id) end
+        if epoch~=generation or not State.Running then clear(id); return false,"Streamer activation cancelled" end
+        if not prepared or entered==false or not built or not sent or type(response)~="table" or response.Accepted~=true then
+            generation+=1; session=nil; info.Pending=false; clear(id)
+            local restored=restore()
+            if restored then info.Status="Unavailable · native UI could not be mirrored completely" end
+            return false,info.Status
+        end
+        info.Pending=false; info.Active=true; State.Config.StreamerMode=true; info.Frames+=1; info.Items=#data.Items
+        info.Status="On · Windows exclusion flag active; verify your saved clip"
+        nextAt=C.Clock()+.05
+        if C.Changed then pcall(C.Changed,true) end
+        return true,info.Status
+    end
+    function State.StopStreamerMode() return State.SetStreamerMode(false) end
+    function State.GetStreamerSnapshot()
+        return {Enabled=State.Config.StreamerMode==true,Active=info.Active,NativeHidden=hidden,Pending=info.Pending,
+            Frames=info.Frames,Items=info.Items,Failures=info.Failures,Status=info.Status,RecordingVerified=false}
+    end
+    function info.Step()
+        if not State.Running or not info.Active or inFlight or C.Clock()<nextAt then return end
+        nextAt=C.Clock()+.05
+        local epoch,id=generation,session
+        local built,data=pcall(frame,id)
+        if not built then info.Failures+=1; info.Status="Overlay snapshot failed · native UI remains hidden; use streamer Off"; nextAt=C.Clock()+.5; return end
+        inFlight=true
+        C.Spawn(function()
+            local accepted,reply=send("/frame",data,id)
+            inFlight=false
+            if epoch~=generation or not State.Running then return end
+            if accepted and type(reply)=="table" and reply.Accepted==true then
+                info.Frames+=1; info.Items=#data.Items; info.Status="On · Windows exclusion flag active; verify your saved clip"
+            else
+                info.Failures+=1; nextAt=C.Clock()+.5
+                info.Status="Overlay disconnected · native UI stays hidden until streamer Off"
+            end
+        end)
+    end
+    C.Tick(info.Step)
+    return info
+end
+
+local createStreamerSurfaces=function(C)
+    local records,connections,lifetimes={},{},{}
+    local active=false
+    local function read(object,key)
+        local entries=records[object]
+        if entries and entries[key] then return entries[key].Before end
+        return object[key]
+    end
+    local function force(object,key,value)
+        local entries=records[object]
+        if entries and entries[key] then return true end
+        local ok,before=pcall(function() return object[key] end)
+        if not ok then return false end
+        if not entries then
+            entries={}; records[object]=entries
+            lifetimes[object]=object.Destroying:Connect(function()
+                for _,entry in pairs(entries) do if entry.Connection then entry.Connection:Disconnect() end end
+                records[object]=nil
+                if lifetimes[object] then lifetimes[object]:Disconnect(); lifetimes[object]=nil end
+            end)
+        end
+        local entry={Before=before,Hidden=value,Writing=false}; entries[key]=entry
+        local function apply()
+            entry.Writing=true
+            local wrote=pcall(function() object[key]=value end)
+            entry.Writing=false
+            return wrote
+        end
+        local listened,connection=pcall(function() return object:GetPropertyChangedSignal(key):Connect(function()
+            if not active or entry.Writing then return end
+            local current=object[key]
+            if current~=value then entry.Before=current; if not apply() then C.Failed() end end
+        end) end)
+        if not listened then entries[key]=nil; return false end
+        entry.Connection=connection
+        if not apply() then connection:Disconnect(); entries[key]=nil; return false end
+        return true
+    end
+    local function hide(object)
+        local ok=true
+        if object:IsA("GuiObject") then
+            ok=force(object,"BackgroundTransparency",1) and ok
+            ok=force(object,"BorderSizePixel",0) and ok
+            if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                ok=force(object,"TextTransparency",1) and ok
+                ok=force(object,"TextStrokeTransparency",1) and ok
+            end
+            if object:IsA("ImageLabel") or object:IsA("ImageButton") or object:IsA("ViewportFrame") then ok=force(object,"ImageTransparency",1) and ok end
+            if object:IsA("ScrollingFrame") then ok=force(object,"ScrollBarImageTransparency",1) and ok end
+        elseif object:IsA("UIStroke") then ok=force(object,"Transparency",1) and ok end
+        if not ok then error("A native UI surface cannot be hidden",0) end
+    end
+    local surfaces={Read=read}
+    function surfaces.Enter()
+        active=true
+        for _,root in ipairs(C.Roots()) do
+            hide(root)
+            for _,object in ipairs(root:GetDescendants()) do hide(object) end
+            table.insert(connections,root.DescendantAdded:Connect(function(object)
+                if active then
+                    local ok=pcall(hide,object)
+                    if not ok then C.Failed() end
+                end
+            end))
+        end
+        if not force(C.UIS,"MouseIconEnabled",false) then error("Mouse cursor cannot be mirrored",0) end
+        C.Visuals(true)
+        return true
+    end
+    function surfaces.Leave()
+        active=false
+        for _,connection in ipairs(connections) do connection:Disconnect() end
+        table.clear(connections)
+        local failed=0
+        for object,entries in pairs(records) do
+            for key,entry in pairs(entries) do
+                if entry.Connection then entry.Connection:Disconnect(); entry.Connection=nil end
+                local ok=pcall(function()
+                    if object[key]==entry.Hidden then object[key]=entry.Before end
+                end)
+                if ok then entries[key]=nil else failed+=1 end
+            end
+            if next(entries)==nil then
+                records[object]=nil
+                if lifetimes[object] then lifetimes[object]:Disconnect(); lifetimes[object]=nil end
+            end
+        end
+        if failed==0 then C.Visuals(false) end
+        return failed==0
+    end
+    return surfaces
+end
+
+local coreGui=game:GetService("CoreGui")
+local surfaces
+local function visualState(hidden)
+    updateESP(); updateGunESP()
+    if hidden then
+        if State.StopXRay then State.StopXRay() end
+        if State.StopTacticalGuide then State.StopTacticalGuide() end
+    end
+end
+local function streamerRoots()
+    local roots={coreGui}
+    local playerGui=player:FindFirstChildOfClass("PlayerGui")
+    if playerGui then table.insert(roots,playerGui) end
+    if gui.Parent and gui.Parent~=playerGui and gui.Parent~=coreGui and not gui.Parent:IsDescendantOf(coreGui) then table.insert(roots,gui.Parent) end
+    return roots
+end
+surfaces=createStreamerSurfaces({UIS=UIS,Roots=streamerRoots,Visuals=visualState,Failed=function()
+    -- A newly inaccessible surface is a privacy failure: stop adding native visuals.
+    State.Streamer.SurfaceError=true
+end})
+local function color(value)
+    return string.format("%02X%02X%02X",math.floor(value.R*255+.5),math.floor(value.G*255+.5),math.floor(value.B*255+.5))
+end
+local function snapshot()
+    if State.Streamer.SurfaceError then error("Native UI surface changed permissions",0) end
+    local camera=workspace.CurrentCamera
+    if not camera then error("No camera",0) end
+    local viewport=camera.ViewportSize
+    local items,seen={},{}
+    local function add(item)
+        if #items>=1600 then error("Too many overlay elements",0) end
+        table.insert(items,item)
+    end
+    local function walk(object,clip,layer,opacity)
+        if seen[object] then return end; seen[object]=true
+        if object:IsA("LayerCollector") then
+            if not object.Enabled then return end
+            if object:IsA("ScreenGui") then layer=object.DisplayOrder*10000 else return end
+        end
+        if object:IsA("GuiObject") then
+            if not object.Visible then return end
+            local p,s=object.AbsolutePosition,object.AbsoluteSize
+            if s.X<=0 or s.Y<=0 then return end
+            if object:IsA("CanvasGroup") then opacity*=1-object.GroupTransparency end
+            local x,y=math.max(clip.X,p.X),math.max(clip.Y,p.Y)
+            local right,bottom=math.min(clip.X+clip.W,p.X+s.X),math.min(clip.Y+clip.H,p.Y+s.Y)
+            if right<=x or bottom<=y then return end
+            local z=layer+object.ZIndex*3
+            local function base(kind,alpha)
+                return {Kind=kind,X=p.X,Y=p.Y,W=s.X,H=s.Y,Alpha=math.clamp(alpha*opacity,0,1),Z=z,
+                    Rotation=object.AbsoluteRotation,ClipX=clip.X,ClipY=clip.Y,ClipW=clip.W,ClipH=clip.H}
+            end
+            local border=surfaces.Read(object,"BorderSizePixel")
+            local alpha=1-surfaces.Read(object,"BackgroundTransparency")
+            local stroke=object:FindFirstChildOfClass("UIStroke")
+            local strokeAlpha=stroke and stroke.Enabled and 1-surfaces.Read(stroke,"Transparency") or 0
+            if alpha>0 or border>0 or strokeAlpha>0 then
+                local item=base("rect",alpha); item.Color=color(object.BackgroundColor3)
+                item.Border=strokeAlpha>0 and stroke.Thickness or border
+                item.Stroke=color(strokeAlpha>0 and stroke.Color or object.BorderColor3)
+                item.StrokeAlpha=(strokeAlpha>0 and strokeAlpha or 1)*opacity
+                local corner=object:FindFirstChildOfClass("UICorner")
+                item.Radius=corner and corner.CornerRadius.Scale*math.min(s.X,s.Y)+corner.CornerRadius.Offset or 0
+                add(item)
+            end
+            if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                local item=base("text",1-surfaces.Read(object,"TextTransparency"))
+                item.Text=object.ContentText
+                if object:IsA("TextBox") and item.Text=="" then item.Text=object.PlaceholderText end
+                item.Text=item.Text:sub(1,4096); item.Color=color(object.TextColor3)
+                item.Font=math.clamp(object.TextScaled and math.min(s.Y,object.TextBounds.Y) or object.TextSize,1,256)
+                item.Center=object.TextXAlignment==Enum.TextXAlignment.Center; item.Right=object.TextXAlignment==Enum.TextXAlignment.Right
+                item.Bold=object.FontFace.Weight.Value>=Enum.FontWeight.SemiBold.Value
+                item.Wrap=object.TextWrapped; item.Z=z+2
+                if item.Text~="" and item.Alpha>0 then add(item) end
+            elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
+                local item=base("image",1-surfaces.Read(object,"ImageTransparency"))
+                item.Image=object.Image; item.Color=color(object.ImageColor3); item.Z=z+1
+                item.ImageX,item.ImageY=object.ImageRectOffset.X,object.ImageRectOffset.Y
+                item.ImageW,item.ImageH=object.ImageRectSize.X,object.ImageRectSize.Y
+                if #item.Image>0 and #item.Image<=1024 and item.Alpha>0 then add(item) end
+            end
+            if object.ClipsDescendants then clip={X=x,Y=y,W=right-x,H=bottom-y} end
+        end
+        for _,child in ipairs(object:GetChildren()) do walk(child,clip,layer,opacity) end
+    end
+    local clip={X=0,Y=0,W=viewport.X,H=viewport.Y}
+    for _,root in ipairs(streamerRoots()) do walk(root,clip,0,1) end
+    -- World highlights are removed from Roblox. Equivalent projected boxes stay
+    -- in the separate overlay; this does not alter any character hitboxes.
+    if State.Config.ESP and espViewerAtRound() then
+        for _,other in ipairs(Players:GetPlayers()) do
+            if other~=player and visualCharacterReady(other) then
+                local root=other.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local top,topVisible=camera:WorldToViewportPoint(root.Position+Vector3.new(0,3.5,0))
+                    local low,lowVisible=camera:WorldToViewportPoint(root.Position-Vector3.new(0,3,0))
+                    if topVisible and lowVisible then
+                        local height=math.abs(low.Y-top.Y); local width=height*.6
+                        local tint=color(colors[visualRoleFor(other)])
+                        add({Kind="rect",X=top.X-width/2,Y=top.Y,W=width,H=height,Alpha=0,Color=tint,Stroke=tint,Border=1.5,StrokeAlpha=1,Z=800000})
+                        add({Kind="text",X=top.X-110,Y=top.Y-25,W=220,H=24,Alpha=1,Color=tint,Text="@"..other.Name,Font=13,Center=true,Z=800001})
+                    end
+                end
+            end
+        end
+    end
+    if State.Config.GunESP and espViewerAtRound() then
+        for object in pairs(drops) do
+            local part=object:IsDescendantOf(workspace) and dropPart(object)
+            if part then
+                local point,visible=camera:WorldToViewportPoint(part.Position)
+                if visible then add({Kind="text",X=point.X-70,Y=point.Y-24,W=140,H=24,Alpha=1,Color="FFD72D",Text="Gun",Font=14,Center=true,Z=800001}) end
+            end
+        end
+    end
+    if surfaces.Read(UIS,"MouseIconEnabled") then
+        local mouse=UIS:GetMouseLocation()
+        local icon=player:GetMouse().Icon
+        if icon~="" then add({Kind="image",X=mouse.X-16,Y=mouse.Y-16,W=32,H=32,Alpha=1,Image=icon,Z=2000000000})
+        else add({Kind="text",X=mouse.X,Y=mouse.Y,W=30,H=30,Alpha=1,Color="FFFFFF",Text="↖",Font=24,Z=2000000000}) end
+    end
+    table.sort(items,function(a,b) return a.Z<b.Z end)
+    return {Width=math.floor(viewport.X),Height=math.floor(viewport.Y),Items=items}
+end
+local function send(path,data,session)
+    local connection=env.MM2StreamerConnection
+    local requestFunction=request or (http and http.request) or (syn and syn.request)
+    if type(requestFunction)~="function" or type(connection)~="table" or type(connection.Port)~="number"
+        or connection.Port%1~=0 or connection.Port<1024 or connection.Port>65535 or type(connection.Token)~="string" or #connection.Token==0 or #connection.Token>128 then return false end
+    local headers={["X-MM2-Token"]=connection.Token,["Content-Type"]="application/json"}
+    if session then headers["X-MM2-Session"]=session end
+    local body=data and game:GetService("HttpService"):JSONEncode(data) or nil
+    if body and #body>1048576 then return false end
+    local response=requestFunction({Url="http://127.0.0.1:"..connection.Port..path,Method=path=="/status" and "GET" or "POST",Headers=headers,Body=body,Timeout=3})
+    if type(response)~="table" or response.StatusCode~=200 then return false end
+    local ok,reply=pcall(game:GetService("HttpService").JSONDecode,game:GetService("HttpService"),response.Body)
+    return ok and type(reply)=="table",reply
+end
+installStreamerMode({State=State,Send=send,Enter=function() State.Streamer.SurfaceError=false; return surfaces.Enter() end,Leave=surfaces.Leave,Snapshot=snapshot,
+    Clock=os.clock,Session=function() return State.InstanceToken end,Spawn=task.spawn,
+    Changed=function() if State.MobileUI and State.MobileUI.Refresh then State.MobileUI.Refresh() end end,
+    Tick=function(callback) connect(RunService.Heartbeat,callback) end})
 end

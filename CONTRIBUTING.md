@@ -12,6 +12,7 @@ Thanks for helping improve MM2 Universal. Start with an existing issue or open a
 | `tests/run.py` | Extracts the shipped functions and runs the suites through the Luau CLI. |
 | `tests/VALIDATION.md` | Recorded automated results and live observations. |
 | `tools/package.py` | Builds an allowlisted archive and verifies its manifest and checksums. |
+| `streamer/` | Optional Windows overlay source and manual build/start/stop scripts; generated files stay private. |
 | `docs/` | Feature guide, support instructions and release checklist. |
 | `.github/` | CI, issue forms and pull request template. |
 
@@ -32,6 +33,8 @@ git diff --check
 ```
 
 For documentation-only work, check local links and regenerate the archive when packaged files change. New files intended for distribution must be included in the explicit file list in `tools/package.py`.
+
+For companion changes, build and run the headless Windows protocol checks described in [streamer development](docs/STREAMER_MODE.md#development-checks). CI repeats them on Windows. This does not open a window or establish capture behavior; native rendering and a saved clip are separate manual checks. Keep generated `connect.lua`, connection tokens and frame contents out of commits and reports.
 
 ## Changes to controls and gameplay
 

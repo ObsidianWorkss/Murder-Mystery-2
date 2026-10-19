@@ -1,12 +1,21 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.40**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.41**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Windows streamer candidate
+
+- [x] Both scripts compile; 880 Luau assertions and 33 headless Windows companion checks pass locally.
+- [x] Source packaging excludes generated connection tokens. Windows CI builds and tests the companion without opening a window.
+- [ ] Launch companion manually; verify Windows affinity acceptance, Solara loopback handshake, initial UI visibility, click-through menu controls, keyboard recovery and text editing.
+- [ ] Verify normal/borderless windows, resize, DPI/multiple monitors, focus, minimize, respawn, dynamic native UI and multiple-client refusal/explicit PID.
+- [ ] Verify connection loss, stale-frame expiry, failed property restoration/retry, companion exit, unload and reload against native GUI objects.
+- [ ] Save an OBS Window Capture clip with Capture Cursor off. Compare player display and recorded menu, ESP, crosshairs, cursor and inventory. Document unsupported world UI, native health/name displays, external Drawing graphics and missing 3D/styling/images. Do not mark full capture support based only on a successful affinity flag.
 
 ## Automated checks
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport and phone-control regression suites pass locally (816 assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control and streamer regression suites pass locally (880 Luau assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks

@@ -16,7 +16,8 @@ if not match:
 version = match.group(1)
 files = ["main.lua", "loader.lua", "Readme.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md",
          "CONTRIBUTING.md", "assets/banner.svg", "docs/FEATURES.md",
-         "docs/SUPPORT.md", "docs/RELEASE_CHECKLIST.md", "tests/VALIDATION.md"]
+         "docs/SUPPORT.md", "docs/RELEASE_CHECKLIST.md", "docs/STREAMER_MODE.md", "tests/VALIDATION.md",
+         "streamer/Overlay.cs", "streamer/build.ps1", "streamer/Start-Streamer.ps1", "streamer/Stop-Streamer.ps1"]
 payloads = {name: (root / name).read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8") for name in files}
 manifest = {"version": version, "files": {name: hashlib.sha256(data).hexdigest() for name, data in payloads.items()}}
 payloads["MANIFEST.json"] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
