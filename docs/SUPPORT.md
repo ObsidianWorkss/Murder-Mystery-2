@@ -7,7 +7,7 @@
 3. Open a repository issue and paste the report, your device/input type, and the exact steps that caused the problem.
 4. Include what you expected and what happened. For attacks, distinguish a skipped request, an unconfirmed reply, a reported hit, and an observed elimination.
 
-The report includes build information, capability availability, enabled combat features, operation counts, and aggregate attack counters. It omits access keys, saved key contents, usernames, user IDs, server IDs, and individual shot payloads. It is copied only when requested; the script does not submit it to an issue tracker.
+The report includes build information, capability availability, enabled combat features, operation counts, and aggregate attack counters. `Visuals` reports map/viewer readiness, eligible rigs and attached native visuals. `Updates` reports the latest health and cumulative error counts for weapons, player ESP, threats, gun ESP and pickup. It omits access keys, saved key contents, usernames, user IDs, server IDs, raw feature errors and individual shot payloads. It is copied only when requested; the script does not submit it to an issue tracker.
 
 If clipboard access is unavailable, the button prints the report to the developer console. You can also run:
 
@@ -32,7 +32,11 @@ Use the repository's previous commit to obtain an older `main.lua` if an update 
 
 ## Compatibility and experimental features
 
-For Halloween modes, check the mode on Home and `GameMode` in the support report. rc.42 recognizes Infection's Zombie/Survivor and FreezeTag's Freezer/Runner roles. Reload the latest script after updating. A Zombie cannot use the native knife throw; an unarmed Runner cannot automate a gun. Unknown roles/modes leave weapon handling native until supported data arrives. See [event behavior and limits](FEATURES.md#halloween-and-event-modes). Include the exact mode, your actual role, weapon and whether normal native attacks work when reporting an event failure.
+For Halloween modes, check the mode on Home and `GameMode` in the support report. rc.43 recognizes Infection's Zombie/Survivor and FreezeTag's Freezer/Runner roles. Reload the latest script after updating. A Zombie cannot use the native knife throw; an unarmed Runner cannot automate a gun. Unknown roles/modes leave weapon handling native until supported data arrives. See [event behavior and limits](FEATURES.md#halloween-and-event-modes). Include the exact mode, your actual role, weapon and whether normal native attacks work when reporting an event failure.
+
+If triggerbot waits, read its status before changing settings: menus/chat/focus, an unequipped weapon, cooldown or pending feedback can pause it. Stable invisibility is allowed through ordinary weapon checks; preparation or incomplete restoration still pauses attacks. Shooting does not restore visibility. Both trigger switches normally start off; **T** toggles them together.
+
+For voting failures, include `MapVote.Pads`, `Layout`, `ActivePads` and `MetadataSource` after enabling the option. Current nested pads under `Lobby` and older `RegularLobby` layouts are recognized. Finding a pad does not prove that resetting adds another server vote; attempts remain bounded and stop without an observed count increase.
 
 The main script needs a compatible client scripting environment. The HTTP loader additionally needs `game:HttpGet` and `loadstring`. Clipboard, local file storage, and simulated touch are optional capabilities; their availability appears in the support report.
 

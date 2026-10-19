@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.43 — 2026-10-19
+
+- Separate living-rig ESP readiness from strict combat eligibility. Head/torso anchors keep healthy incomplete rigs visible, and stale death metadata no longer suppresses their visuals. Combat still requires a valid root and current eligibility.
+- Isolate weapon synchronization, player ESP, threats, gun ESP and pickup updates. Add aggregate visual counts and per-feature health/error counters to support reports, with throttled local error warnings and retry on subsequent updates.
+- Fix triggerbot pausing solely because stable invisibility is active. Retain transition/restoration, weapon readiness, focus/menu and automatic-action guards; respect the invisible-knife preference without restoring visibility.
+- Restore voting-pad discovery for `Lobby.VotePads.VotePad1–3.Pad` and its current boards, preserving older layouts. Current loading/closed boards take precedence over stale legacy metadata. Add detected-pad count and layout diagnostics; keep voting off on load and the existing three-reset cap.
+- All 1,017 Luau assertions pass and both scripts compile. The user-authorized live reload initialized rc.43 in Classic: seven eligible player visuals were attached, the enabled gun triggerbot sent requests, and guarded updates reported no errors. A read-only probe found all three current voting pads. These checks do not establish Halloween combat, accepted invisible shots, eliminations or duplicate votes.
+
 ## 1.0.0-rc.42 — 2026-10-19
 
 - Replaced Classic-only role and map assumptions with a shared game context for Classic, Infection and FreezeTag. Recognize Zombie/Survivor and Freezer/Runner roles, replicated Zombie conversion, known frozen state and unavailable/unknown roles. Preserve native weapon handlers when the script cannot assist the current role.

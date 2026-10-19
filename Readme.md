@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.42-7499ff" alt="Version 1.0.0-rc.42">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.43-7499ff" alt="Version 1.0.0-rc.43">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.42.** Automated validation covers **971 Luau assertions**, **33 Windows companion checks** and compilation of both runtime scripts. Includes shared Classic, Infection and Freeze Tag role/map support. Live Halloween combat/rendering, streamer capture and real phone rendering remain pending; see the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.43.** Automated validation covers **1,017 Luau assertions**, **33 Windows companion checks** and compilation of both runtime scripts. This update improves ESP readiness, allows triggerbot use during stable invisibility and recognizes the current nested voting pads. Live Classic checks confirmed seven attached player visuals and automatic gun requests. Halloween combat/rendering, streamer capture and real phone rendering remain pending; see the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

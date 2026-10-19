@@ -77,7 +77,7 @@ for _,case in ipairs({
     {"missing handler",function(f) f.State.WeaponHandlers={} end},
     {"readiness refusal",function(f) f.Ready=false end},
     {"ownership change",function(f) f.Gun.Parent=f.Target.Character end},
-    {"invisibility",function(f) f.State.Invis={Active=true} end},
+    {"invisibility transition",function(f) f.State.Invis={Active=true,Busy=true} end},
     {"experimental invisibility",function(f) f.State.ExperimentalInvis={Busy=true} end},
     {"fling",function(f) f.State.Fling={Active=true} end},
     {"fling queue",function(f) f.State.FlingQueue={Active=true} end},
@@ -165,5 +165,12 @@ do
     f=fixture();f.Own.Role="Freezer";f.Context.CanUseWeapon=function() return false end
     f.State.SetTriggerbot(true);f.Step()
     check(f.Attempts==0,"capability refusal cannot fall back to an event gun role")
+    f=fixture();f.State.Invis={Active=true,Busy=false};f.State.ExperimentalInvis={Active=true,Busy=false}
+    f.State.SetTriggerbot(true);f.Step()
+    check(f.Attempts==1 and f.State.Invis.Active and f.State.ExperimentalInvis.Active,"stable invisibility uses the ordinary gun trigger path without changing visibility state")
+    f=fixture();f.EnableKnife();f.State.Invis={Active=true,Busy=false};f.State.Config.InvisibleKnife=true;f.Step()
+    check(f.Attempts==1 and f.State.Invis.Active,"stable invisibility allows an explicitly enabled invisible knife trigger")
+    f=fixture();f.EnableKnife();f.State.Invis={Active=true,Busy=false};f.State.Config.InvisibleKnife=false;f.Step()
+    check(f.Attempts==0 and f.State.Invis.Active and f.Bot.Status=="Knife while invisible is off","invisible knife preference pauses input without revealing the character")
 end
 print(passed.." triggerbot assertions passed")

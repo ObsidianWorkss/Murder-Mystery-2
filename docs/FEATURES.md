@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.42**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.43**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 
@@ -19,11 +19,13 @@ The same context feeds role ESP, gun ESP visibility, threat warnings, aim and tr
 
 **Zombies cannot throw knives:** the native knife client explicitly blocks that action, and this script follows it. Use the existing stab path when you own the knife; server acceptance of aura/reach remains separate. Freeze Tag freezes are not treated as confirmed kills. Existing extended-range and damage limitations still apply.
 
-Event ESP labels keep the actual role, including in clean and companion views. The Home session line includes the mode, and support diagnostics expose only aggregate map/row readiness and your role. Rule guidance handles event opponents/threats; the Classic-trained Sheriff actor is not run for event modes. Existing Murderer/Sheriff controls remain the knife/gun settings pages.
+Event ESP labels keep the actual role, including in clean and companion views. Living rigs with a head or torso can remain visible during incomplete root replication; stale combat death flags do not hide a healthy rig. Combat still requires its root, current eligibility and the normal readiness checks. Weapon synchronization, player ESP, threats, gun ESP and pickup update independently so an error in one does not prevent the others from refreshing.
+
+The Home session line includes the mode. Support diagnostics expose aggregate map/row readiness and your role, `Visuals` counts for eligible rigs and attached visuals, and `Updates` health/error counters for each guarded feature. Rule guidance handles event opponents/threats; the Classic-trained Sheriff actor is not run for event modes. Existing Murderer/Sheriff controls remain the knife/gun settings pages.
 
 Role-based fling groups map Murderer/Sheriff to Zombie/Survivor or Freezer/Runner, and Opponent selects the opposite group. The role-reveal preview uses bounded event team lists while preserving protected/local-player exclusions and its manual send button/cooldown. No chat is sent automatically.
 
-The new adapter was checked read-only in a live **Classic** round. Automated fixtures cover the two event modes, but a live Infection/FreezeTag rendering and combat check is still required. Unsupported modes and mode-specific server rules are not claimed compatible.
+The complete rc.43 build initialized in a live **Classic** round with seven attached player visuals and automatic gun requests. Automated fixtures cover the two event modes and multiple map layouts, but live Infection/FreezeTag rendering and combat checks are still required. Unsupported modes and mode-specific server rules are not claimed compatible.
 
 ## Windows streamer mode
 
@@ -59,7 +61,7 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 2. Close the menu and keep your opponent visible on screen. The gun automatically checks for a clear assisted shot at the known murderer. Knife triggerbot selects a clear on-screen opponent within 6.5 studs. Neither mode needs your cursor directly on the player, a crosshair dwell, or mobile mouse lock.
 3. Press **T** to toggle both triggerbot modes together. Rebind **Universal triggerbot** in **Settings → Combat keys**. Independent gun and knife keys remain available and start unbound. Read **Triggerbot status** in either aim card for missing settings, cooldowns, blocked paths, or rejected shot predictions.
 
-The triggerbot does not turn other settings on. Each mode switches off on reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility, fling, kill aura, and selected-player automatic attacks pause it. Both modes select a fresh on-screen target when they resume. Missed manual clicks are never queued.
+The triggerbot does not turn other settings on. Each mode switches off on normal reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility transitions or incomplete restoration, fling, kill aura, and selected-player automatic attacks pause it. Stable invisibility uses the ordinary weapon checks without revealing your character; turning off **Knife while invisible** still pauses invisible knife attacks. Both modes select a fresh on-screen target when they resume. Missed manual clicks are never queued.
 
 Gun requests are bounded to one per **150 ms**, including manual assisted shots, and wait up to **750 ms** for unanswered feedback. The tool must be enabled. These are client request intervals, not a guaranteed server fire rate. Knife requests retain stab and throw cooldowns; aura range does not extend knife triggerbot reach. Gun prediction, timing, wall, player-path, exclusion and on-screen checks remain. **Triggerbot checks every heartbeat with no added polling delay.** Actual reaction depends on frame rate, selection cost and network delay. Request counters are not hit or kill counters.
 
@@ -124,13 +126,13 @@ Picking up, equipping and firing a gun keep invisibility active. Owning a gun al
 
 ## Experimental map voting
 
-Under **Movement → Map Voting**, enable **Repeat chosen map vote**, close the menu, and vote on your chosen map's pad during an active vote. The script selects the actual `VotePads.Detector1–3` trigger (or native `Pad`) paired with that slot's live `VoteInfoGui` board. Board visibility, map name and displayed count take priority over obsolete `VoteIcons` values, which can remain false/nil/zero during an active vote. Standing inside the trigger also works if a fresh touch event was missed. It follows **vote → reset → wait for a new living character → return that character to the same voting pad → vote again**, with up to **three resets** per activation.
+Under **Movement → Map Voting**, enable **Repeat chosen map vote**, close the menu, and vote on your chosen map's pad during an active vote. The reader recognizes current `Lobby.VotePads.VotePad1–3.Pad` models and their `VoteInfoGui` boards, plus older direct boards and `RegularLobby` detector layouts. A current voting container takes precedence while its boards load or close. Board visibility, map name and displayed count take priority over obsolete `VoteIcons` values, which can remain false/nil/zero during an active vote. Standing inside the trigger also works if a fresh touch event was missed. It follows **vote → reset → wait for a new living character → return that character to the same voting pad → vote again**, with up to **three resets** per activation.
 
 This remains **unverified vote duplication**. The reset requests humanoid death and breaks that character's joints; after respawn the character physically returns to the detector. The executor touch API supplements the normal contact when available, but is optional. Map geometry is not moved. Status separates reset requests, re-vote attempts and the observed total increase, which can also come from other players. No count increase within two seconds after the repeat contact stops further resets; no new character within 12 seconds also stops the attempt.
 
 Voting ending, map/pad changes, conflicting character actions, opening menus, Emergency stop, switching off and unloading cancel the run and clean up pending touches. The toggle always starts off and is never saved. Its optional key is unbound in **Settings → Movement keys**.
 
-**Map vote status** distinguishes closed voting, unavailable pads, an open vote awaiting your choice, and input/character conflicts such as an open menu or active invisibility. The support snapshot includes active-pad count, metadata source and whether a touch or position detected your choice. A disabled current board is treated as closed voting even if legacy flags are stale.
+**Map vote status** distinguishes closed voting, unavailable pads, an open vote awaiting your choice, and input/character conflicts such as an open menu or active invisibility. While enabled, the support snapshot includes detected-pad count, layout, active-pad count, metadata source and whether a touch or position detected your choice. A disabled current board is treated as closed voting even if legacy flags are stale. A read-only native probe found all three current pads; repeated server vote attribution remains unverified.
 
 ## Phone shortcuts
 

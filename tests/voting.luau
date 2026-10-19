@@ -192,5 +192,52 @@ do
     resetMapVoteCharacter(hum,char)
     check(hum.Health==0 and breaks==1,"reset adapter requests death and breaks the current character's joints")
     check(not pcall(resetMapVoteCharacter,{Parent={}},char) and breaks==1,"reset adapter rejects a replaced character")
+
+    local currentPads={}
+    local nestedChildren={}
+    for i=1,3 do
+        currentPads[i]=node("BasePart")
+        nestedChildren["VotePad"..i]=node("Model",{VoteInfoGui=gui,Pad=currentPads[i]})
+    end
+    local currentLobby=node("Model",{VotePads=node("Model",nestedChildren)})
+    world=node("Workspace",{Lobby=currentLobby})
+    entries=readMapVotePads(world)
+    check(#entries==3 and entries[1].Pad==currentPads[1] and entries[3].Pad==currentPads[3],
+        "current Lobby/VotePads/VotePad1-3 uses each model's actual Pad")
+    check(entries[1].Layout=="NestedVotePads" and entries[1].Source=="VotingBoard" and entries[1].Slot==1,
+        "nested current boards retain slot and layout diagnostics")
+    check(entries[2].Voting and entries[2].Map=="House 2" and entries[2].Votes==3,
+        "nested boards provide map identity and count without VoteIcons or Detector objects")
+    gui.Enabled=false
+    entries=readMapVotePads(world)
+    check(#entries==3 and not entries[1].Voting and not entries[3].Voting,
+        "disabled current nested boards remain available but inactive")
+    local legacy=node("Model",{VoteIcons=node("Model",{VotePad1=icon}),VotePads=node("Model",{Detector1=detector})})
+    local both=node("Workspace",{Lobby=currentLobby,RegularLobby=legacy})
+    entries=readMapVotePads(both)
+    check(#entries==3 and not entries[1].Voting and entries[1].Pad==currentPads[1],
+        "closed current lobby never falls back to stale active RegularLobby votes")
+    gui.Enabled=true
+    local loading=node("Workspace",{Lobby=node("Model",{VotePads=node("Model",{})}),RegularLobby=legacy})
+    check(#readMapVotePads(loading)==0,"empty current container waits for loading instead of activating old-lobby metadata")
+    local decorative=node("Workspace",{Lobby=node("Model",{}),RegularLobby=legacy})
+    check(readMapVotePads(decorative)[1].Pad==detector,"legacy lobby is supported when the new lobby has no voting structure")
+    nestedChildren.VotePad2=node("Model",{VoteInfoGui=gui})
+    check(#readMapVotePads(world)==2,"board without a physical pad is not a target")
+    nestedChildren.VotePad2=node("Model",{VoteInfoGui=gui,Pad=node("Model")})
+    check(#readMapVotePads(world)==2,"non-part nested pad is rejected")
+    local current=fixture()
+    current.Pad.IsA=function(_,kind) return kind=="BasePart" end
+    local currentWorld=node("Workspace",{Lobby=node("Model",{VotePads=node("Model",{
+        VotePad1=node("Model",{Pad=current.Pad,VoteInfoGui=gui})})})})
+    current.ReadOverride=function() return readMapVotePads(currentWorld) end
+    current.FirstReset()
+    check(current.Resets==1 and current.State.MapVote.Detection=="Touch",
+        "current nested pad touch reaches the shipped controller's first reset")
+    local snapshot=current.State.GetMapVoteSnapshot()
+    check(snapshot.Pads==1 and snapshot.ActivePads==1 and snapshot.Layout=="NestedVotePads",
+        "support report distinguishes available nested pads from active votes")
+    current.State.StopMapVoteRepeat();current.Advance(2)
+    check(current.Resets==1,"explicit Off still prevents further resets after a nested-layout selection")
 end
 print(passed.." voting assertions passed")

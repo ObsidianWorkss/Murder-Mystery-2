@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         ("VISUAL_ROLE", "local function visualRoleFor(p)", "local function updateESP()"),
         ("TACTICAL", "local createTacticalPolicy = function()", "local createLearnedModel = function()"),
         ("LEARNED_POLICY", "local createLearnedPolicy = function(C)", "local installTacticalGuide = function(C)"),
+        ("ESP_RUNTIME", "local colors = {Sheriff", "local threatDirections ="),
     ]:
         start = source.index(begin)
         end = source.index(finish, start)

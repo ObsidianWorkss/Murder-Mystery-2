@@ -17855,7 +17855,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.42"
+State.Version = "1.0.0-rc.43"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17892,7 +17892,9 @@ function State.GetSupportSnapshot()
         MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil,
         KnifeDodge=State.GetKnifeDodgeSnapshot and State.GetKnifeDodgeSnapshot() or nil,
         Streamer=State.GetStreamerSnapshot and State.GetStreamerSnapshot() or nil,
-        GameMode=State.GetGameModeSnapshot and State.GetGameModeSnapshot() or nil}
+        GameMode=State.GetGameModeSnapshot and State.GetGameModeSnapshot() or nil,
+        Visuals=State.GetESPSnapshot and State.GetESPSnapshot() or nil,
+        Updates=State.FeatureGuard and State.FeatureGuard.Snapshot() or nil}
 end
 function State.GetSupportReport()
     return game:GetService("HttpService"):JSONEncode(State.GetSupportSnapshot())
@@ -18242,14 +18244,22 @@ local createGameContext=function(C)
     end
     function context.InRound(p)
         local char=p.Character
-        local root=char and char:FindFirstChild("HumanoidRootPart")
-        return root~=nil and char:IsDescendantOf(world) and context.Contains(root.Position)
+        local anchor=char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+            or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
+        return anchor~=nil and char:IsDescendantOf(world) and context.Contains(anchor.Position)
+    end
+    function context.Visible(p)
+        local char=p.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        -- Visuals track the living rig, including frozen/temporarily incomplete rigs.
+        -- Stale combat death metadata must not suppress those visuals.
+        return hum~=nil and hum.Health>0 and context.InRound(p)
     end
     function context.Alive(p)
         local char=p.Character
-        local hum=char and char:FindFirstChildOfClass("Humanoid")
         local row=context.Data(p)
-        return hum~=nil and hum.Health>0 and not (row and (row.Dead or row.Killed)) and context.InRound(p)
+        return char~=nil and char:FindFirstChild("HumanoidRootPart")~=nil
+            and not (row and (row.Dead or row.Killed)) and context.Visible(p)
     end
     function context.Frozen(p)
         local row=context.Data(p)
@@ -18324,12 +18334,39 @@ local createGameContext=function(C)
     end
     return context
 end
+local createFeatureGuard=function(C)
+    local records,errors={},{}
+    local guard={}
+    function guard.Run(name,callback)
+        local ok,result=pcall(callback)
+        local record=records[name] or {Errors=0,Consecutive=0}
+        records[name]=record;record.OK=ok
+        if ok then record.Consecutive=0;errors[name]=nil
+        else
+            record.Errors+=1;record.Consecutive+=1;errors[name]=tostring(result)
+            local now=C.Clock()
+            if not record.WarnedAt or now-record.WarnedAt>=10 then
+                record.WarnedAt=now
+                if C.Warn then pcall(C.Warn,"MM2 "..name.." update failed: "..tostring(result):sub(1,240)) end
+            end
+        end
+        return ok,result
+    end
+    function guard.Snapshot()
+        local snapshot={}
+        for name,record in pairs(records) do snapshot[name]={OK=record.OK,Errors=record.Errors,Consecutive=record.Consecutive} end
+        return snapshot
+    end
+    function guard.GetError(name) return errors[name] end
+    return guard
+end
 local function toolFor(p, name)
     local char, backpack = p.Character, p:FindFirstChild("Backpack")
     local item = (char and char:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name))
     return item and item:IsA("Tool") and item or nil
 end
 State.GameContext=createGameContext({World=workspace,Round=round,Player=player,ToolFor=toolFor})
+State.FeatureGuard=createFeatureGuard({Clock=os.clock,Warn=warn})
 local function dataFor(p) return State.GameContext.Data(p) end
 local function alive(p)
     return State.GameContext.Alive(p)
@@ -21329,7 +21366,7 @@ local function visualCharacterReady(p)
     local hum=char and char:FindFirstChildOfClass("Humanoid")
     local anchor=char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
         or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
-    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0 and anchor~=nil and alive(p)
+    return char and char:IsDescendantOf(workspace) and hum and hum.Health>0 and anchor~=nil and State.GameContext.Visible(p)
 end
 local function visualRoleFor(p)
     local role=roleFor(p)
@@ -21404,6 +21441,15 @@ local function updateESP()
     end
 end
 connect(Players.PlayerRemoving, removeVisual)
+function State.GetESPSnapshot()
+    local eligible,drawn=0,0
+    for _,p in ipairs(Players:GetPlayers()) do if p~=player and visualCharacterReady(p) then eligible+=1 end end
+    for _,visual in pairs(State.Visuals) do
+        if visual.Highlight.Parent==visualFolder and visual.Highlight.Enabled and visual.Label.Enabled then drawn+=1 end
+    end
+    return {Enabled=State.Config.ESP==true,Streamer=State.StreamerActive==true,ViewerInMap=espViewerAtRound()==true,
+        Maps=#State.GameContext.Maps(),Eligible=eligible,Drawn=drawn}
+end
 
 local threatDirections = {"AHEAD", "FRONT-RIGHT", "RIGHT", "BACK-RIGHT", "BEHIND", "BACK-LEFT", "LEFT", "FRONT-LEFT"}
 local function threatDetails(ownRoot, targetRoot, camera)
@@ -22231,7 +22277,7 @@ local installMapVoteRepeat=function(C)
     local State=C.State
     local clock=C.Clock or os.clock
     local report={Status="Off",Phase="Idle",Respawns=0,Touches=0,ObservedIncrease=0,MaxRespawns=3,
-        ActivePads=0,MetadataSource="Unavailable",Detection="None"}
+        ActivePads=0,Pads=0,Layout="Unavailable",MetadataSource="Unavailable",Detection="None"}
     State.MapVote=report
     State.Config.MapVoteRepeat=false
     local selected,contact,nextTick,armed
@@ -22274,7 +22320,7 @@ local installMapVoteRepeat=function(C)
     function State.GetMapVoteSnapshot()
         return {Enabled=State.Config.MapVoteRepeat==true,Phase=report.Phase,Status=report.Status,
             Respawns=report.Respawns,Touches=report.Touches,ObservedIncrease=report.ObservedIncrease,
-            MaxRespawns=report.MaxRespawns,ActivePads=report.ActivePads,MetadataSource=report.MetadataSource,
+            MaxRespawns=report.MaxRespawns,ActivePads=report.ActivePads,Pads=report.Pads,Layout=report.Layout,MetadataSource=report.MetadataSource,
             Detection=report.Detection}
     end
     local function findPad(pad)
@@ -22313,6 +22359,8 @@ local installMapVoteRepeat=function(C)
         end
         for pad,hook in pairs(hooks) do if not seen[pad] then hook:Disconnect(); hooks[pad]=nil end end
         report.ActivePads=0
+        report.Pads=#entries
+        report.Layout=entries[1] and entries[1].Layout or "Unavailable"
         report.MetadataSource=entries[1] and entries[1].Source or "Unavailable"
         for _,entry in ipairs(entries) do if entry.Voting and entry.Map then report.ActivePads+=1 end end
         if not selected then
@@ -22398,14 +22446,22 @@ local function resetMapVoteCharacter(hum,char)
 end
 
 local function readMapVotePads(world)
-    local lobby=world:FindFirstChild("RegularLobby")
+    local lobby=world:FindFirstChild("Lobby")
+    -- A current voting container takes precedence even while its boards load/close.
+    -- Do not switch back to an old lobby's stale active metadata during that transition.
+    if not lobby or not (lobby:FindFirstChild("VotePads") or lobby:FindFirstChild("VotePad1")) then
+        lobby=world:FindFirstChild("RegularLobby") or lobby
+    end
     local folder=lobby and lobby:FindFirstChild("VoteIcons")
     local detectors=lobby and lobby:FindFirstChild("VotePads")
     local entries={}
     if not lobby then return entries end
     for i=1,3 do
-        local model=lobby:FindFirstChild("VotePad"..i)
-        local pad=detectors and detectors:FindFirstChild("Detector"..i) or model and model:FindFirstChild("Pad")
+        local nested=detectors and detectors:FindFirstChild("VotePad"..i)
+        local model=nested or lobby:FindFirstChild("VotePad"..i)
+        local pad=nested and nested:FindFirstChild("Pad") or detectors and detectors:FindFirstChild("Detector"..i)
+            or model and model:FindFirstChild("Pad")
+        local layout=nested and "NestedVotePads" or "DirectBoards"
         local gui=model and model:FindFirstChild("VoteInfoGui")
         local container=gui and gui:FindFirstChild("Container")
         local label=container and container:FindFirstChild("MapName")
@@ -22421,11 +22477,11 @@ local function readMapVotePads(world)
             local total=count and count:IsA("TextLabel") and tonumber(count.Text:match("%d+")) or nil
             table.insert(entries,{Pad=pad,Map=name~="" and name or nil,Name=name,Slot=i,
                 Voting=gui.Enabled and container~=nil and container.Visible and name~="" and total~=nil,
-                Votes=total or 0,Source="VotingBoard"})
+                Votes=total or 0,Source="VotingBoard",Layout=layout})
         elseif pad and pad:IsA("BasePart") and map and map:IsA("ObjectValue")
             and voting and voting:IsA("BoolValue") and votes and votes:IsA("IntValue") then
             table.insert(entries,{Pad=pad,Map=map.Value,Name=map.Value and map.Value.Name or "Unknown map",
-                Voting=voting.Value,Votes=votes.Value,Source="LegacyValues",Slot=i})
+                Voting=voting.Value,Votes=votes.Value,Source="LegacyValues",Slot=i,Layout="LegacyDetectors"})
         end
     end
     return entries
@@ -22471,6 +22527,11 @@ installMapVoteRepeat({State=State,Heartbeat=RunService.Heartbeat,Connect=connect
 end
 
 local function autoPickup() State.TickGunPickup() end
+function State.RefreshVisuals()
+    State.FeatureGuard.Run("PlayerESP",updateESP)
+    State.FeatureGuard.Run("ThreatWarning",updateThreat)
+    State.FeatureGuard.Run("GunESP",updateGunESP)
+end
 
 function State.Destroy()
     -- Saved before unload switches features off. A copy replaced by a newer one never writes over newer settings.
@@ -22668,12 +22729,12 @@ connect(RunService.Heartbeat, function(dt)
                 Message = "No unique reply matched this shot; outcome unknown"}
         end
     end
-    syncWeapons()
+    State.FeatureGuard.Run("Weapons",syncWeapons)
     if os.clock()>=(State.NextVisualUpdate or 0) then
         State.NextVisualUpdate=os.clock()+State.GetBackgroundInterval(.2)
-        updateESP(); updateThreat(); updateGunESP()
+        State.RefreshVisuals()
     end
-    autoPickup()
+    State.FeatureGuard.Run("GunPickup",autoPickup)
     -- Legacy panel labels: write only real changes so unchanged text is not re-laid out.
     local aimText = State.AimStatus
     local gunText = State.LastGunFeedback and State.LastGunFeedback.Message or "Gun feedback: waiting for shot"
@@ -22683,10 +22744,8 @@ connect(RunService.Heartbeat, function(dt)
     if dodgeStatus.Text ~= dodgeText then dodgeStatus.Text = dodgeText end
     if invisStatus.Text ~= State.Invis.Status then invisStatus.Text = State.Invis.Status end
 end)
-updateESP()
-updateThreat()
-updateGunESP()
-syncWeapons()
+State.RefreshVisuals()
+State.FeatureGuard.Run("Weapons",syncWeapons)
 print("MM2 Universal " .. State.Version .. " loaded. Right Shift or the MM2 button opens the menu.")
 
 State.CancelExcludedWeaponActions = function(id)
@@ -26063,8 +26122,8 @@ local installTriggerbot=function(C)
         local now=clock()
         if not focused or C.InputBlocked() then reset("Paused: menu, chat or window focus"); return end
         if not State.Config.Aim then reset("Turn on Aim assist"); return end
-        if (State.Invis and (State.Invis.Active or State.Invis.Busy))
-            or (State.ExperimentalInvis and (State.ExperimentalInvis.Active or State.ExperimentalInvis.Busy))
+        if (State.Invis and State.Invis.Busy)
+            or (State.ExperimentalInvis and State.ExperimentalInvis.Busy)
             or (State.Fling and State.Fling.Active) or (State.FlingQueue and State.FlingQueue.Active) then
             reset("Paused: another player action is active"); return
         end
@@ -26106,6 +26165,7 @@ local installTriggerbot=function(C)
             return
         elseif kind=="Knife" then
             if not State.Config.KnifeTriggerbot then reset("Knife triggerbot off"); return end
+            if State.Invis and State.Invis.Active and State.Config.InvisibleKnife==false then reset("Knife while invisible is off"); return end
             if C.CanUseWeapon and not C.CanUseWeapon("Knife") or not C.CanUseWeapon and C.Role(player)~="Murderer" then reset("Waiting for an eligible knife role"); return end
             if record.Charging or not item.Enabled or now-(record.LastStab or -math.huge)<.85 then
                 reset("Waiting for knife cooldown"); return

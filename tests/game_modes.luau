@@ -65,6 +65,11 @@ do
     check(c.Role(f.Own)=="Sheriff" and c.Target(f.Own,f.Other,"Gun"),"classic gun pickup still identifies the hero with stale innocent metadata")
     f.Own.Tools.Gun=nil;f.Own.Tools.Knife={}
     check(c.Role(f.Own)=="Murderer","classic knife fallback retained")
+    f.Round.PlayerData.Other={Dead=true,Role="Innocent"}
+    check(c.Visible(f.Other) and not c.Alive(f.Other),"visual readiness does not inherit stale combat death flags")
+    local root=f.Other.Character:FindFirstChild("HumanoidRootPart")
+    root.Name="Head"
+    check(c.Visible(f.Other) and not c.Alive(f.Other),"head-only temporary rig remains visible while combat still requires its canonical root")
 end
 do
     local f,c=fixture(); f.Base.Name="Map";f.Refresh()
@@ -209,5 +214,106 @@ do
     local policy=createLearnedPolicy({State=state,Model=model,BasePolicy={Decide=function() return marker end,RouteAllowed=function() return true end}})
     check(policy.Decide({Active=true,Mode="Infection",Role="Sheriff"})==marker
         and state.LearnedSheriff.Reason=="Event mode uses rule guidance","event modes use rule guidance without invoking the Classic trained actor")
+end
+local function nativeVisualFixture(layout)
+    local f=fixture()
+    local workspace,player=f.World,f.Own
+    local State={Config={ESP=true,CleanVisuals=false},Visuals={},GameContext=f.Context}
+    f.State=State; f.Roster={f.Own,f.Other};f.Created=0
+    workspace.CurrentCamera={CFrame={Position=vector(0,0,0)}}
+    for _,p in ipairs(f.Roster) do
+        for _,name in ipairs({"Head","UpperTorso"}) do
+            local part=node(name,"BasePart",p.Character)
+            part.Position=vector(0,0,0);part.Size=vector(2,2,1);part.Transparency=0
+        end
+        local root=p.Character:FindFirstChild("HumanoidRootPart");root.Size=vector(2,2,1);root.Transparency=1
+    end
+    if layout=="Map" then f.Map.Name="Spaceship";f.Base.Name="Map"
+    elseif layout=="SpawnsOnly" then f.Map.Name="HalloweenArena";f.Base.Name="UnspecifiedGeometry"
+    elseif layout=="Nested" then
+        f.Map.Name="ArbitrarySeasonalName"
+        local folder=node("RoundContainer","Folder",workspace)
+        f.Map.Parent=folder;folder.Children={f.Map}
+        workspace.Children={f.Lobby,f.Own.Character,f.Other.Character,folder}
+    else f.Map.Name="MilBase" end
+    local Players={GetPlayers=function() return f.Roster end,PlayerRemoving={}}
+    local function connect(_,callback) f.RemovePlayer=callback end
+    local function alive(p) return f.Context.Alive(p) end
+    local function roleFor(p) return f.Context.Role(p) end
+    local Enum={HighlightDepthMode={AlwaysOnTop="AlwaysOnTop"},FontWeight={SemiBold="SemiBold"}}
+    local Font={new=function() return {} end}
+    local UDim2={fromOffset=function(x,y) return {X=x,Y=y} end,fromScale=function(x,y) return {X=x,Y=y} end}
+    local Instance={new=function(class)
+        f.Created+=1
+        local instance=node("",class)
+        instance.Enabled=true
+        function instance:Destroy() self.Parent=nil;self.Destroyed=true end
+        return instance
+    end}
+    local hitPartNames={Gun={"Head","UpperTorso"}}
+    local function hiddenBodyPart(part) return part.Transparency>=1 end
+    -- INSERT_ESP_RUNTIME
+    f.Update=updateESP;f.Colors=colors
+    return f
+end
+for _,layout in ipairs({"Base","Map","SpawnsOnly","Nested"}) do
+    local f=nativeVisualFixture(layout);f.Update()
+    local visual=f.State.Visuals[f.Other]
+    check(visual and visual.Highlight.Enabled and visual.Label.Enabled and visual.Highlight.Adornee==f.Other.Character,
+        "shipped ESP creates attached visible objects on layout "..layout)
+    local snapshot=f.State.GetESPSnapshot()
+    check(snapshot.Maps==1 and snapshot.Eligible==1 and snapshot.Drawn==1 and snapshot.ViewerInMap,
+        "ESP diagnostic counts match actual adornments on "..layout)
+end
+do
+    local f=nativeVisualFixture();f.Update();local original=f.State.Visuals[f.Other]
+    local created=f.Created;f.Update()
+    check(f.Created==created and f.State.Visuals[f.Other]==original,"unchanged ESP reuses its highlight and label")
+    f.State.Config.ESP=false;f.Update()
+    check(f.State.Visuals[f.Other]==nil and original.Highlight.Destroyed and original.Label.Destroyed,"ESP off removes native adornments")
+    f.State.Config.ESP=true;f.Update()
+    check(f.State.GetESPSnapshot().Drawn==1,"ESP re-enables cleanly")
+    f.State.StreamerActive=true;f.Update()
+    check(f.State.GetESPSnapshot().Drawn==0,"streamer mode suppresses native role adornments")
+    f.State.StreamerActive=false;f.Update()
+    f.Own.Character:FindFirstChild("HumanoidRootPart").Position=vector(1000,0,0)
+    check(f.State.GetESPSnapshot().ViewerInMap and f.State.GetESPSnapshot().Drawn==1,"spectator camera in a map keeps ESP while own rig is in the lobby")
+    f.World.CurrentCamera.CFrame.Position=vector(1000,0,0);f.Update()
+    check(f.State.GetESPSnapshot().Drawn==0,"lobby camera and rig hide round ESP")
+    f.World.CurrentCamera.CFrame.Position=vector(0,0,0);f.Update()
+    f.Map.Parent=nil;f.Update()
+    check(f.State.GetESPSnapshot().Drawn==0,"removed map immediately clears native role adornments")
+end
+do
+    local f=nativeVisualFixture("Map")
+    for _,case in ipairs({{"Infection","Survivor","Zombie"},{"Infection","Zombie","Survivor"},{"FreezeTag","Runner","Freezer"},{"FreezeTag","Freezer","Runner"}}) do
+        f.World.Attributes.GameMode=case[1];f.Roles(case[2],case[3]);f.Update()
+        local visual=f.State.Visuals[f.Other]
+        check(visual.Highlight.FillColor==f.Colors[case[3]] and visual.Text.Text:find(case[3],1,true),"native role color and label update for "..case[3])
+    end
+    f.Round.PlayerData.Other.Frozen=true;f.Round.PlayerData.Other.Dead=true;f.Update()
+    check(f.State.Visuals[f.Other]~=nil and f.State.Visuals[f.Other].Text.Text:find("frozen",1,true),"living frozen rig stays labelled even when combat metadata excludes it")
+    local root=f.Other.Character:FindFirstChild("HumanoidRootPart");root.Name="AlternateRoot";f.Update()
+    check(f.State.Visuals[f.Other]~=nil and not f.Context.Alive(f.Other),"ESP head fallback does not make incomplete rigs valid aim targets")
+    f.Other.Character:FindFirstChildOfClass("Humanoid").Health=0;f.Update()
+    check(f.State.Visuals[f.Other]==nil,"native humanoid death still clears ESP")
+end
+do
+    local now,warnings=0,0
+    local guard=createFeatureGuard({Clock=function() return now end,Warn=function() warnings+=1 end})
+    local failed=guard.Run("Weapons",function() error("private diagnostic") end)
+    local rendered=0;local ok=guard.Run("PlayerESP",function() rendered+=1 end)
+    check(not failed and ok and rendered==1,"weapon update failure does not prevent a separate ESP update")
+    guard.Run("Weapons",function() error("private diagnostic") end)
+    check(warnings==1,"repeated update failures do not flood the console")
+    local snapshot=guard.Snapshot()
+    check(not snapshot.Weapons.OK and snapshot.Weapons.Errors==2 and snapshot.Weapons.Consecutive==2 and snapshot.PlayerESP.OK,"health snapshot distinguishes failing and healthy updates")
+    check(snapshot.Weapons.Error==nil and guard.GetError("Weapons"):find("private diagnostic",1,true),"public health omits raw error text while local diagnosis retains it")
+    snapshot.Weapons.Errors=999
+    check(guard.Snapshot().Weapons.Errors==2,"health snapshots are independent")
+    now=11;guard.Run("Weapons",function() error("private diagnostic") end)
+    check(warnings==2,"persistent errors can be reported again after the warning interval")
+    guard.Run("Weapons",function() end)
+    check(guard.Snapshot().Weapons.OK and guard.Snapshot().Weapons.Consecutive==0 and guard.GetError("Weapons")==nil,"successful retry clears the active failure without resetting history")
 end
 print(string.format("%d game-mode assertions passed",passed))

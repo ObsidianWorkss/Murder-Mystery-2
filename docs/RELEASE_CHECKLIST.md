@@ -1,19 +1,28 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.42**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.43**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## ESP, triggerbot and voting reliability
+
+- [x] Both scripts compile; all 1,017 Luau assertions pass, including actual extracted ESP rendering logic, independent update recovery, stable-invisibility trigger guards and current nested voting layouts.
+- [x] User-authorized complete live reload initializes rc.43. Classic recognizes one map/eight role rows and attaches all seven eligible player visuals; five guarded features report zero errors.
+- [x] Already-enabled gun triggerbot sends automatic requests and reports cooldown/pending-feedback states. Request counts are separate from confirmed server outcomes.
+- [x] Shipped voting reader finds three current nested pads read-only; voting stays off with no reset/contact requested.
+- [ ] Verify native stable-invisibility shots without revealing, explicit invisible-knife preference, preparation/restoration guards and real observer visibility.
+- [ ] Verify map replacement, event rounds and native focus/respawn/error recovery. Confirm server shot attribution and observed outcomes separately from requests.
 
 ## Halloween compatibility candidate
 
-- [x] Both runtime scripts compile; all 971 Luau assertions pass, including 77 shared context/event policy checks and 14 added integration regressions.
+- [x] Both runtime scripts compile; all 1,017 Luau assertions pass, including 108 context/ESP/update-health checks and the existing event combat integration regressions.
 - [x] Read native event role definitions and Zombie throw restriction; read-only Classic context probe recognizes current map, role rows and in-map characters.
-- [ ] Load the complete candidate and check native role ESP/gun ESP/HUD/threat warnings in Classic, Infection and FreezeTag, including clean visuals and the optional companion view.
+- [ ] Check native role ESP/gun ESP/HUD/threat warnings in Infection and FreezeTag, including clean visuals and the optional companion view. Classic startup and attached player visuals are checked above.
 - [ ] Verify Zombie conversion, frozen Runner state, death/respawn, map replacement and lobby/spectator transitions. Confirm the actual replicated frozen-state fields used by the current event server.
 - [ ] Verify owned event gun/knife readiness, supported native attacks, teammate cancellation, Zombie throw refusal, triggerbot, aura and queue behavior. Record requests, accepted freezes/damage and observed outcomes separately.
 - [ ] Check event map teleports, rule guidance, role-action group selection, manual role previews, existing movement/invisibility/dodge and unsupported-mode native weapon restoration.
 
 ## Windows streamer candidate
 
-- [x] Both scripts compile; 971 Luau assertions and 33 headless Windows companion checks pass locally.
+- [x] Both scripts compile; 1,017 Luau assertions and 33 headless Windows companion checks pass locally.
 - [x] Source packaging excludes generated connection tokens. Windows CI builds and tests the companion without opening a window.
 - [ ] Launch companion manually; verify Windows affinity acceptance, Solara loopback handshake, initial UI visibility, click-through menu controls, keyboard recovery and text editing.
 - [ ] Verify normal/borderless windows, resize, DPI/multiple monitors, focus, minimize, respawn, dynamic native UI and multiple-client refusal/explicit PID.
@@ -24,7 +33,7 @@ Version: **1.0.0-rc.42**. Do not describe this candidate as fully verified until
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control and streamer regression suites pass locally (971 Luau assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control, streamer and game-mode/ESP regression suites pass locally (1,017 Luau assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks
@@ -33,7 +42,7 @@ Version: **1.0.0-rc.42**. Do not describe this candidate as fully verified until
 - [ ] Side teleport: real incoming throws, correct perpendicular displacement, walls/occupied endpoints/ledges/slopes, multiple knives, walking input, mode switches, cooldown, server correction and survival. Run the expanded native TestKnifeDodge preflight before treating local geometry checks as verified.
 - [ ] Auto dodge starts on after saved Off/Emergency stop; real incoming thrown knife jump/sidestep, invisibility pause/resume, area teleport continuity, explicit off/on, focus, respawn and unload. Distinguish a chosen dodge action from actual survival.
 - [ ] Acquire/equip/fire a real gun while invisible; verify invisibility stays active, accepted shots and observer visibility separately. Weapon input during preparation must wait without revealing. Verify manual restoration and error recovery separately.
-- [ ] Opt into map voting during an active lobby vote: real Detector1–3 selection, character reset, new living character, physical return to that same detector and another accepted vote; off/End/unload and voting end stop it. Confirm extra vote attribution separately from other players changing the total; duplicate votes remain unverified.
+- [ ] Opt into map voting during an active lobby vote: real current Pad or legacy Detector selection, character reset, new living character, physical return to that same pad and another accepted vote; off/End/unload and voting end stop it. Confirm extra vote attribution separately from other players changing the total; duplicate votes remain unverified.
 - [x] Reproduced rc.36 staying Armed despite own pad touches during an active vote: current board enabled and count increasing while all legacy metadata remained inactive. Current-board precedence is covered by extracted adapter/controller tests.
 - [x] Live rc.37 completed three reset/new-character/return/re-vote cycles and stopped at its cap. Board total rose by 5; individual vote attribution and the remaining cancellation scenarios above are separate pending checks.
 - [ ] Kill all: Burst and Aimed throws, priorities, queue/charge cancellation, prior aura restoration and actual server outcomes. Measure accepted damage distance rather than treating the 1,000-stud client radius as accepted range.
