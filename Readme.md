@@ -48,7 +48,7 @@ The loader follows `main`, so re-run it to receive updates. [`loader.lua`](loade
 
 ## Features at a glance
 
-For a separate script with no UI, see the [standalone coin farm](docs/AUTO_FARM.md). Ground paths are the default; a separate experimental loader selects prone/noclip underground tweens. Both modes pause for full bags, request one server-confirmed full-bag reset per round and can fund normal Mystery Box #2 rolls from balance growth above their starting Coins. It adds 59 regression checks alongside the main script's 1,017. Underground server acceptance is unverified after an earlier position-validation kick; drops and invulnerability are not guaranteed.
+For a separate script with no UI, see the [standalone currency farm](docs/AUTO_FARM.md). Ground paths are the default; a separate loader selects experimental prone/noclip underground tweens with 48 studs/second travel and slower pickup stages. Includes pickup retries, role-opponent avoidance, server-confirmed full-bag resets and unlimited reconnect retries with increasing delays when resume APIs are supported. The buyer discovers the active event's collectible currency and crate prices: the current Halloween box costs 600 Candy. It can spend the existing selected currency balance and keeps rolling after godly drops, with no time/count/spending cap. It never buys premium currency or substitutes keys/Gems/Robux. There are 152 farm checks alongside the main script's 1,017. Long native sessions remain unverified; movement can still trigger position rejection.
 
 | Area | Included |
 | --- | --- |
