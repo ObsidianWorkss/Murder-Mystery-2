@@ -48,7 +48,7 @@ The loader follows `main`, so re-run it to receive updates. [`loader.lua`](loade
 
 ## Features at a glance
 
-For a separate script with no UI, see the [standalone coin farm](docs/AUTO_FARM.md). It uses ground paths, pauses for full bags, requests one server-confirmed full-bag reset per round and can fund normal Mystery Box #2 rolls from balance growth above its starting Coins. It adds 45 regression checks alongside the main script's 1,017. Underground movement was removed after a reported position-validation kick; drops and invulnerability are not guaranteed.
+For a separate script with no UI, see the [standalone coin farm](docs/AUTO_FARM.md). Ground paths are the default; a separate experimental loader selects prone/noclip underground tweens. Both modes pause for full bags, request one server-confirmed full-bag reset per round and can fund normal Mystery Box #2 rolls from balance growth above their starting Coins. It adds 59 regression checks alongside the main script's 1,017. Underground server acceptance is unverified after an earlier position-validation kick; drops and invulnerability are not guaranteed.
 
 | Area | Included |
 | --- | --- |

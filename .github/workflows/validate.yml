@@ -24,7 +24,7 @@ jobs:
           cmake --build "$RUNNER_TEMP/luau/build" --target Luau.Repl.CLI Luau.Compile.CLI --parallel 2
       - name: Compile and run regression suites
         run: |
-          "$RUNNER_TEMP/luau/build/luau-compile" --null main.lua loader.lua auto-farm.lua
+          "$RUNNER_TEMP/luau/build/luau-compile" --null main.lua loader.lua auto-farm.lua auto-farm-underground.lua
           python3 tests/run.py --luau "$RUNNER_TEMP/luau/build/luau"
       - name: Verify distributable package
         run: python3 tools/package.py --output dist

@@ -93,6 +93,55 @@ do
     local snapshot=f.Farm.Snapshot();snapshot.Attempts=99
     check(f.Farm.Attempts==0,"diagnostic snapshots cannot change controller state")
 end
+local function tweenFixture()
+    local f={Position=vector(0,10,0),Starts={},Cancelled=0,Begins=0,Ends=0}
+    f.Route=createUndergroundRoute({Depth=4,Speed=16,VoidY=-500,Vector=vector,
+        Position=function() return f.Position end,
+        Pickup=function(c) return vector(c.Part.Position.X,c.Part.Position.Y-.8,c.Part.Position.Z) end,
+        StartTween=function(point,speed)
+            local t={Position=point,State="Playing",Speed=speed};table.insert(f.Starts,t);return t
+        end,
+        CancelTween=function(t) f.Cancelled+=1;t.State="Cancelled" end,TweenState=function(t) return t.State end,
+        BeginTouch=function() f.Begins+=1 end,EndTouch=function() f.Ends+=1 end})
+    function f.Coin(x,y,z) return {Part={Position=vector(x,y,z)}} end
+    function f.Complete()
+        local t=f.Starts[#f.Starts];t.State="Completed";f.Position=t.Position
+    end
+    return f
+end
+do
+    local f=tweenFixture();local coin=f.Coin(20,10,0)
+    check(f.Route.Step(coin)=="Moving" and f.Starts[1].Position.Y==6 and f.Starts[1].Position.X==0,"underground route sinks at the current horizontal position before crossing the map")
+    f.Route.Step(coin)
+    check(#f.Starts==1 and f.Route.Snapshot().Tweening,"in-progress tween is reused instead of restarted on every tick")
+    f.Complete();f.Route.Step(coin)
+    check(f.Starts[2].Position.X==20 and f.Starts[2].Position.Y==6 and f.Starts[2].Speed==16,"slide tween stays below the pickup plane at its configured speed")
+    f.Complete();f.Route.Step(coin)
+    check(f.Starts[3].Position.Y==9.2 and f.Begins==0,"last tween approaches the contact point from below before beginning a touch")
+    f.Complete()
+    check(f.Route.Step(coin)=="Arrived" and f.Begins==1,"completed pickup tween begins a single contact attempt")
+    f.Route.Step(coin)
+    check(f.Begins==1,"holding the same pickup does not spam touch starts")
+    f.Route.Cancel()
+    check(f.Route.Snapshot().Phase=="Idle" and not f.Route.Snapshot().Tweening and f.Ends>=1,"cancel ends contact and clears all routing state")
+    f.Route.Step(f.Coin(30,10,0))
+    check(f.Starts[#f.Starts].Position.Y==6,"successive pickups reuse a fixed floor offset instead of sinking cumulatively")
+end
+do
+    local f=tweenFixture();local a=f.Coin(20,10,0);f.Route.Step(a)
+    local b=f.Coin(40,12,0);f.Route.Step(b)
+    check(f.Cancelled==1 and #f.Starts==2 and f.Starts[2].Position.Y==8,"target replacement cancels the old tween before starting a new route")
+    f.Route.Cancel();f.Route.Cancel()
+    check(f.Cancelled==2,"repeated cancel does not cancel an already-cleared tween twice")
+    f=tweenFixture();local coin=f.Coin(20,10,0);f.Route.Step(coin);f.Starts[1].State="Cancelled"
+    check(f.Route.Step(coin)=="Blocked" and f.Route.Snapshot().Phase=="Idle","externally cancelled tween is reported as blocked rather than resumed")
+    f=tweenFixture()
+    check(f.Route.Step(f.Coin(0,-480,0))=="Blocked" and #f.Starts==0,"underground offset is checked against the void before creating a tween")
+    f=tweenFixture();f.Position=vector(0,6,0);coin=f.Coin(20,10,0);f.Route.Step(coin);f.Route.Step(coin)
+    check(#f.Starts==1 and f.Starts[1].Position.X==20,"already-submerged character skips an unnecessary sink tween")
+    f=fixture();f.C.MovementName="Underground";f.Add(5,10,0,"Candy");f.Step()
+    check(f.Farm.Snapshot().Phase=="Tween" and f.Farm.Snapshot().Movement=="Underground","shared controller reports underground movement without invoking ground-specific phases")
+end
 local function shopFixture(start)
     local f={Balance=start,Now=0,Price=1000,CanOpen=true,Requests=0,Godlies=0}
     f.Buyer=createCrateBuyer({Clock=function() return f.Now end,Balance=function() return f.Balance end,

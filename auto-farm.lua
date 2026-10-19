@@ -1,5 +1,7 @@
 -- MM2 standalone coin farm. No UI; starts immediately. End or MM2AutoFarm.Stop() stops it.
--- Uses normal paths and character speed. Server awards and crate results are not guaranteed.
+-- MM2FarmFormat:2
+-- Ground paths by default; the separate loader selects experimental prone underground tweens.
+-- Server acceptance, awards and crate results are not guaranteed.
 local createFarm = function(C)
     local farm = {Running=true,Status="Waiting for a round",Attempts=0,ServerEvents=0,Removed=0,Resets=0}
     local target,phase,character,deadline,contactUntil,resetAt
@@ -90,17 +92,17 @@ local createFarm = function(C)
             if not best then
                 release(); farm.Status="Waiting for coins or a bag with space"; return
             end
-            if not held then C.Acquire(); held=true end
+            if not held then C.Acquire(best); held=true end
             target=best
             deadline=now+math.max(15,distance/12*3+8)
-            phase="Walk"
+            phase=C.MovementName=="Underground" and "Tween" or "Walk"
         end
         local coinPosition=target.Part.Position
         if coinPosition.Y<C.VoidY+20 then
             skipped[target.Part]=now+C.RetrySeconds; release(); farm.Status="Skipped a coin near the void"; return
         end
-        if phase=="Walk" then
-            farm.Status="Walking a normal path to a coin"
+        if phase=="Walk" or phase=="Tween" then
+            farm.Status=phase=="Tween" and "Tweening below the floor in a prone pose" or "Walking a normal path to a coin"
             local result=C.Move(target,dt)
             if result=="Blocked" then
                 skipped[target.Part]=now+C.RetrySeconds
@@ -120,9 +122,50 @@ local createFarm = function(C)
     end
     function farm.Snapshot()
         return {Running=farm.Running,Status=farm.Status,Attempts=farm.Attempts,
-            ServerEvents=farm.ServerEvents,Removed=farm.Removed,Resets=farm.Resets,Phase=phase}
+            ServerEvents=farm.ServerEvents,Removed=farm.Removed,Resets=farm.Resets,Phase=phase,
+            Movement=C.MovementName or "Ground"}
     end
     return farm
+end
+
+local createUndergroundRoute=function(C)
+    local route={}
+    local target,points,index,tween,touching
+    function route.Cancel()
+        if tween then C.CancelTween(tween); tween=nil end
+        C.EndTouch()
+        target,points,index,touching=nil,nil,nil,nil
+    end
+    function route.Step(coin)
+        local position=coin.Part.Position
+        if target~=coin.Part then
+            route.Cancel()
+            if position.Y-C.Depth<C.VoidY+20 then return "Blocked" end
+            target=coin.Part
+            local root=C.Position()
+            points={C.Vector(root.X,position.Y-C.Depth,root.Z),
+                C.Vector(position.X,position.Y-C.Depth,position.Z),C.Pickup(coin)}
+            index=1
+        end
+        if tween then
+            local state=C.TweenState(tween)
+            if state=="Completed" then tween=nil; index+=1
+            elseif state=="Cancelled" then route.Cancel(); return "Blocked"
+            else return "Moving" end
+        end
+        local point=points[index]
+        if point then
+            if (point-C.Position()).Magnitude<=.1 then index+=1
+            else tween=C.StartTween(point,C.Speed); return "Moving" end
+        end
+        if index<=#points then return "Moving" end
+        if not touching then touching=true; C.BeginTouch(coin) end
+        return "Arrived"
+    end
+    function route.Snapshot()
+        return {Mode="Underground",Phase=points and ({"Sink","Slide","Pickup","Contact"})[index] or "Idle",Tweening=tween~=nil}
+    end
+    return route
 end
 
 local createCrateBuyer=function(C)
@@ -166,6 +209,8 @@ end
 
 -- Runtime adapter. The controller above is also exercised by the local regression suite.
 local env=getgenv()
+local launch=env.MM2AutoFarmLaunch
+env.MM2AutoFarmLaunch=nil
 if game.PlaceId~=142823291 then warn("MM2 coin farm: run this in Murder Mystery 2."); return end
 local previous=env.MM2AutoFarm
 if previous and type(previous.Stop)=="function" then previous.Stop("Replaced by a new copy") end
@@ -174,11 +219,15 @@ local RunService=game:GetService("RunService")
 local UIS=game:GetService("UserInputService")
 local RS=game:GetService("ReplicatedStorage")
 local Pathfinding=game:GetService("PathfindingService")
+local TweenService=game:GetService("TweenService")
 local player=Players.LocalPlayer
 local config={ContactSeconds=.6,RetrySeconds=15,ResetWhenFull=true,AutoOpenCrates=true,Crate="MysteryBox2"}
+config.Movement=type(launch)=="table" and launch.Movement=="Underground" and "Underground" or "Ground"
+config.Depth=4
+config.TweenSpeed=16
 local connections,containers,coins={},{},{}
 local bounds=setmetatable({},{__mode="k"})
-local session,farm,buyer
+local session,farm,buyer,undergroundRoute,touch
 local pathRevision=0
 local nextScan=0
 local roundEnded=false
@@ -194,8 +243,14 @@ end
 local function finite(p)
     return p.X==p.X and p.Y==p.Y and p.Z==p.Z and math.abs(p.X)<1e7 and math.abs(p.Y)<1e7 and math.abs(p.Z)<1e7
 end
+local function endTouch()
+    local active=touch; touch=nil
+    if active and type(firetouchinterest)=="function" then pcall(firetouchinterest,active.Root,active.Part,1) end
+    if session and session.Hold then session.Hold.VectorVelocity=Vector3.zero; session.ContactPulse=nil end
+end
 local function cancelPath()
     pathRevision+=1
+    if undergroundRoute then undergroundRoute.Cancel() end
     if not session then return end
     if session.PathHook then session.PathHook:Disconnect(); session.PathHook=nil end
     session.Goal,session.GoalPart,session.Waypoints,session.Computing,session.PathError=nil,nil,nil,false,nil
@@ -206,7 +261,44 @@ local function cancelPath()
 end
 local function restore()
     cancelPath()
+    local old=session
     session=nil
+    if not old or not old.Underground then return end
+    if old.NoclipHook then old.NoclipHook:Disconnect() end
+    if old.Hold then old.Hold:Destroy() end
+    if old.Pose then old.Pose:Destroy() end
+    if old.Attachment then old.Attachment:Destroy() end
+    local assist=env.MM2Assist
+    local controlled=assist and assist.Running and (
+        assist.Invis and (assist.Invis.Active or assist.Invis.Busy)
+        or assist.ExperimentalInvis and (assist.ExperimentalInvis.Active or assist.ExperimentalInvis.Busy)
+        or assist.Fling and assist.Fling.Active or assist.FlingQueue and assist.FlingQueue.Active)
+    local sameMap=false
+    if old.Map and old.Map:IsDescendantOf(workspace) and old.Root.Parent==old.Character then
+        local ok,frame,size=pcall(old.Map.GetBoundingBox,old.Map)
+        if ok then
+            local p=frame:PointToObjectSpace(old.Root.Position)
+            sameMap=math.abs(p.X)<=size.X/2+20 and math.abs(p.Z)<=size.Z/2+20 and math.abs(p.Y)<=size.Y/2+40
+        end
+    end
+    if not controlled and player.Character==old.Character and old.Humanoid.Health>0
+        and old.Root.Parent==old.Character and sameMap then
+        local ignore={old.Character}
+        for container in pairs(containers) do table.insert(ignore,container) end
+        for _,p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(ignore,p.Character) end end
+        local parameters=RaycastParams.new()
+        parameters.FilterType=Enum.RaycastFilterType.Exclude; parameters.FilterDescendantsInstances=ignore
+        parameters.RespectCanCollide=true
+        local p=old.Root.Position
+        local hit=workspace:Raycast(p+Vector3.new(0,config.Depth+8,0),Vector3.new(0,-config.Depth-24,0),parameters)
+        old.Root.CFrame=hit and CFrame.new(hit.Position+Vector3.new(0,old.StandingHeight,0))*old.Upright or old.Origin
+        old.Root.AssemblyLinearVelocity=Vector3.zero; old.Root.AssemblyAngularVelocity=Vector3.zero
+    end
+    for part,value in pairs(old.Collisions) do if part.Parent and part.CanCollide==false then part.CanCollide=value end end
+    if old.Humanoid.Parent and not controlled then
+        if old.Humanoid.AutoRotate==false then old.Humanoid.AutoRotate=old.AutoRotate end
+        if old.Humanoid.PlatformStand and old.Humanoid.WalkSpeed>0 then old.Humanoid.PlatformStand=old.PlatformStand end
+    end
 end
 local function eligibleContainer(instance)
     if instance.Name~="CoinContainer" or not (instance:IsA("Model") or instance:IsA("Folder")) then return false end
@@ -266,7 +358,7 @@ local function blocked()
     if roundEnded then return "Waiting for the next round" end
     local char,hum=living()
     if char and (hum.WalkSpeed<=0 or char:GetAttribute("Frozen")==true) then return "Waiting while frozen" end
-    if hum and (hum.PlatformStand or hum.Sit) then return "Waiting for character control" end
+    if hum and (hum.PlatformStand and not (session and session.Underground) or hum.Sit) then return "Waiting for character control" end
     local assist=env.MM2Assist
     if assist and assist.Running then
         if assist.Invis and (assist.Invis.Active or assist.Invis.Busy)
@@ -277,10 +369,37 @@ local function blocked()
             or assist.PlayerActions and assist.PlayerActions.Enabled then return "Paused for another movement action" end
     end
 end
-local function acquire()
+local function acquire(coin)
     local char,hum,root=living()
     assert(char,"Character changed before walking")
     session={Character=char,Humanoid=hum,Root=root}
+    if config.Movement=="Underground" then
+        session.Underground=true; session.Map=coin.Map; session.Origin=root.CFrame; session.Collisions={}
+        session.AutoRotate=hum.AutoRotate; session.PlatformStand=hum.PlatformStand
+        local _,yaw=root.CFrame:ToOrientation()
+        session.Upright=CFrame.Angles(0,yaw,0)
+        session.Flat=session.Upright*CFrame.Angles(math.pi/2,0,0)
+        session.StandingHeight=hum.HipHeight+root.Size.Y/2+(hum.RigType==Enum.HumanoidRigType.R6 and 2 or 0)
+        local attachment=Instance.new("Attachment")
+        session.Attachment=attachment; attachment.Name="MM2FarmTweenAttachment"; attachment.Parent=root
+        local hold=Instance.new("LinearVelocity")
+        session.Hold=hold; hold.Attachment0=attachment; hold.RelativeTo=Enum.ActuatorRelativeTo.World
+        hold.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector; hold.ForceLimitsEnabled=false
+        hold.VectorVelocity=Vector3.zero; hold.Parent=root
+        local pose=Instance.new("AlignOrientation")
+        session.Pose=pose; pose.Attachment0=attachment; pose.Mode=Enum.OrientationAlignmentMode.OneAttachment
+        pose.CFrame=session.Flat; pose.RigidityEnabled=true; pose.Parent=root
+        hum.PlatformStand=true; hum.AutoRotate=false
+        local current=session
+        local function track(part)
+            if session==current and part:IsA("BasePart") and not part:FindFirstAncestorOfClass("Tool") then
+                if current.Collisions[part]==nil then current.Collisions[part]=part.CanCollide end
+                part.CanCollide=false
+            end
+        end
+        for _,part in ipairs(char:GetDescendants()) do track(part) end
+        session.NoclipHook=char.DescendantAdded:Connect(track)
+    end
 end
 local function readBagGUI()
     local gui=player:FindFirstChild("PlayerGui")
@@ -354,11 +473,47 @@ local function walkTo(coin)
     end
     return "Moving"
 end
+if config.Movement=="Underground" then
+    undergroundRoute=createUndergroundRoute({Depth=config.Depth,Speed=config.TweenSpeed,VoidY=workspace.FallenPartsDestroyHeight,
+        Position=function() return session.Root.Position end,Vector=Vector3.new,
+        Pickup=function(coin)
+            -- Place the flat root just under the pickup, with a small overlap for contact.
+            local offset=coin.Part.Size.Y/2+session.Root.Size.Z/2-.2
+            return coin.Part.Position-Vector3.new(0,math.max(.15,offset),0)
+        end,
+        StartTween=function(point,speed)
+            local root=session.Root
+            local duration=math.max(.12,(point-root.Position).Magnitude/speed)
+            local tween=TweenService:Create(root,TweenInfo.new(duration,Enum.EasingStyle.Linear),
+                {CFrame=CFrame.new(point)*session.Flat})
+            tween:Play()
+            return tween
+        end,
+        CancelTween=function(tween) tween:Cancel(); tween:Destroy() end,
+        TweenState=function(tween)
+            local name=tween.PlaybackState.Name
+            if name=="Completed" then tween:Destroy() end
+            return name
+        end,
+        BeginTouch=function(coin)
+            endTouch()
+            if type(firetouchinterest)=="function" then
+                touch={Root=session.Root,Part=coin.Part}
+                pcall(firetouchinterest,touch.Root,touch.Part,0)
+            else
+                -- CFrame changes alone do not guarantee native touch events.
+                -- A short physical upward nudge supplements the actual overlap.
+                session.ContactPulse=os.clock()+.15
+                session.Hold.VectorVelocity=Vector3.new(0,.4,0)
+            end
+        end,EndTouch=endTouch})
+end
 farm=createFarm({Clock=os.clock,Character=function() return living() end,Blocked=blocked,
     ContactSeconds=config.ContactSeconds,RetrySeconds=config.RetrySeconds,
     VoidY=workspace.FallenPartsDestroyHeight,Valid=valid,InMap=inMap,
     Coins=function() return coins end,Position=function() local _,_,root=living(); return root.Position end,
-    Acquire=acquire,Release=restore,Move=walkTo,CancelPath=cancelPath,
+    Acquire=acquire,Release=restore,Move=undergroundRoute and undergroundRoute.Step or walkTo,CancelPath=cancelPath,
+    MovementName=config.Movement,
     ResetWhenFull=config.ResetWhenFull,
     CanReset=function()
         for _,coin in ipairs(coins) do if inMap(coin) then return true end end
@@ -379,6 +534,9 @@ function farm.Stop(reason)
 end
 function farm.GetCrateSnapshot()
     return buyer and buyer.Snapshot() or {Running=false,Status="Crate service unavailable"}
+end
+function farm.GetMovementSnapshot()
+    return undergroundRoute and undergroundRoute.Snapshot() or {Mode="Ground",Phase=session and "Walking" or "Idle"}
 end
 env.MM2AutoFarm=farm
 connect(workspace.DescendantAdded,function(instance)
@@ -402,9 +560,20 @@ connect(UIS.InputBegan,function(input,processed)
     if not processed and not UIS:GetFocusedTextBox() and input.KeyCode==Enum.KeyCode.End then farm.Stop("Stopped with End") end
 end)
 RunService:BindToRenderStep("MM2AutoFarmWalk",Enum.RenderPriority.Character.Value+1,function()
-    if session and session.Direction and session.Character==player.Character and session.Humanoid.Health>0 then
+    if session and not session.Underground and session.Direction and session.Character==player.Character and session.Humanoid.Health>0 then
         session.Humanoid:Move(session.Direction,false)
     end
+end)
+connect(RunService.PreSimulation,function()
+    if not session or not session.Underground then return end
+    local ok,message=pcall(function()
+        for part in pairs(session.Collisions) do if part.Parent then part.CanCollide=false end end
+        session.Root.AssemblyAngularVelocity=Vector3.zero
+        if session.ContactPulse and os.clock()>=session.ContactPulse then
+            session.ContactPulse=nil; session.Hold.VectorVelocity=Vector3.zero
+        end
+    end)
+    if not ok then farm.Stop("Underground movement error"); warn("MM2 coin farm: "..tostring(message)) end
 end)
 connect(RunService.Heartbeat,function(dt)
     if not farm.Running then return end

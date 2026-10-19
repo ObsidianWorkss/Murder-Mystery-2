@@ -1,6 +1,6 @@
 # Standalone coin farm
 
-This separate script starts automatically and creates no UI. It uses normal character walking through computed paths to `Coin_Server` pickups. It does not change walking speed, collisions or the character's position directly. It skips collected/deleted coins and retries unreachable targets after a delay.
+This separate script starts automatically and creates no UI. The default loader uses normal character walking through computed paths to `Coin_Server` pickups. Ground mode does not change walking speed, collisions or the character's position directly. Both modes skip collected/deleted coins and retry unreachable targets after a delay.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ObsidianWorkss/Murder-Mystery-2/refs/heads/main/auto-farm.lua"))()
@@ -8,13 +8,27 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/ObsidianWorkss/Murder
 
 Use the current branch's `auto-farm.lua` for an offline copy. It is independent of the menu script and does not need the menu's access-key prompt. Earlier fixed release archives may not contain it.
 
-Press **End** or run this to stop walking and further crate requests:
+## Experimental underground tween mode
+
+This is the prone movement style: turn the character flat, disable its body collisions, sink below the pickup plane and slide between coins with linear CFrame tweens. It uses a four-stud offset below each pickup and a nominal 16 studs/second tween speed, then approaches the actual server pickup from below for contact. It does not walk along a normal path or require a clear corridor.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ObsidianWorkss/Murder-Mystery-2/refs/heads/main/auto-farm-underground.lua"))()
+```
+
+The thin loader selects underground movement for one startup of the shared core. It refuses an older downloaded core that lacks movement support. The normal loader still selects Ground on a later run. Both variants share the same stop function, full-bag handling and coin-funded crate buyer.
+
+Underground mode holds a flat orientation and tracks body collision values for cleanup. End, replacement, round/death cancellation or a movement error cancels the tween and ends any optional paired executor touch. For a living character on the same loaded map, cleanup attempts to return it upright to a surface before restoring body collisions and humanoid controls; it does not move a dead/replaced character or take over an active invisibility/fling operation. Stop underground mode before enabling another movement feature. A physical nudge is used at pickup when the executor touch API is unavailable; native collection remains unverified.
+
+**Experimental:** the earlier underground-flight prototype caused an Invalid position kick. This new tween/pose variant has not been verified for server acceptance or live collection. It does not hide position updates from the server, bypass anti-cheat, guarantee invulnerability or guarantee that the entire body stays hidden during pickup. It may cause the same kick. Existing reset and purchase behavior also remains subject to server validation.
+
+Press **End** or run this to stop movement and further crate requests:
 
 ```lua
 getgenv().MM2AutoFarm.Stop()
 ```
 
-On a phone, run the stop command through the same scripting environment. No phone buttons are added. Re-running the script stops the previous copy first. You can inspect `MM2AutoFarm.Snapshot()` and `MM2AutoFarm.GetCrateSnapshot()` without opening a menu.
+On a phone, run the stop command through the same scripting environment. No phone buttons are added. Re-running either script stops the previous copy first. You can inspect `MM2AutoFarm.Snapshot()`, `MM2AutoFarm.GetMovementSnapshot()` and `MM2AutoFarm.GetCrateSnapshot()` without opening a menu.
 
 ## Full bags and rounds
 
@@ -34,6 +48,6 @@ Each client/account has its own local state. This script does not sign accounts 
 
 ## Movement and validation limits
 
-The discarded underground-flight test received some collection events, but the user reported an **Invalid position** kick. The shipped version uses ground paths; it includes no underground mode, prone position bypass, anti-cheat concealment, noclip or teleport fallback. Server position validation and player attacks still apply. Roblox documents pathfinding as movement along traversable routes around obstacles; see the [official pathfinding guide](https://create.roblox.com/docs/characters/pathfinding).
+The default Ground mode continues to use normal paths. Underground mode is an explicit separate loader, with no automatic fallback or concealment of movement requests. Server position validation and player attacks apply to both modes. See Roblox's [pathfinding guide](https://create.roblox.com/docs/characters/pathfinding), [tween playback documentation](https://create.roblox.com/docs/reference/engine/classes/TweenBase) and [orientation alignment documentation](https://create.roblox.com/docs/physics/constraints/align-orientation) for the underlying engine mechanisms.
 
-The ground-path candidate initialized in the connected game at native WalkSpeed 16 with PlatformStand false. Its server collection-event count increased from 3 to 31, and the user confirmed collection worked. The inspected snapshot showed no crate requests or resets; full-bag reset, actual banked earnings, paid unboxing, godly rewards and long sessions across multiple accounts remain unverified live. The 45 local farm/buyer assertions cover controller and spending guards, not native path geometry or drop rates.
+The ground-path candidate initialized in the connected game at native WalkSpeed 16 with PlatformStand false. Its server collection-event count increased from 3 to 31, and the user confirmed collection worked. The inspected snapshot showed no crate requests or resets; full-bag reset, actual banked earnings, paid unboxing, godly rewards and long sessions across multiple accounts remain unverified live. The 59 local farm/buyer assertions cover controller, tween routing and spending guards, not native tween physics, path geometry or drop rates.

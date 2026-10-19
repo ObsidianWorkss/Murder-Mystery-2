@@ -2,6 +2,7 @@
 
 ## Unreleased — standalone farm
 
+- Added a separate experimental underground loader: prone orientation, tracked body noclip, sink/slide/pickup CFrame tweens and paired optional touch contact. Reuse the same coin/reset/purchase controller; Ground stays the normal loader's default. Cancel movement on stop/round changes and attempt upright surface recovery during cleanup. Added 14 routing/mode regressions (59 farm checks, 1,076 total); live tween physics, collection and server acceptance remain unverified. This is not an anti-cheat bypass or protection from kicks.
 - Added independent `auto-farm.lua` with no menu or key prompt. Follow normal computed paths at the character's existing speed; skip collected or unreachable pickups, pause on death/freeze/movement conflicts and stop with End or the public stop function.
 - Stop for full bags and request one reset per round only after a server capacity event confirms fullness. Resume selection in a later round; do not repeatedly reset the lobby character.
 - Select the native coin-priced Mystery Box #2, preserve the starting coin balance, serialize ordinary crate requests and wait for an observed debit. Refuse keys/Gems/Robux fallbacks, stop on ambiguous replies and stop after a known godly/chroma result.
