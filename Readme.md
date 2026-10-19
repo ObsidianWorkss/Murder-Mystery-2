@@ -48,6 +48,8 @@ The loader follows `main`, so re-run it to receive updates. [`loader.lua`](loade
 
 ## Features at a glance
 
+For a separate script with no UI, see the [standalone coin farm](docs/AUTO_FARM.md). It uses ground paths, pauses for full bags, requests one server-confirmed full-bag reset per round and can fund normal Mystery Box #2 rolls from balance growth above its starting Coins. It adds 45 regression checks alongside the main script's 1,017. Underground movement was removed after a reported position-validation kick; drops and invulnerability are not guaranteed.
+
 | Area | Included |
 | --- | --- |
 | Combat | Gun aim, predicted knife throws, separate gun/knife triggerbots, aura, explicit Kill all actions and result counters. |

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — standalone farm
+
+- Added independent `auto-farm.lua` with no menu or key prompt. Follow normal computed paths at the character's existing speed; skip collected or unreachable pickups, pause on death/freeze/movement conflicts and stop with End or the public stop function.
+- Stop for full bags and request one reset per round only after a server capacity event confirms fullness. Resume selection in a later round; do not repeatedly reset the lobby character.
+- Select the native coin-priced Mystery Box #2, preserve the starting coin balance, serialize ordinary crate requests and wait for an observed debit. Refuse keys/Gems/Robux fallbacks, stop on ambiguous replies and stop after a known godly/chroma result.
+- Added 45 farm/buyer assertions and CI compilation for the third runtime script. Ground-path collection was observed live; the earlier underground prototype caused a reported Invalid position kick and is not shipped. Native reset/banking, paid rolls, godly outcomes and long multi-account sessions remain unverified.
+
 ## 1.0.0-rc.43 — 2026-10-19
 
 - Separate living-rig ESP readiness from strict combat eligibility. Head/torso anchors keep healthy incomplete rigs visible, and stale death metadata no longer suppresses their visuals. Combat still requires a valid root and current eligibility.
