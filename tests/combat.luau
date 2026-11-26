@@ -71,8 +71,13 @@ do
     local hitPartNames={Gun={"Torso"},Knife={"Torso"}}
     local hitOffsets={vec(0),vec(1)}
     local Vector3={zero=vec(0)}
-    local part={CFrame={Position=vec(10),VectorToWorldSpace=function(_,v) return v end},Size=vec(1),IsA=function() return true end}
-    local char={FindFirstChild=function(_,name) if name=="Torso" then return part end end}
+    local part={CFrame={Position=vec(10),VectorToWorldSpace=function(_,v) return v end},
+        Size=vec(1),Transparency=0,CanQuery=true,IsA=function() return true end}
+    local root={CFrame=part.CFrame,Size=vec(1),Transparency=1,CanQuery=true,IsA=function() return true end}
+    local char={FindFirstChild=function(_,name)
+        if name=="Torso" then return part end
+        if name=="HumanoidRootPart" then return root end
+    end}
     local camera={WorldToViewportPoint=function(_,v) return {X=v.X,Y=0,Z=1},v.X==10 end}
     -- INSERT_VISIBLE
     local _,normal=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=false},true)
@@ -82,6 +87,13 @@ do
         "screen-only policy filters samples before target prediction even with all-direction selection")
     local _,missing=visibleBodySamples(char,"Gun",vec(0),nil,nil,{Core=false},true,true)
     check(#missing.Torso.Samples==0,"screen-only selection cannot acquire without a camera")
+    local _,realBody=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=true},true)
+    check(realBody.HumanoidRootPart==nil and realBody.Torso~=nil,
+        "gun aim cannot treat the native fully transparent root as a shootable body target")
+    part.Transparency=1
+    local _,invisible=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=true},true)
+    check(invisible.Torso==nil and invisible.HumanoidRootPart==nil,
+        "fully transparent avatar parts cannot supply false-positive gun hitbox samples")
 end
 
 do

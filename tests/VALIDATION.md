@@ -1,5 +1,13 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.52
+
+- **1,300 offline assertions passed** with official Luau 0.739 (1,129 main-runtime and 171 standalone farm); all five entrypoints compiled.
+- Live-native evidence: MM2 WeaponService's WeaponRaycast repeatedly ignores any hit with Transparency==1. Six sampled rigs had HumanoidRootPart.Transparency=1 and CanQuery=true, with opaque torso parts. The previous client included those roots in predicted body raycasts and could return true before checking a wall behind the transparent core.
+- New extracted-source tests first failed against rc.51, then passed with the fix: transparent root and invisible torso cannot become gun candidates; invisible queryable roots must be ignored while casting toward opaque torso, behind-root wall, equipment obstruction and unobstructed space.
+- Safe live rc.52 reload: current instance matched, menu retained one high-priority action with Right Shift and F10, cursor began in MouseBehavior.Default with zero corrections, and all five guarded feature categories had zero reported errors. Expanded TestCoverChecks and TestCampChaseAim passed (including transparent-root wall and torso cases), as did TestObservedAimIntegration. The tested client had no gun equipped, so server hit-rate comparison remains outstanding.
+- Read-only review of public open-source MM2 scripts and Roblox server-latency references informed comparison; no third-party loader or remote code was executed.
+
 ## Release candidate 1.0.0-rc.51
 
 - Offline Luau 0.739: all five entry points compile; **1,293 assertions passed** (1,122 main-runtime plus 171 farm).

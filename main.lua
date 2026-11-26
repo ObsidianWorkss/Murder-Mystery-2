@@ -17893,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.51"
+State.Version = "1.0.0-rc.52"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18523,9 +18523,13 @@ clearPath = function(origin, position, char, ignoreTarget)
         if not result then return true end
         if result.Instance:IsDescendantOf(char) then
             -- Equipped knives and accessory handles are not avatar hitboxes.
-            return isDirectBodyHit(result.Instance, char)
-        end
-        if result.Instance:IsA("BasePart") and result.Instance.Transparency >= 1
+            if not isDirectBodyHit(result.Instance, char) then return false end
+            -- MM2 WeaponService skips fully transparent hits even when the
+            -- invisible HumanoidRootPart is queryable and collidable. Keep
+            -- casting so the actual torso or any wall behind it is checked.
+            if result.Instance.Transparency < 1 then return true end
+            table.insert(ignored,result.Instance)
+        elseif result.Instance:IsA("BasePart") and result.Instance.Transparency >= 1
             and not result.Instance.CanCollide
             and not State.ServerBlockers[result.Instance] then
             table.insert(ignored, result.Instance)
@@ -18555,6 +18559,11 @@ function State.TestCoverChecks()
         blocker.Size, blocker.Position, blocker.Transparency = Vector3.new(8, 8, 1), origin + Vector3.new(0, 0, -10), 1
         blocker.Parent = fixture
         result.InvisibleSolidBlocked = not clearPath(origin, target.Position, char)
+        local invisibleRoot = Instance.new("Part")
+        invisibleRoot.Name, invisibleRoot.Anchored, invisibleRoot.Transparency = "HumanoidRootPart", true, 1
+        invisibleRoot.Size, invisibleRoot.Position, invisibleRoot.Parent =
+            Vector3.new(2,2,1), origin + Vector3.new(0,0,-5), char
+        result.TransparentRootDoesNotHideWall = not clearPath(origin, target.Position, char)
         blocker.CanCollide = false
         result.NonSolidHelperIgnored = clearPath(origin, target.Position, char)
         State.ServerBlockers[blocker] = true
@@ -18564,6 +18573,7 @@ function State.TestCoverChecks()
         State.ServerBlockers[blocker] = nil
         blocker:Destroy(); blocker = nil
         result.UnobstructedAllowed = clearPath(origin, target.Position, char)
+        result.TransparentRootPreservesTorso = result.UnobstructedAllowed
         local knife = Instance.new("Tool")
         knife.Name, knife.Parent = "Knife", char
         local handle = Instance.new("Part")
@@ -18577,6 +18587,7 @@ function State.TestCoverChecks()
         result.EquippedWeaponNotLearnedAsMapCover = isCharacterEquipmentPart(handle)
         knife:Destroy()
         result.OK = result.InvisibleSolidBlocked and result.NonSolidHelperIgnored and result.LearnedNonSolidBlocked
+            and result.TransparentRootPreservesTorso and result.TransparentRootDoesNotHideWall
             and result.LearnedNonQueryableBlocked and result.UnobstructedAllowed
             and result.WeaponHandleRejected and result.BodyStillAccepted
             and result.EquippedWeaponNotLearnedAsMapCover
@@ -19253,7 +19264,9 @@ local function visibleBodySamples(char, kind, origin, camera, cursor, profileOve
     end
     for _, name in ipairs(names) do
         local part = char:FindFirstChild(name)
-        if part and part:IsA("BasePart") then
+        -- Native WeaponService's WeaponRaycast ignores Transparency == 1.
+        -- An invisible, queryable HRP must not be accepted by our hit tests.
+        if part and part:IsA("BasePart") and (kind~="Gun" or (part.Transparency<1 and part.CanQuery)) then
             local frame, size = part.CFrame, part.Size
             local offsets = hitOffsets
             if kind == "Gun" and body._GunProfile and body._GunProfile.Stationary and not clearPath(origin, frame.Position, char) then
@@ -19441,6 +19454,9 @@ function State.TestCampChaseAim()
         local root = Instance.new("Part")
         root.Name, root.Anchored, root.CanCollide, root.Transparency = "HumanoidRootPart", true, false, 1
         root.Size, root.Position, root.Parent = Vector3.new(2, 2, 1), base + Vector3.new(0, 4, 0), char
+        local torso=Instance.new("Part")
+        torso.Name,torso.Anchored,torso.CanCollide,torso.Transparency="UpperTorso",true,false,0
+        torso.Size,torso.Position,torso.Parent=Vector3.new(2,2,1),root.Position,char
         local hum = Instance.new("Humanoid")
         hum.HipHeight, hum.WalkSpeed, hum.RigType, hum.Parent = 2, 16, Enum.HumanoidRigType.R15, char
         local now = os.clock()
@@ -19453,13 +19469,14 @@ function State.TestCampChaseAim()
         result.StableCoreEligible = stationary.Core
         local _, body = visibleBodySamples(char, "Gun", origin, nil, nil, stationary)
         local solution = exposedSolution(char, root, "Gun", origin, nil, nil, body)
-        result.StationaryZeroLead = solution and solution.LeadTime == 0 and solution.AimPart == "HumanoidRootPart"
+        result.StationaryZeroLead = solution and solution.LeadTime == 0 and solution.AimPart == "UpperTorso"
+        result.TransparentRootSkipped=body.HumanoidRootPart==nil
         root.AssemblyLinearVelocity = Vector3.new(0, 0, -16)
         local approaching = State.GunAimProfile(root, origin, Vector3.zero, now, record)
         result.CloseApproachEligible = approaching.Mode == "Approaching" and approaching.Core
         local _, approachingBody = visibleBodySamples(char, "Gun", origin, nil, nil, approaching)
         local approachingShot = exposedSolution(char, root, "Gun", origin, nil, nil, approachingBody)
-        result.ApproachUsesPredictedCore = approachingShot and approachingShot.AimPart == "HumanoidRootPart" and approachingShot.LeadTime > 0
+        result.ApproachUsesPredictedCore = approachingShot and approachingShot.AimPart == "UpperTorso" and approachingShot.LeadTime > 0
         root.AssemblyLinearVelocity = Vector3.new(16, 0, 0)
         local crossing = State.GunAimProfile(root, origin, Vector3.zero, now, record)
         result.CrossingNotMisclassified = crossing.Mode == "Moving" and not crossing.Core
@@ -19484,6 +19501,7 @@ function State.TestCampChaseAim()
         result.HitboxUnchanged = root.Size == Vector3.new(2, 2, 1)
             and player.Character:FindFirstChild("HumanoidRootPart") == ownRoot
         result.OK = result.StationaryDetected and result.StableCoreEligible and result.StationaryZeroLead
+            and result.TransparentRootSkipped
             and result.CloseApproachEligible and result.ApproachUsesPredictedCore and result.CrossingNotMisclassified
             and result.JumpNotStationary and result.RecentStopMustSettle and result.InsideCoreExcluded
             and result.NonQueryableCoreExcluded and result.ThinPeekFound and result.FullCoverRejected and result.HitboxUnchanged

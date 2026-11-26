@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.51**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.52**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Native opaque hitbox and cover checks (rc.52)
+
+- [x] Compare local MM2 GunClient and WeaponService: native WeaponRaycast ignores Transparency==1; current live characters have transparent, queryable roots and opaque torsos.
+- [x] Filter fully transparent and non-queryable gun hitbox candidates; prevent transparent collidable roots from short-circuiting wall/torso checks. Preserve equipment and excluded-player protection.
+- [x] New extracted-source regression tests: 2 combat hitbox assertions and 5 cover-ray assertions. All 1,300 offline assertions pass (1,129 main-runtime and 171 farm); five Luau entrypoints compile.
+- [x] Safe live rc.52 reload: TestCoverChecks, TestCampChaseAim and TestObservedAimIntegration pass, including the transparent-root/opaque-wall and transparent-root/opaque-torso cases. Right Shift/F10 remain bound, the cursor starts free, and five guarded updates report zero errors.
+- [ ] Measure actual rc.52 request/reply/hit behavior in a live Sheriff round; no client-only test establishes a guaranteed hit rate.
 
 ## Aim and triggerbot regression (rc.51)
 

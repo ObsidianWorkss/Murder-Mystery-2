@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.51-7499ff" alt="Version 1.0.0-rc.51">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.52-7499ff" alt="Version 1.0.0-rc.52">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.51.** Local validation passes **1,122 main-runtime** and **171 standalone-farm Luau assertions** (1,293 total) and compiles all five entry points. Gun Aim now checks a realistic, bounded arrival-time window around the network estimate and prefers exposed center-body shots over narrow limbs. An explicit manual gun click falls back to the native cursor when aim assist has no valid target; automatic/locked-target shots never use that fallback. Excluded-player checks, Right Shift, native camera and knife controls remain protected. **Server hit rate has not been proven to improve**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.52.** Local validation passes **1,129 main-runtime** and **171 standalone-farm Luau assertions** (1,300 total) and compiles all five entry points. The live MM2 WeaponService ignores fully transparent raycast hits, but prior Gun Aim treated the invisible, queryable HumanoidRootPart as a valid target and stopped its visibility scan there. Both issues are fixed: gun candidates now require opaque, queryable body parts, and cover checks continue past a transparent root to find an actual body part or wall. The rc.51 prediction, manual-click, menu, camera and triggerbot safeguards remain. **Real server hit-rate improvements are not yet established**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

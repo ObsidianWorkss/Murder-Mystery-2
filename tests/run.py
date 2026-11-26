@@ -258,3 +258,12 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         raise RuntimeError("Unexpanded pending gun lifecycle source marker")
     harness.write_text(pending, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    transparent_cover = (root / "tests" / "transparent_cover.luau").read_text(encoding="utf-8")
+    start = source.index("local function isDirectBodyHit(")
+    end = source.index("function State.TestCoverChecks()", start)
+    transparent_cover = transparent_cover.replace("-- INSERT_TRANSPARENT_COVER", source[start:end])
+    if "-- INSERT_" in transparent_cover:
+        raise RuntimeError("Unexpanded transparent cover source marker")
+    harness.write_text(transparent_cover, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.51**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.52**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 
@@ -38,9 +38,9 @@ The mode suppresses native script ESP in favor of projected companion boxes/labe
 | Setting | Behavior |
 | --- | --- |
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
-| Gun aim | Redirects a shot toward a clear body point on an eligible opponent for the current mode, including targets outside the camera view. Valid center-body targets take precedence over narrow limbs. If no assist target qualifies, a manually initiated gun click still follows the native cursor; excluded-player protections remain active. |
+| Gun aim | Redirects a shot toward a clear body point on an eligible opponent for the current mode, including targets outside the camera view. Fully transparent or non-queryable body parts are excluded, consistent with native MM2 weapon raycasts. Valid opaque center-body targets take precedence over narrow limbs. If no assist target qualifies, a manually initiated gun click still follows the native cursor; excluded-player protections remain active. |
 | Conservative gun shots | Requires the nominal aim ray and five bounded timing samples centered on estimated server arrival to intersect target geometry, rather than requiring shots at the current target position or more than twice the estimated latency. Skips uncertain automatic shots; enabled by default. Manual cursor fallback remains available for explicit clicks. |
-| Gun triggerbot | Automatically aims at a clear visible on-screen opponent for the current gun role, prioritizing exposed torso/core shots over arms and legs. Both body sample and predicted aim point must remain on screen; automatic shots never fire into the cursor as fallback. Requires Aim assist and Gun aim. Successful automatic requests respect the existing 1.5-second gun-ready interval; failed aim scans can retry sooner. Off by default. |
+| Gun triggerbot | Automatically aims at a clear visible on-screen opponent for the current gun role, prioritizing opaque exposed torso shots over arms and legs, never the normally invisible root part. Both body sample and predicted aim point must remain on screen; automatic shots never fire into the cursor as fallback. Requires Aim assist and Gun aim. Successful automatic requests respect the existing 1.5-second gun-ready interval; failed aim scans can retry sooner. Off by default. |
 | Knife triggerbot | Automatically stabs a clear on-screen opponent within 6.5 studs while you are murderer. No crosshair contact or dwell needed. Independent of gun triggerbot; off by default. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
@@ -63,7 +63,7 @@ Assistance does not move the camera or cursor. Gun shots retain wall, player-pat
 
 The triggerbot does not turn other settings on. Each mode switches off on normal reload and with **Emergency stop**. Menus, chat, lost window focus, invisibility transitions or incomplete restoration, fling, kill aura, and selected-player automatic attacks pause it. Stable invisibility uses the ordinary weapon checks without revealing your character; turning off **Knife while invisible** still pauses invisible knife attacks. Both modes select a fresh on-screen target when they resume. Missed manual clicks are never queued.
 
-Gun requests are bounded to one per **150 ms**, including manual assisted shots, and wait up to **750 ms** for unanswered feedback. The tool must be enabled. These are client request intervals, not a guaranteed server fire rate. Knife requests retain stab and throw cooldowns; aura range does not extend knife triggerbot reach. Gun prediction, timing, wall, player-path, exclusion and on-screen checks remain. **Triggerbot checks every heartbeat with no added polling delay.** Actual reaction depends on frame rate, selection cost and network delay. Request counters are not hit or kill counters.
+Automatic gun requests respect a **1.5-second** readiness interval. Manual assisted clicks have a separate minimum request interval and are not paced by the triggerbot's 1.5-second gate. An outstanding request may wait up to **750 ms** before another automatic request is considered; the normal gun-ready interval still applies. These are client request limits, not a guaranteed server fire rate. Knife requests retain stab and throw cooldowns; aura range does not extend knife triggerbot reach. Gun prediction, timing, wall, player-path, exclusion and on-screen checks remain. **Triggerbot checks every heartbeat with no added polling delay.** Actual reaction depends on frame rate, selection cost and network delay. Request counters are not hit or kill counters.
 
 ### Using kill aura
 
