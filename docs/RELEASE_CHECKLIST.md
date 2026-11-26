@@ -1,12 +1,17 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.44**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.45**. Do not describe this candidate as fully verified until the pending live checks have been completed.
 
-## Aim reliability (rc.44)
+## Aim reliability (rc.45)
 
-- [x] Luau 0.739 compiles all five entry points. 1,026 main-runtime and 171 farm assertions pass, including nine new classifier and network-delay checks.
+- [x] Offline triggerbot fixtures cap unchanged-view rejected gun/knife scans near 40 Hz at a simulated 240 Hz heartbeat; camera movement, camera replacement, focus return and toggling reactivate a target check without the 25 ms wait.
+- [x] Existing manual weapon and native Shift Lock paths were not modified. Triggerbot still respects role, cover, weapon readiness, exclusions and outstanding gun feedback.
+- [x] Luau 0.739 compiles all five entry points and the regression suite passes 1,211 assertions (1,040 main-runtime plus 171 farm).
+- [ ] Rejoin with rc.45 and compare actual gun/knife request counts, measured frame cost, hit outcomes and native input behavior. These are not verified by offline fixtures.
+
+- [x] Prior rc.44 checks: 1,026 main-runtime and 171 farm assertions pass, including nine new classifier and network-delay checks.
 - [x] Local fixture checks reject equipped weapon handles as valid avatar body hits and as learnable map cover.
-- [ ] Reload rc.44 into a client and compare gun hit paths, knife speed samples, request/reply correlation and confirmed outcomes against previous rounds. No guaranteed-hit claim.
+- [ ] Compare gun hit paths, knife speed samples, request/reply correlation and confirmed outcomes against previous rounds. No guaranteed-hit claim.
 
 ## ESP, triggerbot and voting reliability
 
@@ -39,7 +44,7 @@ Version: **1.0.0-rc.44**. Do not describe this candidate as fully verified until
 
 - [ ] GitHub workflow `Validate script` succeeds on the published commit.
 - [x] Both `main.lua` and `loader.lua` compile locally.
-- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control, streamer and game-mode/ESP regression suites pass locally (1,017 Luau assertions).
+- [x] Combat, loader, support-report, role-reveal, movement, x-ray, animation-pack, keybind, triggerbot, aura, saved-settings, anti-fling, equip, visibility, voting, dodge lifecycle, side-teleport, phone-control, streamer and game-mode/ESP regression suites pass locally (1,040 main-runtime Luau assertions; 171 farm assertions).
 - [x] ZIP contents match `MANIFEST.json`; archive checksum matches `SHA256SUMS.txt`.
 
 ## Live checks

@@ -1,5 +1,11 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.45
+
+- Offline only: official Luau 0.739 compiles all five entry points, and the extracted-source regression suite passes **1,211 assertions** (1,040 main-runtime and 171 standalone farm). Fourteen new triggerbot assertions exercise 25 ms rejection throttling, camera rotation/movement/replacement, toggle and window-focus invalidation, repeated failed knife contact and simulated 240 Hz idle scanning.
+- The triggerbot keeps its native weapon cooldown, screen-only target rules, role and protected-player checks and pending gun request gate. Only repeated *failed* target scans on an unchanged view are skipped; a changing view invalidates the cache. The status panel reports gun/knife checks and avoided repeated scans independently of unconfirmed shot requests.
+- The test harness simulates target checks and frame timing, not live Roblox inputs, real gun hit registration, animation, server acceptance, or FPS performance. rc.45 was not injected or tested in a live MM2 round; do not claim a hit-rate gain or guaranteed shots.
+
 ## Release candidate 1.0.0-rc.44
 
 - Official Luau 0.739 Windows tools compile all five entry points; the extracted-source regression suite passes 1,197 assertions (1,026 main-runtime, 171 standalone farm). Nine new combat assertions cover true body parts vs equipped knife handles, character equipment vs map cover, half round-trip latency, nonfinite/negative RTT and bounded maximum lead.

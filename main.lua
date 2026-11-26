@@ -17855,7 +17855,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.44"
+State.Version = "1.0.0-rc.45"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -26147,10 +26147,31 @@ do
 local installTriggerbot=function(C)
     local State,player,UIS,world=C.State,C.Player,C.UIS,C.World
     local clock=C.Clock or os.clock
-    local bot={Active=false,Status="Off",Shots=0,Stabs=0,AimChecks=0,LastShot=-math.huge}
+    local bot={Active=false,Status="Off",Shots=0,Stabs=0,AimChecks=0,KnifeChecks=0,
+        SkippedGunChecks=0,SkippedKnifeChecks=0,LastShot=-math.huge}
     State.Triggerbot=bot
     State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false -- explicit opt-in after every reload
     local focused=true
+    -- Failed checks do not need to repeat their expensive target scan on every
+    -- high-FPS heartbeat. A changed camera immediately invalidates the short
+    -- negative cache; a moving target is always reconsidered within 25 ms.
+    local rejectInterval=1/40
+    local function cameraChanged(rejection)
+        local camera=world.CurrentCamera
+        if rejection.Camera~=camera then return true end
+        local frame=camera and camera.CFrame
+        if (frame==nil)~=(rejection.Frame==nil) then return true end
+        if not frame then return false end
+        return (frame.Position-rejection.Frame.Position).Magnitude>.3
+            or frame.LookVector:Dot(rejection.Frame.LookVector)<.9998
+    end
+    local function reject(item,now)
+        local camera=world.CurrentCamera
+        return {Item=item,Until=now+rejectInterval,Camera=camera,Frame=camera and camera.CFrame}
+    end
+    local function deferred(rejection,item,now)
+        return rejection and rejection.Item==item and now<rejection.Until and not cameraChanged(rejection)
+    end
     local function reset(message)
         if message:sub(1,6)=="Paused" then
             if bot.Status:sub(1,6)~="Paused" then bot.BeforePause=bot.Status end
@@ -26160,16 +26181,19 @@ local installTriggerbot=function(C)
     end
     function State.SetTriggerbot(enabled)
         State.Config.Triggerbot=enabled==true
+        bot.GunRejection=nil
         reset(enabled and "Waiting for an assisted gun shot" or "Gun triggerbot off")
         return true
     end
     function State.SetKnifeTriggerbot(enabled)
         State.Config.KnifeTriggerbot=enabled==true
+        bot.KnifeRejection=nil
         reset(enabled and "Waiting for a clear on-screen knife target" or "Knife triggerbot off")
         return true
     end
     function State.StopTriggerbot(message)
         State.Config.Triggerbot,State.Config.KnifeTriggerbot=false,false
+        bot.GunRejection,bot.KnifeRejection=nil,nil
         reset(message or "Off")
         return true
     end
@@ -26208,15 +26232,21 @@ local installTriggerbot=function(C)
                 if pending.Item==item and now-pending.SentAt<.75 then reset("Waiting for shot feedback"); return end
             end
             if not world.CurrentCamera then reset("Waiting for camera"); return end
+            if deferred(bot.GunRejection,item,now) then
+                bot.SkippedGunChecks+=1
+                return
+            end
             bot.AimChecks+=1
             -- Reuse gun prediction and path validation with an explicit screen-only
             -- policy. Both the visible body point and the lead point must stay on screen.
             local sent=C.SendGun(record,nil,false,true)
             if sent==true then
+                bot.GunRejection=nil
                 bot.Shots+=1
                 bot.LastShot=now
                 reset("Assisted shot sent; outcome is server-controlled")
             else
+                if sent==false then bot.GunRejection=reject(item,now) end
                 reset(sent==false and State.LastGunFeedback and State.LastGunFeedback.Message
                     or "Waiting for gun readiness")
             end
@@ -26234,37 +26264,56 @@ local installTriggerbot=function(C)
             if now-(record.LastThrow or -math.huge)<2*speed then reset("Waiting for thrown knife"); return end
         else reset("Equip a gun or knife"); return end
         if not world.CurrentCamera then reset("Waiting for camera"); return end
+        if deferred(bot.KnifeRejection,item,now) then
+            bot.SkippedKnifeChecks+=1
+            return
+        end
+        bot.KnifeChecks+=1
         local target,part=C.ScreenKnifeTarget()
         if not target or target==player or not C.Alive(target) or State.IsPlayerExcluded(target) then
+            bot.KnifeRejection=reject(item,now)
             reset("No clear on-screen opponent within knife reach"); return
         end
         local role=C.Role(target)
-        if C.IsTarget and not C.IsTarget("Knife",target) or not C.IsTarget and role=="Murderer" then reset("Aim at an opponent"); return end
+        if C.IsTarget and not C.IsTarget("Knife",target) or not C.IsTarget and role=="Murderer" then
+            bot.KnifeRejection=reject(item,now)
+            reset("Aim at an opponent"); return
+        end
         local character=target.Character
-        if not character or not part or part.Parent~=character then reset("Target changed"); return end
+        if not character or not part or part.Parent~=character then
+            bot.KnifeRejection=reject(item,now)
+            reset("Target changed"); return
+        end
         if kind=="Knife" then
             local ownRoot=player.Character:FindFirstChild("HumanoidRootPart")
             local targetRoot=character:FindFirstChild("HumanoidRootPart")
             if not ownRoot or not targetRoot or (targetRoot.Position-ownRoot.Position).Magnitude>6.5
                 or not C.ClearPath(ownRoot.Position,part.Position,character) then
+                bot.KnifeRejection=reject(item,now)
                 reset("Move within 6.5 studs with a clear knife path"); return
             end
         end
         bot.Active=true
         local sent=C.StabKnife(record,target)
         if sent==true then
+            bot.KnifeRejection=nil
             bot.Stabs+=1
             C.ReportContact(record,part,"Triggerbot")
         end
         if sent==true then reset("Stab sent; outcome is server-controlled")
-        else bot.Status="Waiting for a valid stab" end
+        else
+            if sent==false then bot.KnifeRejection=reject(item,now) end
+            bot.Status="Waiting for a valid stab"
+        end
     end
     C.Connect(UIS.WindowFocusReleased,function()
         focused=false
+        bot.GunRejection,bot.KnifeRejection=nil,nil
         reset((State.Config.Triggerbot or State.Config.KnifeTriggerbot) and "Paused: window unfocused" or "Off")
     end)
     C.Connect(UIS.WindowFocused,function()
         focused=true
+        bot.GunRejection,bot.KnifeRejection=nil,nil
         reset((State.Config.Triggerbot or State.Config.KnifeTriggerbot) and "Waiting for an assisted shot or knife target" or "Off")
     end)
     C.Connect(C.Heartbeat,function()
@@ -27383,7 +27432,8 @@ local createMobileUI = function(C)
         end
         if State.Triggerbot then
             local bot=State.Triggerbot
-            local detail=bot.Status..("\n%d aim checks · %d gun requests · %d stab requests (not confirmed kills)"):format(bot.AimChecks,bot.Shots,bot.Stabs)
+            local detail=bot.Status..("\n%d gun checks · %d knife checks · %d gun requests · %d stab requests (not confirmed kills)"):format(bot.AimChecks,bot.KnifeChecks,bot.Shots,bot.Stabs)
+            detail..=("\n%d redundant gun scans · %d redundant knife scans avoided"):format(bot.SkippedGunChecks,bot.SkippedKnifeChecks)
             if bot.LastAimCheck then detail..="\nLast gun check: "..bot.LastAimCheck.Message end
             if bot.BeforePause then detail..="\nBefore pause: "..bot.BeforePause end
             updateDescription(mobile.TriggerbotStatus,"GunTriggerbot",detail)

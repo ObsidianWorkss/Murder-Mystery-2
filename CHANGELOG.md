@@ -16,6 +16,12 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.45 — 2026-11-26
+
+- Limit repeated rejected gun and knife triggerbot target scans to a 25 ms window on an unchanged camera while preserving immediate retries when the camera moves, changes, or the window regains focus. Existing cooldown, protected-player, role, cover and screen-only firing gates remain in place.
+- Add separate triggerbot gun/knife scan and avoided-scan counters to the existing status view. Leave Left Shift, cursor behavior, weapon keybinds, and the native camera untouched.
+- Official Luau 0.739 offline checks: 1,211 assertions (1,040 main-runtime and 171 farm) and all five entry points compiled. 240 Hz fixture tests constrain unchanged-view rejection scans near 40 Hz. Actual MM2 server hit outcomes, runtime FPS impact and animation feel are unverified for rc.45.
+
 ## 1.0.0-rc.44 — 2026-11-26
 
 - Correct aiming delay to half of the round-trip ping reported by Roblox, shared by gun lead, knife interception and moving-player path snapshots. Keep camera, cursor and walking controls with the player.

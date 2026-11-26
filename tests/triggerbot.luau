@@ -3,7 +3,10 @@ local function check(ok,message) assert(ok,message); passed+=1; print("PASS: "..
 local mt={}
 local function vec(x) return setmetatable({X=x},mt) end
 mt.__sub=function(a,b) return vec(a.X-b.X) end
-mt.__index=function(v,k) if k=="Magnitude" then return math.abs(v.X) end end
+mt.__index=function(v,k)
+    if k=="Magnitude" then return math.abs(v.X) end
+    if k=="Dot" then return function(self,other) return self.X*other.X end end
+end
 -- INSERT_TRIGGERBOT
 -- INSERT_EMERGENCY
 local function fixture()
@@ -94,9 +97,37 @@ end
 do
     local f=fixture(); f.State.SetTriggerbot(true); f.Send=false; f.Step(1/60)
     check(f.Bot.Shots==0 and f.Bot.LastShot==-math.huge and not f.Bot.LastAimCheck.Sent,"failed check never counts a gun request")
-    f.Step(.004); check(f.Attempts==2,"aim is reconsidered on the next heartbeat even below the old 50 ms interval")
-    f.Send=true; f.Step(.004)
-    check(f.Attempts==3 and f.Bot.Shots==1,"new target fires on the next heartbeat with no artificial wait")
+    f.Step(.004); check(f.Attempts==1 and f.Bot.SkippedGunChecks==1,
+        "identical failed gun scans are not repeated on every high-FPS heartbeat")
+    f.Send=true; f.Step(.022)
+    check(f.Attempts==2 and f.Bot.Shots==1,"rejected gun check retries within 25 ms when the view is unchanged")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.World.CurrentCamera={CFrame={Position=vec(0),LookVector=vec(1)}}
+    f.Step(.01); f.Step(.004)
+    check(f.Attempts==1,"steady camera uses the bounded failed-check interval")
+    f.Send=true; f.World.CurrentCamera.CFrame={Position=vec(0),LookVector=vec(-1)}
+    f.Step(.001)
+    check(f.Attempts==2 and f.Bot.Shots==1,"camera rotation bypasses the failed gun check delay")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.World.CurrentCamera={CFrame={Position=vec(0),LookVector=vec(1)}}
+    f.Step(.01); f.Send=true; f.World.CurrentCamera.CFrame={Position=vec(1),LookVector=vec(1)}
+    f.Step(.001)
+    check(f.Attempts==2,"moving the camera bypasses the failed gun check delay")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.Step(.01); f.Send=true; f.World.CurrentCamera={}
+    f.Step(.001)
+    check(f.Attempts==2,"new camera object invalidates the previous gun rejection")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.Step(.01); f.State.SetTriggerbot(false); f.State.SetTriggerbot(true); f.Send=true; f.Step(.001)
+    check(f.Attempts==2,"turning gun triggerbot off and on clears a stale rejection")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.Step(.01); f.Callbacks[f.UIS.WindowFocusReleased](); f.Callbacks[f.UIS.WindowFocused]()
+    f.Send=true; f.Step(.001)
+    check(f.Attempts==2,"focus return immediately retries gun targeting after stale rejection")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    for _=1,240 do f.Step(1/240) end
+    check(f.Bot.AimChecks<=42 and f.Bot.SkippedGunChecks>=190,
+        "240 Hz idle gun checks stay bounded near 40 Hz")
     f=fixture(); f.State.SetTriggerbot(true); f.State.PendingGun={{Item=f.Gun,SentAt=f.Now}}; f.Step(.74)
     check(f.Attempts==0,"unresolved feedback blocks automatic retry after the request interval")
     f.Step(.02)
@@ -136,6 +167,33 @@ end
 do
     local f=fixture(); f.EnableKnife(); f.OnScreen=false; f.Step(); f.OnScreen=true; f.Step(.06)
     check(f.Attempts==1,"knife reacts on the next heartbeat when target becomes visible")
+    f=fixture(); f.EnableKnife(); f.OnScreen=false; f.Step(.01); f.Step(.004)
+    check(f.Selections==1 and f.Bot.SkippedKnifeChecks==1,
+        "knife trigger does not repeat identical offscreen scans every frame")
+    f.OnScreen=true; f.Step(.022)
+    check(f.Attempts==1 and f.Bot.Stabs==1,"offscreen knife rejection retries within 25 ms")
+    f=fixture(); f.EnableKnife(); f.OnScreen=false
+    f.World.CurrentCamera={CFrame={Position=vec(0),LookVector=vec(1)}}
+    f.Step(.01); f.OnScreen=true
+    f.World.CurrentCamera.CFrame={Position=vec(0),LookVector=vec(-1)}
+    f.Step(.001)
+    check(f.Attempts==1,"camera rotation immediately rechecks knife visibility")
+    f=fixture(); f.EnableKnife(); f.OnScreen=false
+    for _=1,240 do f.Step(1/240) end
+    check(f.Bot.KnifeChecks<=42 and f.Bot.SkippedKnifeChecks>=190,
+        "240 Hz idle knife checks stay bounded near 40 Hz")
+    f=fixture(); f.EnableKnife(); f.OnScreen=false
+    f.Step(.01); f.State.SetKnifeTriggerbot(false); f.State.SetKnifeTriggerbot(true)
+    f.OnScreen=true; f.Step(.001)
+    check(f.Attempts==1,"turning knife triggerbot off and on clears a stale rejection")
+    f=fixture(); f.EnableKnife(); f.OnScreen=false
+    f.Step(.01); f.Callbacks[f.UIS.WindowFocusReleased](); f.Callbacks[f.UIS.WindowFocused]()
+    f.OnScreen=true; f.Step(.001)
+    check(f.Attempts==1,"focus return immediately retries knife targeting after stale rejection")
+    f=fixture(); f.EnableKnife(); f.Send=false
+    f.Step(.01); f.Step(.004)
+    check(f.Attempts==1 and f.Bot.SkippedKnifeChecks==1,
+        "failed knife contact cannot create a high-FPS repeated stab loop")
     f=fixture(); f.EnableKnife(); f.NoTarget=true; f.Step(.5)
     check(f.Attempts==0,"frame stall never fires at a cached knife target")
     f=fixture(); f.State.SetTriggerbot(true); f.Callbacks[f.UIS.WindowFocusReleased](); f.Step()
