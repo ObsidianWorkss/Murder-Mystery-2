@@ -17893,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.52"
+State.Version = "1.0.0-rc.53"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -21269,6 +21269,7 @@ local installSeatVisibility=function(C)
     local now, new = C.Clock or os.clock, C.NewInstance or Instance.new
     local mode = {Mode="LocalSeat", Phase="Off", Active=false, Busy=false,
         OtherClientsVerified=false, Status="Off", Record=nil}
+    local retry={Attempts=0,Max=2,At=nil,Character=nil,Reason=nil,Internal=false}
     State.Invis = mode
     -- Compatibility for the baseline's attack, pickup, dodge and unload guards.
     State.ExperimentalInvis = mode
@@ -21297,7 +21298,11 @@ local installSeatVisibility=function(C)
         local r=mode.Record
         State.Config.Invisibility, State.Config.ExperimentalInvisibility=false,false
         mode.Active=false
-        if not r then mode.Busy=false; mode.Phase="Off"; refresh(); return true end
+        if not r then
+            mode.Busy=false; mode.Phase="Off"
+            mode.Status=reason or "Off"
+            refresh(); return true,mode.Status
+        end
         local errors={}
         local function attempt(name,fn)
             local ok,message=pcall(fn)
@@ -21337,8 +21342,33 @@ local installSeatVisibility=function(C)
         if not ok then return false,mode.Status end
         return false,message
     end
+    local function recoverableLoss(message,r)
+        local ok=restore(message)
+        if not ok then return false,mode.Status end
+        -- Only a bounded retry after a local rig/position correction. Never
+        -- restart on death, replacement, explicit Off or unload.
+        if State.Running and r and player.Character==r.Character and r.Humanoid.Health>0
+            and not r.Root.Anchored and retry.Attempts<retry.Max then
+            retry.Attempts+=1
+            retry.At=now()+0.75
+            retry.Character=r.Character
+            retry.Reason=message
+            mode.Phase,mode.Busy="RetryWaiting",true
+            mode.Status=("Local seat lost; retry %d/%d pending (visibility unverified)"):format(retry.Attempts,retry.Max)
+            State.Config.Invisibility=true
+            refresh()
+        end
+        return false,mode.Status
+    end
     function State.SetInvisibility(enabled)
-        if not enabled then return restore() end
+        if not enabled then
+            retry.At,retry.Character,retry.Reason=nil,nil,nil
+            retry.Attempts=0
+            return restore()
+        end
+        if not retry.Internal then retry.Attempts=0 end
+        retry.At,retry.Character,retry.Reason=nil,nil,nil
+        if mode.Phase=="RetryWaiting" then mode.Phase,mode.Busy="Off",false end
         if mode.Phase=="RestoreFailed" then State.Config.Invisibility=false; refresh(); return false,mode.Status end
         if mode.Record then State.Config.Invisibility=true; refresh(); return true,mode.Status end
         local function reject(message) State.Config.Invisibility=false; mode.Status=message; refresh(); return false,message end
@@ -21398,11 +21428,36 @@ local installSeatVisibility=function(C)
     function State.GetInvisibilityReport()
         return {Mode=mode.Mode,Phase=mode.Phase,Active=mode.Active,Busy=mode.Busy,
             OtherClientsVerified=false,Status=mode.Status,
-            LocalRootIsSeat=mode.Record and mode.Record.Seat~=nil and mode.Record.Root.AssemblyRootPart==mode.Record.Seat or false}
+            LocalRootIsSeat=mode.Record and mode.Record.Seat~=nil and mode.Record.Root.AssemblyRootPart==mode.Record.Seat or false,
+            RetryCount=retry.Attempts,RetryPending=retry.At~=nil,
+            LocalAssemblyVerified=mode.Record~=nil and mode.Active
+                and mode.Record.Seat~=nil and mode.Record.Seat.Parent~=nil
+                and mode.Record.Weld~=nil and mode.Record.Weld.Parent~=nil
+                and mode.Record.Root.AssemblyRootPart==mode.Record.Seat or false}
     end
     local function step()
         local r=mode.Record
-        if not r or mode.Phase=="RestoreFailed" then return end
+        if mode.Phase=="RestoreFailed" then return end
+        if not r then
+            if retry.At then
+                if not State.Running or player.Character~=retry.Character then
+                    retry.At,retry.Character,retry.Reason=nil,nil,nil
+                    mode.Phase,mode.Busy,mode.Status="Off",false,"Off; retry cancelled after character change"
+                    State.Config.Invisibility=false; refresh()
+                elseif now()>=retry.At then
+                    retry.At,retry.Character,retry.Reason=nil,nil,nil
+                    retry.Internal=true
+                    local ok,message=State.SetInvisibility(true)
+                    retry.Internal=false
+                    if not ok then
+                        mode.Phase,mode.Busy="Off",false
+                        mode.Status="Local invisibility recovery failed: "..tostring(message)
+                        State.Config.Invisibility=false; refresh()
+                    end
+                end
+            end
+            return
+        end
         if not State.Running then restore("Off  ·  unloaded"); return end
         if not ownsCharacter(r) then restore("Off  ·  character changed",false); return end
         if r.Root.Anchored then fail("Stopped  ·  your character is anchored"); return end
@@ -21431,20 +21486,21 @@ local installSeatVisibility=function(C)
             mode.Phase="Attaching"
         elseif mode.Phase=="Attaching" then
             if now()-r.Attached<0.1 then return end
-            if r.Root.AssemblyRootPart~=r.Seat then fail("Could not go invisible  ·  restored"); return end
+            if r.Root.AssemblyRootPart~=r.Seat then recoverableLoss("Could not establish local seat assembly",r); return end
             r.Seat.CFrame=r.StartFrame
             r.Root.AssemblyLinearVelocity,r.Root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
             restoreCamera(r)
             r.LocalReady=true
             mode.Phase,mode.Active,mode.Busy="Active",true,false
-            mode.Status="Invisible"
+            mode.Status="Local seat active; other players' visibility unverified"
             refresh()
         elseif mode.Phase=="Active" then
-            if not r.Seat.Parent or not r.Weld.Parent or r.Root.AssemblyRootPart~=r.Seat then
-                fail("Stopped  ·  character rig changed"); return
+            if not r.Seat.Parent or not r.Weld.Parent or r.Root.AssemblyRootPart~=r.Seat
+                or r.Weld.Part0~=r.Seat or r.Weld.Part1~=r.Root then
+                recoverableLoss("Local seat rig disconnected",r); return
             end
             if (r.Root.Position-r.ParkFrame.Position).Magnitude<64 then
-                r.LocalReady=false; fail("Stopped  ·  position corrected"); return
+                r.LocalReady=false; recoverableLoss("Local seat position corrected",r); return
             end
         end
     end
@@ -27270,7 +27326,8 @@ local createMobileUI = function(C)
     end
     if State.KillAura then mobile.KillAuraStatus=automation:Paragraph({Title="Status",Desc=State.KillAura.Status}) end
     if State.GunPickup then mobile.PickupStatus=pickupTab:Paragraph({Title="Status",Desc=State.GunPickup.Status}) end
-    option(movement, "Invisibility", "Invisibility", "Picking up, equipping and firing a gun keep invisibility active.")
+    option(movement, "Invisibility (experimental)", "Invisibility",
+        "Local seat effect; other players may still see you. Automatically retries up to twice after a temporary local rig correction.")
     mobile.InvisibilityStatus=movement:Paragraph({Title="Status",Desc=State.Invis and State.Invis.Status or "Off"})
     movement:Button({Title="Restore character",Desc="Turns invisibility off, no reset.",Callback=function()
         suppressInput()

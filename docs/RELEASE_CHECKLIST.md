@@ -1,6 +1,16 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.52**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.53**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Experimental local-seat invisibility recovery (rc.53)
+
+- [x] A broken weld, detached seat, incorrect local assembly root or round-position correction drops the active state and schedules at most two safe delayed retries after successful restoration.
+- [x] Retry is cancelled by explicit Off, emergency stop, death, replaced character, failed cleanup, or unload. No infinite seat/teleport retry loop.
+- [x] The status reports a local seat assembly rather than verified invisibility to other players. Support diagnostics show local verification, retry count, and retry pending.
+- [x] New extracted-source tests cover 14 recovery and cancellation assertions; all 1,314 Luau assertions pass (1,143 main-runtime, 171 farm).
+- [x] Safe live rc.53 activation: the local seat became the assembly root and GetInvisibilityReport returned LocalAssemblyVerified=true and OtherClientsVerified=false. Manual Off restored the normal root and camera; Right Shift/F10 remained registered and five guarded subsystems reported zero errors.
+- [ ] Full live retry after forced weld interruption: a round began before the isolated test could run safely. The extracted-source retry and cancellation tests passed.
+- [ ] A second observer client is required to verify whether the character remains invisible to other players; no client-only result establishes that.
 
 ## Native opaque hitbox and cover checks (rc.52)
 

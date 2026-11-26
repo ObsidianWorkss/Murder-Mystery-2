@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.52**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.53**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 
@@ -123,6 +123,8 @@ It does not counter knife stabs or guarantee survival. Menus, typing, lost focus
 ## Gun pickup and invisibility
 
 Picking up, equipping and firing a gun keep invisibility active. Owning a gun also allows invisibility activation. Weapon input waits during invisibility preparation or incomplete restoration without dismantling the invisible assembly. Turning off **Knife while invisible** pauses knife input while invisible instead of revealing you. Manual **Restore character**, Emergency stop and normal character cleanup remain available. Invisibility on other clients and accepted shots while invisible still require live verification.
+
+**Invisibility uses an experimental local physics-seat technique, not a server-approved hide setting.** An active local seat cannot establish whether other players see your avatar. The status now says "Local seat active; other players' visibility unverified" rather than asserting that you are invisible. If a round teleport or local rig correction disconnects that seat, the client restores its temporary parts and attempts no more than two automatic reactivations, each after a 0.75-second stabilization delay. Active retry is shown as pending rather than success. Manual Off, emergency stop, death, replacing the character and failed cleanup stop recovery. Further server-side corrections can still make you visible; another client's observation is required to verify actual concealment.
 
 ## Experimental map voting
 

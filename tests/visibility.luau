@@ -33,7 +33,8 @@ local function fixture()
     function f.StartActive(phase)
         local seat={Parent=f.Char}
         function seat:Destroy() if f.SeatError then error("seat removal") end; self.Parent=nil end
-        local weld={Parent=seat}; function weld:Destroy() self.Parent=nil end
+        local weld={Parent=seat,Part0=seat,Part1=f.Root}
+        function weld:Destroy() self.Parent=nil end
         f.Seat,f.Weld=seat,weld; f.Root.AssemblyRootPart=seat
         local r={Character=f.Char,Humanoid=f.Hum,Root=f.Root,StartFrame=frame(0,5,0),ParkFrame=frame(0,4096,0),
             LocalReady=phase=="Active",Seat=seat,Weld=weld,Started=f.Now,Attached=f.Now}
@@ -88,5 +89,67 @@ do
     check(f.State.ExitUndergroundForAttack("Gun"),"normal visible gun input is still allowed")
     f=fixture(); f.StartActive("Active"); f.State.ExitUndergroundForAttack()
     check(not f.State.Invis.Record,"explicit non-weapon movement cleanup still restores its owned assembly")
+end
+do
+    local f=fixture();f.StartActive("Active")
+    local report=f.State.GetInvisibilityReport()
+    check(report.LocalAssemblyVerified and report.OtherClientsVerified==false,
+        "local seat assembly is verifiable without claiming another client cannot see the character")
+    f.Root.AssemblyRootPart=f.Root
+    check(not f.State.GetInvisibilityReport().LocalAssemblyVerified,
+        "report immediately detects a broken local seat root before the next physics frame")
+    f.Pre:Fire()
+    report=f.State.GetInvisibilityReport()
+    check(report.RetryPending and report.RetryCount==1 and f.State.Invis.Busy
+        and f.State.Config.Invisibility and report.Phase=="RetryWaiting",
+        "unexpected seat loss schedules one bounded reactivation without silently claiming success")
+    f.Now+=.70;f.Pre:Fire()
+    check(f.State.Invis.Record==nil and report.RetryCount==1,
+        "recovery waits for the stabilization delay instead of racing the round teleport")
+    f.Now+=.06;f.Pre:Fire()
+    check(f.State.Invis.Record~=nil and f.State.Invis.Phase=="Parking"
+        and f.State.GetInvisibilityReport().RetryCount==1,
+        "recovery re-arms the same living character after settling")
+    f=fixture()
+    f.StartActive("Active");f.Root.AssemblyRootPart=f.Root;f.Pre:Fire()
+    local wasPending=f.State.GetInvisibilityReport().RetryPending
+    f.State.SetInvisibility(false)
+    check(wasPending and not f.State.GetInvisibilityReport().RetryPending
+        and not f.State.Config.Invisibility and f.State.Invis.Phase=="Off"
+        and f.State.Invis.Status=="Off",
+        "explicit Off cancels queued automatic restoration and clears its status")
+    f.Now+=2;f.Pre:Fire()
+    check(f.State.Invis.Record==nil,
+        "cancelled recovery never turns invisibility back on after Off")
+    f=fixture();f.StartActive("Active")
+    for n=1,2 do
+        f.Root.AssemblyRootPart=f.Root;f.Pre:Fire()
+        check(f.State.GetInvisibilityReport().RetryCount==n,
+            "successive local failures are counted within the same activation")
+        f.Now+=.76;f.Pre:Fire()
+        -- Model a successful subsequent seat attach without creating engine
+        -- Instances in this lightweight extracted-source fixture.
+        f.StartActive("Active")
+    end
+    f.Root.AssemblyRootPart=f.Root;f.Pre:Fire()
+    check(f.State.Invis.Phase=="Off" and f.State.Invis.Record==nil
+        and not f.State.Config.Invisibility and not f.State.GetInvisibilityReport().RetryPending,
+        "repeated local failure stops after two retries without an endless character loop")
+    f=fixture(); f.StartActive("Active");f.Weld.Part1={}
+    f.Pre:Fire()
+    check(f.State.GetInvisibilityReport().RetryPending,
+        "a live weld referencing a replaced part triggers bounded recovery")
+    f=fixture(); f.StartActive("Active");f.Root.AssemblyRootPart=f.Root;f.Pre:Fire()
+    f.Player.Character={Parent=true};f.Now+=.80;f.Pre:Fire()
+    check(f.State.Invis.Phase=="Off" and f.State.Invis.Record==nil
+        and not f.State.GetInvisibilityReport().RetryPending and not f.State.Config.Invisibility,
+        "a pending retry is cancelled when the local character is replaced")
+    f=fixture();f.StartActive("Active");f.Hum.Health=0;f.Pre:Fire()
+    check(not f.State.GetInvisibilityReport().RetryPending and not f.State.Config.Invisibility,
+        "death never triggers automatic invisibility restart")
+    f=fixture();f.StartActive("Active");f.SeatError=true
+    f.Root.AssemblyRootPart=f.Root;f.Pre:Fire()
+    check(f.State.Invis.Phase=="RestoreFailed" and not f.State.GetInvisibilityReport().RetryPending,
+        "failed seat cleanup does not create another overlapping seat")
 end
 print(passed.." visibility assertions passed")

@@ -1,5 +1,13 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.53
+
+- Official Luau 0.739: **1,314 offline assertions passed** (1,143 main runtime, 171 farm), with all five entrypoints compiling.
+- Extracted local-seat tests cover detached assembly roots, mismatched welds, waiting for stabilization, reactivation on the same living character, manual Off, bounded retry exhaustion, death, character replacement and failure to detach the temporary seat. The first test run reproduced a broken legacy fixture for the stricter weld integrity check; after updating the fixture to model real Part0/Part1 connections, all existing behavior was preserved.
+- In a live rc.52 lobby probe, the local technique reached Active with HumanoidRootPart.AssemblyRootPart == MM2VisibilitySeat while HumanoidRootPart remained near the map position. The character subsequently returned to the ordinary assembly during a round transition. This does not prove any observer saw the character invisible: there is no secondary game client connected for external verification.
+- Live rc.53 lobby test activated the local seat: HumanoidRootPart.AssemblyRootPart became MM2VisibilitySeat, the normal humanoid camera was restored, and GetInvisibilityReport reported Active=true, LocalAssemblyVerified=true, OtherClientsVerified=false. A round began before a safe forced-weld-disconnect retry test; after the game restored the normal assembly, explicit Off was idempotent, camera remained Humanoid, and the root returned to HumanoidRootPart. Live retry after an interrupted weld and observation from a second player are unverified.
+- rc.53 explicitly does **not** claim an active local physics seat ensures invisibility to other players. No second client is connected.
+
 ## Release candidate 1.0.0-rc.52
 
 - **1,300 offline assertions passed** with official Luau 0.739 (1,129 main-runtime and 171 standalone farm); all five entrypoints compiled.

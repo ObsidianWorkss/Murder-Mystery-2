@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.52-7499ff" alt="Version 1.0.0-rc.52">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.53-7499ff" alt="Version 1.0.0-rc.53">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.52.** Local validation passes **1,129 main-runtime** and **171 standalone-farm Luau assertions** (1,300 total) and compiles all five entry points. The live MM2 WeaponService ignores fully transparent raycast hits, but prior Gun Aim treated the invisible, queryable HumanoidRootPart as a valid target and stopped its visibility scan there. Both issues are fixed: gun candidates now require opaque, queryable body parts, and cover checks continue past a transparent root to find an actual body part or wall. The rc.51 prediction, manual-click, menu, camera and triggerbot safeguards remain. **Real server hit-rate improvements are not yet established**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.53.** Local validation passes **1,143 main-runtime** and **171 standalone-farm Luau assertions** (1,314 total) and compiles all five entry points. Experimental invisibility now detects local seat/weld loss, waits 0.75 seconds after a correctable rig transition and retries no more than twice for the same living character. Manual Off, death, character replacement, emergency stop and incomplete restoration cancel recovery. The status and diagnostics now distinguish an active **local seat** from visibility to other players, which is **not confirmed or guaranteed** by a client-only exploit. The rc.52 gun aim, triggerbot, menu and camera safeguards remain. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

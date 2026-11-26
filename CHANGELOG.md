@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.53 — 2026-11-26
+
+- Make the experimental local-seat invisibility resilient to short rig or map-position corrections. After a verified restoration, retry for the same living character after a 0.75-second stabilization delay, with at most two attempts per manual activation. Never retry after explicit Off, emergency stop, death, character replacement, or incomplete cleanup.
+- Treat an invalid weld mapping, detached seat or lost assembly root as local invisibility loss. While waiting, set Busy/RetryWaiting and explain that invisibility has been lost rather than incorrectly showing a successful toggle.
+- Replace the unqualified "Invisible" status with "Local seat active; other players' visibility unverified" and add diagnostic fields for local assembly verification and pending retry count. A client-side physics technique cannot establish whether another client sees the character.
+- Add 14 extracted-source invisibility regression assertions for bounded recovery, stabilization, manual cancel, character replacement, bad weld and failed restoration. **1,314 offline Luau assertions pass** (1,143 main runtime, 171 farm); all five entry points compile.
+
 ## 1.0.0-rc.52 — 2026-11-26
 
 - Fix a concrete gun-aim mismatch with the live native MM2 WeaponService: it skips fully transparent raycast hits, while previous Gun Aim accepted fully transparent, queryable HumanoidRootPart cores. Six inspected live characters all had transparent roots and opaque torsos. Filter invisible/non-queryable parts from gun target samples, preserving only actual raycastable body candidates.
