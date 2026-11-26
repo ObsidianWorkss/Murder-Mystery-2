@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.43**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.44**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 
@@ -25,7 +25,7 @@ The Home session line includes the mode. Support diagnostics expose aggregate ma
 
 Role-based fling groups map Murderer/Sheriff to Zombie/Survivor or Freezer/Runner, and Opponent selects the opposite group. The role-reveal preview uses bounded event team lists while preserving protected/local-player exclusions and its manual send button/cooldown. No chat is sent automatically.
 
-The complete rc.43 build initialized in a live **Classic** round with seven attached player visuals and automatic gun requests. Automated fixtures cover the two event modes and multiple map layouts, but live Infection/FreezeTag rendering and combat checks are still required. Unsupported modes and mode-specific server rules are not claimed compatible.
+The previous rc.43 build initialized in a live **Classic** round with seven attached player visuals and automatic gun requests. The newer rc.44 aim fixes pass offline checks; their live hit accuracy is not yet established. Automated fixtures cover the two event modes and multiple map layouts, but live Infection/FreezeTag rendering and combat checks are still required. Unsupported modes and mode-specific server rules are not claimed compatible.
 
 ## Windows streamer mode
 

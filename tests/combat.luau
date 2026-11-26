@@ -17,6 +17,32 @@ local now=10
 local os={clock=function() return now end}
 
 do
+    local workspace={}
+    -- INSERT_HIT_CLASSIFIERS
+    local character={Parent=workspace,IsA=function(_,name) return name=="Model" end,
+        FindFirstChildOfClass=function(_,name) return name=="Humanoid" and {} or nil end}
+    local tool={Parent=character,IsA=function(_,name) return name=="Tool" end}
+    local function part(parent)
+        return {Kind="Instance",Parent=parent,IsA=function(_,name) return name=="BasePart" end}
+    end
+    local torso,knifeHandle,mapPart=part(character),part(tool),part(workspace)
+    check(isDirectBodyHit(torso,character),"direct torso hit counts as a body hit")
+    check(not isDirectBodyHit(knifeHandle,character),"equipped knife handle is not a body hit")
+    check(isCharacterEquipmentPart(knifeHandle),"equipped character weapon is not learned as map cover")
+    check(not isCharacterEquipmentPart(mapPart),"map geometry may still be learned as cover")
+end
+
+do
+    local State={Config={Ping=0.04}}
+    -- INSERT_AIM_DELAY
+    check(math.abs(State.AimNetworkDelay()-0.02)<1e-8,"20 ms one-way lead from 40 ms round-trip ping")
+    check(math.abs(State.AimNetworkDelay(0.10)-0.05)<1e-8,"knife and gun use the same half-RTT estimate")
+    check(State.AimNetworkDelay(0/0)==0,"non-finite ping never poisons target prediction")
+    check(State.AimNetworkDelay(-1)==0,"negative ping is rejected")
+    check(math.abs(State.AimNetworkDelay(1)-0.075)<1e-8,"implausible RTT stays within conservative bounds")
+end
+
+do
     local projected,visible={X=30,Y=40,Z=1},true
     local camera={CFrame={Position=vec(0)},ViewportSize={X=800,Y=600},WorldToViewportPoint=function() return projected,visible end}
     local workspace={CurrentCamera=camera}

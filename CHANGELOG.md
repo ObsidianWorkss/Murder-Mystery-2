@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.44 — 2026-11-26
+
+- Correct aiming delay to half of the round-trip ping reported by Roblox, shared by gun lead, knife interception and moving-player path snapshots. Keep camera, cursor and walking controls with the player.
+- Reject equipped knife handles and cosmetic parts as confirmed body hits or learned map cover. Recheck predicted gun and knife paths against intervening character equipment.
+- Detect knife projectile speed from replicated physical velocity or a bounded observed movement sample when explicit speed attributes are absent. Account for high-confidence airborne motion even if replicated humanoid state arrives late.
+- Compile all five entry points and pass 1,197 extracted-source Luau assertions, including nine new combat regressions. rc.44 live combat hit rate and server outcomes remain unverified.
+
 ## 1.0.0-rc.43 — 2026-10-19
 
 - Separate living-rig ESP readiness from strict combat eligibility. Head/torso anchors keep healthy incomplete rigs visible, and stale death metadata no longer suppresses their visuals. Combat still requires a valid root and current eligibility.

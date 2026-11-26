@@ -1,6 +1,12 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.43**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.44**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Aim reliability (rc.44)
+
+- [x] Luau 0.739 compiles all five entry points. 1,026 main-runtime and 171 farm assertions pass, including nine new classifier and network-delay checks.
+- [x] Local fixture checks reject equipped weapon handles as valid avatar body hits and as learnable map cover.
+- [ ] Reload rc.44 into a client and compare gun hit paths, knife speed samples, request/reply correlation and confirmed outcomes against previous rounds. No guaranteed-hit claim.
 
 ## ESP, triggerbot and voting reliability
 

@@ -1,4 +1,11 @@
-# Validation — 2026-10-19
+# Validation — 2026-11-26
+
+## Release candidate 1.0.0-rc.44
+
+- Official Luau 0.739 Windows tools compile all five entry points; the extracted-source regression suite passes 1,197 assertions (1,026 main-runtime, 171 standalone farm). Nine new combat assertions cover true body parts vs equipped knife handles, character equipment vs map cover, half round-trip latency, nonfinite/negative RTT and bounded maximum lead.
+- The gun's predicted point, knife interception and moving-player obstruction snapshot now use half of the round-trip measurement as a one-way latency estimate. This is not a measurement of server processing or exact impact time. Predicted paths and final firing checks reject tool handles as body hits; gun responses do not learn equipped weapons as static map blockers.
+- Tagged knife projectiles can supply their physical speed even without a speed attribute. Ground-distance checks infer airborne movement only when vertical motion and floor clearance support it; the prior rc.43 live self-checks passed on the intermediate patch, not a fresh rc.44 reload.
+- Still pending: rc.44 native load and a controlled hit-rate comparison, attributed server gun hits, reliable knife throw impacts, all-event testing and latency calibration. Static compilation and fixtures cannot establish perfect aim.
 
 ## Standalone farm — current branch
 

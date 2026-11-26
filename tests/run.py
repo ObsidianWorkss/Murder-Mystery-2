@@ -14,6 +14,8 @@ root = Path(__file__).resolve().parent.parent
 source = (root / "main.lua").read_text(encoding="utf-8")
 template = (root / "tests" / "combat.luau").read_text(encoding="utf-8")
 sections = {
+    "HIT_CLASSIFIERS": ("local function isDirectBodyHit(", "local clearPath"),
+    "AIM_DELAY": ("function State.AimNetworkDelay(", "local function predict("),
     "SCREEN": ("function State.IsAimPointOnScreen(", "local function visibleBodySamples("),
     "VISIBLE": ("local function visibleBodySamples(", "local function sampleRayHitsBody("),
     "MOTION": ("local function sampleMotion(", "connect(Players.PlayerRemoving, function(other) State.Motion[other] = nil end)"),

@@ -17855,7 +17855,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.43"
+State.Version = "1.0.0-rc.44"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18412,6 +18412,17 @@ local function segmentHitsBox(origin, position, frame, size)
     end
     return true
 end
+local function isDirectBodyHit(hitPart, char)
+    return typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") and hitPart.Parent == char
+end
+local function isCharacterEquipmentPart(part)
+    local ancestor = part and part.Parent
+    while ancestor and ancestor ~= workspace do
+        if ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid") then return true end
+        ancestor = ancestor.Parent
+    end
+    return false
+end
 local clearPath
 do
 -- Hot path: called hundreds of times per target scan. Mirror the passthrough tag set via signals
@@ -18446,7 +18457,11 @@ clearPath = function(origin, position, char, ignoreTarget)
     for _ = 1, 12 do
         params.FilterDescendantsInstances = ignored
         local result = workspace:Raycast(origin, position - origin, params)
-        if not result or result.Instance:IsDescendantOf(char) then return true end
+        if not result then return true end
+        if result.Instance:IsDescendantOf(char) then
+            -- Equipped knives and accessory handles are not avatar hitboxes.
+            return isDirectBodyHit(result.Instance, char)
+        end
         if result.Instance:IsA("BasePart") and result.Instance.Transparency >= 1
             and not result.Instance.CanCollide
             and not State.ServerBlockers[result.Instance] then
@@ -18486,8 +18501,22 @@ function State.TestCoverChecks()
         State.ServerBlockers[blocker] = nil
         blocker:Destroy(); blocker = nil
         result.UnobstructedAllowed = clearPath(origin, target.Position, char)
+        local knife = Instance.new("Tool")
+        knife.Name, knife.Parent = "Knife", char
+        local handle = Instance.new("Part")
+        handle.Name, handle.Anchored, handle.CanCollide = "Handle", true, false
+        handle.Size, handle.Position, handle.Parent = Vector3.new(2, 2, 1), origin + Vector3.new(0, 0, -14), knife
+        result.WeaponHandleRejected = not clearPath(origin, target.Position, char)
+            and not isDirectBodyHit(handle, char)
+        result.BodyStillAccepted = isDirectBodyHit(target, char)
+        local humanoid = Instance.new("Humanoid")
+        humanoid.Parent = char
+        result.EquippedWeaponNotLearnedAsMapCover = isCharacterEquipmentPart(handle)
+        knife:Destroy()
         result.OK = result.InvisibleSolidBlocked and result.NonSolidHelperIgnored and result.LearnedNonSolidBlocked
             and result.LearnedNonQueryableBlocked and result.UnobstructedAllowed
+            and result.WeaponHandleRejected and result.BodyStillAccepted
+            and result.EquippedWeaponNotLearnedAsMapCover
     end)
     if blocker then State.ServerBlockers[blocker] = nil end
     fixture:Destroy()
@@ -18872,6 +18901,23 @@ local function motionPredictor(part, root, samplePosition, wallAware, historyOve
     local reported = State.RootPointVelocity(root)
     local state = hum and hum:GetState()
     local airborne = hum and State.IsBallisticAimState(state) or false
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {root.Parent, player.Character}
+    params.RespectCanCollide = true
+    params.CollisionGroup = root.CollisionGroup
+    local standingHeight = (hum and hum.HipHeight or 2) + root.Size.Y / 2
+    if hum and hum.RigType == Enum.HumanoidRigType.R6 then
+        local leg = root.Parent:FindFirstChild("Left Leg")
+        standingHeight += leg and leg.Size.Y or 2
+    end
+    -- Replicated humanoid states can lag a real jump or sustained vertical flight.
+    -- Only infer airborne motion when the root is clearly away from its floor.
+    if hum and not airborne and (math.abs(reported.Y) > 5
+        or (record and record.Current and math.abs(record.Current.Y) > 5)) then
+        local ground = workspace:Raycast(root.Position, Vector3.new(0, -standingHeight - 0.5, 0), params)
+        airborne = not ground or root.Position.Y - ground.Position.Y > standingHeight + 0.4
+    end
     local velocity, source = selectMotionVelocity(reported,
         record and record.Current, record and record.Previous, cap, airborne,
         record and (record.PreviousReported or record.Reported), record and {
@@ -18890,18 +18936,8 @@ local function motionPredictor(part, root, samplePosition, wallAware, historyOve
         State.LastMotionPrediction = {Kind = model.Kind, Confidence = model.Confidence, TurnRate = model.Rate,
             Acceleration = model.Acceleration, Target = other and other.Name}
     end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {root.Parent, player.Character}
-    params.RespectCanCollide = true
-    params.CollisionGroup = root.CollisionGroup
     local rootPosition, partPosition = root.Position, samplePosition or part.Position
     local rootFrame, rootSize = root.CFrame, root.Size
-    local standingHeight = (hum and hum.HipHeight or 2) + root.Size.Y / 2
-    if hum and hum.RigType == Enum.HumanoidRigType.R6 then
-        local leg = root.Parent:FindFirstChild("Left Leg")
-        standingHeight += leg and leg.Size.Y or 2
-    end
     return function(dt)
         local point = futurePosition(partPosition, velocity, ballistic, gravity, nil, dt)
         if model then
@@ -19004,19 +19040,26 @@ function State.TestObservedAimIntegration()
     return result
 end
 
+function State.AimNetworkDelay(ping)
+    local roundTrip = ping
+    if roundTrip == nil then roundTrip = State.Config.Ping end
+    if type(roundTrip) ~= "number" or roundTrip ~= roundTrip then return 0 end
+    -- GetNetworkPing is round-trip time, not the one-way time used by the intercept.
+    return math.clamp(roundTrip, 0, 0.15) * 0.5
+end
 local function predict(part, root, origin, kind, item, samplePosition, gunProfile)
     local positionAt, airborne, source = motionPredictor(part, root, samplePosition, kind == "Gun")
     if kind == "Gun" then
-        local lead = math.clamp(State.Config.Ping, 0, 0.15) -- configured assumption, not measured one-way delay
+        local lead = State.AimNetworkDelay()
         if gunProfile and gunProfile.Stationary then lead = 0; source ..= "+Stationary" end
         State.CurrentGunLead = lead
         local point, blocked = positionAt(lead)
         return point, lead, airborne, blocked and (source .. "+Wall") or source, positionAt
     end
     local speed = item and (item:GetAttribute("ProjectileSpeed") or item:GetAttribute("KnifeSpeed"))
-    speed = type(speed) == "number" and speed > 0 and speed
+    speed = type(speed) == "number" and speed == speed and speed >= 20 and speed <= 1000 and speed
         or State.ObservedKnifeSpeed or State.Config.KnifeSpeed
-    local lead = solveIntercept(positionAt, origin, speed, State.Config.Ping, State.Config.MaxLead)
+    local lead = solveIntercept(positionAt, origin, speed, State.AimNetworkDelay(), State.Config.MaxLead)
     return lead and positionAt(lead) or nil, lead, airborne, source, positionAt, speed
 end
 local hitPartNames = {
@@ -19246,11 +19289,11 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                             local sampleLead = lead
                             if point and kind == "Knife" and positionAt then
                                 point, sampleLead = refineKnifeIntercept(positionAt, worldOffset, origin, knifeSpeed,
-                                    State.Config.Ping, lead, State.Config.MaxLead)
+                                    State.AimNetworkDelay(), lead, State.Config.MaxLead)
                             end
                             -- Translate the ray back into the current body geometry
                             -- rather than accepting an empty corner of a mesh's box.
-                            if point and (not onScreenOnly or State.IsAimPointOnScreen(point)) and clearPath(origin, point, char, true)
+                            if point and (not onScreenOnly or State.IsAimPointOnScreen(point)) and clearPath(origin, point, char)
                                 and (kind~="Gun" or not State.GunPathClear
                                     or State.GunPathClear(State.GunPathSnapshot,origin,point,char))
                                 and sampleRayHitsBody(origin - (point - sample), sample, bodyQuery) then
@@ -19265,7 +19308,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                                 local clearNeighbours = 0
                                 for _, neighbour in ipairs(clearanceOffsets) do
                                     local delta = info.Frame:VectorToWorldSpace(info.Size * neighbour)
-                                    if clearPath(origin, point + delta, char, true) then clearNeighbours += 1 end
+                                    if clearPath(origin, point + delta, char) then clearNeighbours += 1 end
                                 end
                                     local quality = maximumQuality * ((1 + clearNeighbours) / (1 + #clearanceOffsets))
                                         * centreWeight * timingCoverage
@@ -19513,13 +19556,30 @@ do
 -- One listener per live projectile, released when the knife is removed (previously one was kept per knife ever thrown).
 local speedListeners = {}
 local function observeKnife(projectile)
+    local part = projectile:IsA("BasePart") and projectile or projectile:FindFirstChildWhichIsA("BasePart", true)
+    local initialPosition, initialTime = part and part.Position, os.clock()
     local function updateSpeed()
         local speed = projectile:GetAttribute("ThrowSpeed")
+        if not (type(speed) == "number" and speed >= 20 and speed <= 1000) then
+            local velocity = part and part.AssemblyLinearVelocity.Magnitude
+            speed = velocity and velocity >= 20 and velocity <= 1000 and velocity or nil
+        end
         if type(speed) == "number" and speed >= 20 and speed <= 1000 then State.ObservedKnifeSpeed = speed end
     end
     updateSpeed()
     if not speedListeners[projectile] then
         speedListeners[projectile] = projectile:GetAttributeChangedSignal("ThrowSpeed"):Connect(updateSpeed)
+        -- Physics velocity can become available after the tag arrives.
+        task.delay(0.08, function()
+            if speedListeners[projectile] then
+                updateSpeed()
+                local dt = os.clock() - initialTime
+                if not State.ObservedKnifeSpeed and part and part.Parent and initialPosition and dt >= 0.04 then
+                    local distanceSpeed = (part.Position - initialPosition).Magnitude / dt
+                    if distanceSpeed >= 20 and distanceSpeed <= 1000 then State.ObservedKnifeSpeed = distanceSpeed end
+                end
+            end
+        end)
     end
 end
 for _, projectile in ipairs(CollectionService:GetTagged("ThrowingKnife")) do observeKnife(projectile) end
@@ -20061,8 +20121,9 @@ if gunFired and gunFired:IsA("RemoteEvent") then
         local targetChar = pending.TargetCharacter or (pending.Target and pending.Target.Character)
         local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
         local hitPath = typeof(hitPart) == "Instance" and hitPart:GetFullName() or nil
-        local hitTarget = targetChar and typeof(hitPart) == "Instance" and hitPart:IsDescendantOf(targetChar) or false
-        if not hitTarget and typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") then
+        local hitTarget = targetChar and isDirectBodyHit(hitPart, targetChar) or false
+        if not hitTarget and typeof(hitPart) == "Instance" and hitPart:IsA("BasePart")
+            and not isCharacterEquipmentPart(hitPart) then
             State.ServerBlockers[hitPart] = true
         end
         if pending.Target then
@@ -20240,9 +20301,7 @@ local installGunPathGuard=function(C)
             or separated(d.Y*v.Z-d.Z*v.Y,d.Z*v.X-d.X*v.Z,d.X*v.Y-d.Y*v.X))
     end
     function State.CreateGunPathSnapshot()
-        local delay=tonumber(State.Config.Ping) or 0
-        if delay~=delay then delay=0 end
-        delay=math.clamp(delay,0,.15)
+        local delay=State.AimNetworkDelay()
         local margin=math.clamp(delay*.25,.012,.035)
         local times={0,math.max(0,delay-margin),delay,math.min(.185,delay+margin)}
         local snapshot={Time=clock(),Groups={},Times=times,Horizon=times[4],Parts=0}
@@ -20394,7 +20453,7 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     if head and not clearPath(head.Position,origin,ownCharacter) then
         return skip("Shot skipped: muzzle obstructed")
     end
-    if not clearPath(origin,targetFrame.Position,targetCharacter,true) then
+    if not clearPath(origin,targetFrame.Position,targetCharacter) then
         return skip("Shot skipped: firing path became blocked")
     end
     if State.GunPathClear and not State.GunPathClear(snapshot,origin,targetFrame.Position,targetCharacter) then
@@ -20733,7 +20792,7 @@ local function startThrow(record, preferred, strict, canRelease)
             end
             if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
                 or State.IsPlayerExcluded(solution.Player)
-                or not clearPath(originFrame.Position,targetFrame.Position,solution.Character,true)) then
+                or not clearPath(originFrame.Position,targetFrame.Position,solution.Character)) then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target or firing path changed"); return
             end
             if State.ExcludedPlayerInShotPath(originFrame.Position,targetFrame.Position) then
@@ -22628,7 +22687,7 @@ function State.DebugSnapshot()
         ObservedKnifeSpeed = State.ObservedKnifeSpeed, KnifeSpeedDefault = State.Config.KnifeSpeed,
         LastGunFeedback = State.LastGunFeedback,
         MeasuredGunDelay = State.MeasuredGunDelay, CurrentGunLead = State.CurrentGunLead,
-        GunResponseSeconds = State.LastGunResponseSeconds, GunReplyCorrelation = State.LastGunReplyCorrelation, GunLeadBasis = "Configured/network estimate",
+        GunResponseSeconds = State.LastGunResponseSeconds, GunReplyCorrelation = State.LastGunReplyCorrelation, GunLeadBasis = "Half measured RTT estimate",
         LastShotRecord = State.ShotLog[#State.ShotLog],
         InvisibilityStatus = State.Invis.Status,
         AutoPickup = State.Config.AutoPickup, VisualCount = count, Roles = roles,
