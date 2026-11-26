@@ -34,12 +34,81 @@ end
 
 do
     local State={Config={Ping=0.04}}
+    -- INSERT_KNIFE_INTERCEPT
     -- INSERT_AIM_DELAY
     check(math.abs(State.AimNetworkDelay()-0.02)<1e-8,"20 ms one-way lead from 40 ms round-trip ping")
     check(math.abs(State.AimNetworkDelay(0.10)-0.05)<1e-8,"knife and gun use the same half-RTT estimate")
     check(State.AimNetworkDelay(0/0)==0,"non-finite ping never poisons target prediction")
     check(State.AimNetworkDelay(-1)==0,"negative ping is rejected")
     check(math.abs(State.AimNetworkDelay(1)-0.075)<1e-8,"implausible RTT stays within conservative bounds")
+    local target={ReceiveAge=.1}
+    local knifeDelay,knifeBasis=State.AimObservationDelay(target)
+    check(math.abs(knifeDelay-.1)<1e-6 and knifeBasis=="ObservedAge",
+        "knife intercept includes target replication age rather than using ping alone")
+    local function moving(t) return vec(20+16*t) end
+    local oldLead=solveIntercept(moving,vec(0),96,State.AimNetworkDelay(),8)
+    local knifeLead=solveIntercept(moving,vec(0),96,knifeDelay,8)
+    check(knifeLead and oldLead and math.abs(knifeLead-.37)<.0001 and knifeLead>oldLead+.09,
+        "knife flight solution leads running targets further when their data is already old")
+    local refinedPoint,refinedLead=refineKnifeIntercept(moving,vec(2),vec(0),96,knifeDelay,knifeLead,8)
+    check(refinedPoint and refinedLead and math.abs(refinedLead-.395)<.0001
+        and math.abs(refinedPoint.X-(22+16*refinedLead))<.0001,
+        "offset knife aim refinement uses the same replication-aware delay as its initial intercept")
+    local xyzMeta={}
+    local function xyz(x,y,z) return setmetatable({X=x,Y=y,Z=z},xyzMeta) end
+    xyzMeta.__add=function(a,b) return xyz(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end
+    xyzMeta.__sub=function(a,b) return xyz(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
+    xyzMeta.__index=function(v,key)
+        if key=="Magnitude" then return math.sqrt(v.X*v.X+v.Y*v.Y+v.Z*v.Z) end
+    end
+    local launch=xyz(0,3,0)
+    local function jumping(t)
+        return xyz(20+16*t,math.max(3,3+48*t-98.1*t*t),0)
+    end
+    local jumpLead=solveIntercept(jumping,launch,96,knifeDelay,8)
+    check(jumpLead and jumpLead>knifeDelay and jumpLead<.9
+        and math.abs((jumping(jumpLead)-launch).Magnitude-96*(jumpLead-knifeDelay))<.001,
+        "knife interception solves a running target with a rising, falling and landing jump trajectory")
+    local elevatedPoint,elevatedLead=refineKnifeIntercept(jumping,xyz(0,1,0),launch,96,knifeDelay,jumpLead,8)
+    check(elevatedLead and elevatedPoint and math.abs((elevatedPoint-launch).Magnitude-96*(elevatedLead-knifeDelay))<.03,
+        "3D jump interception preserves the offset target hit location")
+    check(State.AimObservationDelay({ReceiveAge=.4})==nil,
+        "knife aim refuses to extrapolate stale physics snapshots")
+    knifeDelay,knifeBasis=State.AimObservationDelay({})
+    check(math.abs(knifeDelay-.02)<1e-8 and knifeBasis=="PingOnly",
+        "knife aim falls back to ping when no receive-age data is available")
+    local moving={ReceiveAge=.1}
+    local expected=.02+.1*.8
+    local lead,source=State.GunPredictionLead(moving,{Stationary=false})
+    check(math.abs(lead-expected)<1e-6 and source=="ObservedAge",
+        "moving targets use observed physics age in addition to network transit delay")
+    check(State.GunPredictionLead(moving,{Stationary=true})==0,
+        "stable grounded targets retain zero lead regardless of packet age")
+    check(State.GunPredictionLead({ReceiveAge=.3},{Stationary=false})==nil,
+        "stale target replication cannot be extrapolated into blind automatic shots")
+    lead=State.GunPredictionLead({ReceiveAge=.14},{Stationary=false})
+    check(lead<=.16 and lead>.1,"late moving targets are predicted within a bounded horizon")
+    lead,source=State.GunPredictionLead({},nil)
+    check(math.abs(lead-.02)<1e-8 and source=="PingOnly",
+        "missing receive-age data retains the original ping-only fallback")
+    local function rigFrame(x)
+        local result=frame(x)
+        function result:PointToObjectSpace(point) return vec(point.X-self.Position.X) end
+        function result:PointToWorldSpace(point) return vec(point.X+self.Position.X) end
+        return result
+    end
+    check(State.GunMuzzleFollowsRig(rigFrame(0),rigFrame(.5),vec(0),vec(.5),vec(25),.025),
+        "legitimate moving shooter's muzzle can follow its rig during the second scan")
+    local turning=frame(0)
+    function turning:PointToWorldSpace(point) return vec(-point.X) end
+    check(State.GunMuzzleFollowsRig(rigFrame(0),turning,vec(1),vec(-1),vec(0),.016),
+        "180-degree spin is accepted when the muzzle follows the real rig rotation")
+    check(not State.GunMuzzleFollowsRig(rigFrame(0),rigFrame(5),vec(0),vec(5),vec(25),.025),
+        "large teleport-like muzzle movement cannot be passed as ordinary walking")
+    check(not State.GunMuzzleFollowsRig(rigFrame(0),rigFrame(.5),vec(0),vec(1.5),vec(25),.025),
+        "unexpected attachment displacement is rejected despite plausible root motion")
+    check(not State.GunMuzzleFollowsRig(rigFrame(0),rigFrame(.5),vec(0),vec(.5),vec(0),.025),
+        "unexplained movement cannot be justified by a stationary character")
 end
 
 do
@@ -140,6 +209,17 @@ do
         "validated core and head are preferred to limbs in their eligible cases")
     check(gunPartAimPriority("Knife","UpperTorso",{})==gunPartAimPriority("Knife","RightFoot",{}),
         "new center-mass ordering does not change knife target selection")
+    local original={"UpperTorso","Head","LeftUpperArm","LowerTorso","RightLowerLeg"}
+    local movingRoot={AssemblyLinearVelocity={Y=48}}
+    check(State.GunAutoPartNames(original,movingRoot,true)[1]=="UpperTorso"
+        and #State.GunAutoPartNames(original,movingRoot,true)==2,
+        "automatic jumping shots ignore fast-moving limbs and prefer the torso")
+    movingRoot.AssemblyLinearVelocity={Y=0}
+    check(State.GunAutoPartNames(original,movingRoot,true)==original,
+        "grounded automatic targets retain all candidate body parts")
+    movingRoot.AssemblyLinearVelocity={Y=-35}
+    check(State.GunAutoPartNames(original,movingRoot,false)==original,
+        "manual aim keeps its existing partial-body targeting during jumps")
 end
 
 do
@@ -304,13 +384,22 @@ do
     local jobs={}
     local task={spawn=function(f) table.insert(jobs,f) end,wait=function() end}
     local acquired,releaseTarget,releaseLost=near,near,false
-    local seenStrict,seenOrigin
+    local seenStrict,seenOrigin,throwMove,throwAimCalls
     local function chooseTarget()
         return acquired and {Player=acquired,Character=acquired.Character}
     end
     local weapon={GetMouseTargetCFrame=function() return frame(30) end}
     local function aimPoint(_,preferred,strict,origin)
         seenStrict,seenOrigin=strict,origin
+        throwAimCalls=(throwAimCalls or 0)+1
+        if throwMove then
+            local shift=type(throwMove)=="table" and table.remove(throwMove,1) or throwMove
+            if shift then
+                handle.CFrame=frame(shift)
+                handle.Position=vec(shift)
+            end
+            if type(throwMove)~="table" or #throwMove==0 then throwMove=nil end
+        end
         if not State.Config.KnifeAim then return frame(30) end
         if releaseLost then return nil end
         local target=strict and preferred or releaseTarget
@@ -354,6 +443,14 @@ do
     startThrow(r); release()
     check(sends==1 and seenStrict and State.LastRequest.Target==near.Name and seenOrigin==lastOrigin.Position,
         "protected throw stays on charged target and uses its sampled origin")
+    r=record(); throwMove=1; throwAimCalls=0; startThrow(r,near,true); release()
+    check(sends==2 and throwAimCalls==2 and lastOrigin.Position.X==1 and seenOrigin==lastOrigin.Position,
+        "moving thrower reaims once from the real release origin before sending")
+    sends=1; handle.CFrame=frame(0); handle.Position=vec(0)
+    r=record(); throwMove={1,2}; throwAimCalls=0; startThrow(r,near,true); release()
+    check(sends==1 and throwAimCalls==2 and not r.Charging and r.LastThrow==-math.huge,
+        "multiple moving-origin shifts cancel a stale throw rather than sending a bad trajectory")
+    handle.CFrame=frame(0); handle.Position=vec(0)
     r=record(); startThrow(r); near.Character=character(3); release()
     check(sends==1 and not r.Charging,"target respawn cancels charged throw")
     r=record(); startThrow(r); near.Dead=true; release(); near.Dead=false
@@ -390,6 +487,7 @@ end
 
 do
     local State={Config={MagicBullet=true},Stats={SkippedGunShots=0,GunRequests=0},PendingGun={}}
+    -- INSERT_MUZZLE
     local attachment={WorldPosition=vec(0),WorldCFrame=frame(0)}
     local root={FindFirstChild=function() return attachment end}
     local own={FindFirstChild=function(_,name) return name=="HumanoidRootPart" and root end}
@@ -406,6 +504,13 @@ do
     State.ExcludedPlayerInShotPath=function() return false end
     local payloadOrigin,predictionOrigin
     local calls,move=0,0
+    local movingRig=false
+    local function movingFrame(x)
+        local result=frame(x)
+        function result:PointToObjectSpace(point) return vec(point.X-self.Position.X) end
+        function result:PointToWorldSpace(point) return vec(point.X+self.Position.X) end
+        return result
+    end
     local coverage,passes=1,5
     local seenScreenPolicy
     local assisted,blockedManual=true,false
@@ -418,6 +523,12 @@ do
         if not assisted then return nil,nil,nil end
         attachment.WorldPosition=vec(attachment.WorldPosition.X+move)
         attachment.WorldCFrame=frame(attachment.WorldPosition.X)
+        if movingRig then
+            now+=.025
+            root.Position=attachment.WorldPosition
+            root.CFrame=movingFrame(root.Position.X)
+            root.AssemblyLinearVelocity=vec(25)
+        end
         return frame(10),target.Name,{Player=target,Character=target.Character,BodyPoint=vec(9),TimingCoverage=coverage,TimingPassed=passes}
     end
     local remote={IsA=function(_,kind) return kind=="RemoteEvent" end,
@@ -432,6 +543,13 @@ do
     move=1; calls=0; payloadOrigin=nil
     check(not sendGun(record()) and calls==2 and payloadOrigin==nil,
         "repeated muzzle movement cancels after one recalculation")
+    move=.4; movingRig=true; calls=0; payloadOrigin=nil
+    root.Position=attachment.WorldPosition; root.CFrame=movingFrame(root.Position.X)
+    root.AssemblyLinearVelocity=vec(25)
+    check(sendGun(record()) and calls==2 and payloadOrigin==attachment.WorldPosition
+        and State.PendingGun[#State.PendingGun].Origin==payloadOrigin,
+        "moving and jumping shooter uses the final real muzzle while retaining only two aim scans")
+    movingRig=false
     move=0; target.Excluded=true
     State.IsPlayerExcluded=function(p) return p.Excluded end
     check(not sendGun(record()),"gun still refuses excluded targets")

@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.53-7499ff" alt="Version 1.0.0-rc.53">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.54-7499ff" alt="Version 1.0.0-rc.54">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.53.** Local validation passes **1,143 main-runtime** and **171 standalone-farm Luau assertions** (1,314 total) and compiles all five entry points. Experimental invisibility now detects local seat/weld loss, waits 0.75 seconds after a correctable rig transition and retries no more than twice for the same living character. Manual Off, death, character replacement, emergency stop and incomplete restoration cancel recovery. The status and diagnostics now distinguish an active **local seat** from visibility to other players, which is **not confirmed or guaranteed** by a client-only exploit. The rc.52 gun aim, triggerbot, menu and camera safeguards remain. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.54.** Local validation passes **1,169 main-runtime** and **171 standalone-farm Luau assertions** (1,340 total) and compiles all five entry points. Gun and knife interception now account for bounded replication age when predicting moving players, and both weapon paths guard against a stale origin when the shooter moves during targeting. Automatic gun shots at airborne opponents favor central torso hitboxes. The rc.53 local-seat recovery, earlier gun safeguards, and manual weapon behavior remain. Real-world hit-rate improvements are **not established** without controlled live testing. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

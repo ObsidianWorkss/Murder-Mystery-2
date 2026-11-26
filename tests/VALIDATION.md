@@ -1,5 +1,13 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.54
+
+- Luau 0.739: **1,340 regression assertions passed** across 20 suites (1,169 main runtime, 171 farm); all five entry points compiled. Source diff whitespace validation also passed.
+- Movement regression coverage includes rig-relative muzzle motion and 180-degree turns, rejected detached/teleport-like movement, bounded 240 Hz trigger scans, measured replication-age compensation, and torso preference for automatic shots at airborne targets.
+- Knife regression coverage includes a moving target, 3D ballistic jumping/landing motion, exact body-offset refinement, a thrower's changing handle origin, and cancellation after repeated origin changes.
+- In the earlier live MM2 session, nearby players had `HumanoidRootPart.ReceiveAge` of roughly 77–136 ms while old gun lead was around 18 ms; the new policy evaluated moving-player lead around 90–91 ms. These readings motivate the correction, but do not prove a hit-rate gain. The live session was unavailable when the knife update was validated; no live knife hits were measured.
+- The private server / two-client adversarial jump-spam test is still outstanding. Server-side outcome and consistency are not guaranteed by offline geometry assertions.
+
 ## Release candidate 1.0.0-rc.53
 
 - Official Luau 0.739: **1,314 offline assertions passed** (1,143 main runtime, 171 farm), with all five entrypoints compiling.

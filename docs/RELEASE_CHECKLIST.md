@@ -1,6 +1,15 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.53**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.54**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Moving-target gun and knife aim (rc.54)
+
+- [x] Use bounded observed replication age for moving-target interception and retain a ping-only fallback when unavailable; reject unreasonably stale target data.
+- [x] Use the same observation delay for knife flight-time solution and final offset refinement, including jumping targets.
+- [x] Re-aim once from a moved throwing handle or firing attachment; cancel implausible or repeated displacement instead of firing toward stale geometry.
+- [x] Automatically target broad torso hitboxes during high-vertical-speed gun shots and keep triggerbot scan cost bounded at high FPS.
+- [x] Run all 1,340 Luau assertions and compile all five entry points locally.
+- [ ] Perform controlled two-player live jump-spam, strafe, and 360-degree turn tests for both weapons, then compare server-reported results. A request being sent is not proof of a hit.
 
 ## Experimental local-seat invisibility recovery (rc.53)
 

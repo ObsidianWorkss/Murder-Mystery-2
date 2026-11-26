@@ -17893,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.53"
+State.Version = "1.0.0-rc.54"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19133,20 +19133,56 @@ function State.AimNetworkDelay(ping)
     -- GetNetworkPing is round-trip time, not the one-way time used by the intercept.
     return math.clamp(roundTrip, 0, 0.15) * 0.5
 end
+function State.AimObservationDelay(root, ping)
+    local base=State.AimNetworkDelay(ping)
+    if not root then return base, "PingOnly" end
+    local ok, age=pcall(function() return root.ReceiveAge end)
+    if not ok or type(age)~="number" or age~=age or age<0 or age==math.huge then
+        return base, "PingOnly"
+    end
+    -- Physics updates are often older than half the local RTT. Aiming from
+    -- replicated positions using ping alone under-leads airborne opponents.
+    -- Excessively old updates must not be extrapolated into blind shots.
+    if age>.25 then return nil, "StaleTarget" end
+    return math.clamp(base+math.min(age,.14)*.8,0,.16), "ObservedAge"
+end
+function State.GunPredictionLead(root, profile, ping)
+    if profile and profile.Stationary then return 0, "Stationary" end
+    return State.AimObservationDelay(root,ping)
+end
+function State.GunMuzzleFollowsRig(beforeRoot, afterRoot, beforeMuzzle, afterMuzzle, velocity, elapsed)
+    -- A fast-moving or turning shooter can move the muzzle during a costly aim
+    -- scan. Accept only motion explained by the actual rig transform; never
+    -- substitute a projected origin for the current firing attachment.
+    if typeof(beforeRoot)~="CFrame" or typeof(afterRoot)~="CFrame"
+        or typeof(beforeMuzzle)~="Vector3" or typeof(afterMuzzle)~="Vector3"
+        or typeof(velocity)~="Vector3" or type(elapsed)~="number"
+        or elapsed~=elapsed or elapsed<0 or elapsed>.15 then return false end
+    local rootTravel=(afterRoot.Position-beforeRoot.Position).Magnitude
+    if rootTravel>math.min(1.5,velocity.Magnitude*elapsed*1.75+.18) then return false end
+    local expected=afterRoot:PointToWorldSpace(beforeRoot:PointToObjectSpace(beforeMuzzle))
+    return (afterMuzzle-expected).Magnitude<=.16 and (afterMuzzle-beforeMuzzle).Magnitude<=4
+end
 local function predict(part, root, origin, kind, item, samplePosition, gunProfile)
     local positionAt, airborne, source = motionPredictor(part, root, samplePosition, kind == "Gun")
     if kind == "Gun" then
-        local lead = State.AimNetworkDelay()
-        if gunProfile and gunProfile.Stationary then lead = 0; source ..= "+Stationary" end
-        State.CurrentGunLead = lead
+        local lead,leadSource=State.GunPredictionLead(root,gunProfile)
+        State.CurrentGunLead = lead or 0
+        if not lead then return nil,nil,airborne,source.."+"..leadSource,positionAt end
+        source ..= "+"..leadSource
         local point, blocked = positionAt(lead)
         return point, lead, airborne, blocked and (source .. "+Wall") or source, positionAt
     end
     local speed = item and (item:GetAttribute("ProjectileSpeed") or item:GetAttribute("KnifeSpeed"))
     speed = type(speed) == "number" and speed == speed and speed >= 20 and speed <= 1000 and speed
         or State.ObservedKnifeSpeed or State.Config.KnifeSpeed
-    local lead = solveIntercept(positionAt, origin, speed, State.AimNetworkDelay(), State.Config.MaxLead)
-    return lead and positionAt(lead) or nil, lead, airborne, source, positionAt, speed
+    local observationDelay,delaySource=State.AimObservationDelay(root)
+    if not observationDelay then
+        return nil,nil,airborne,source.."+"..delaySource,positionAt,speed,nil
+    end
+    local lead = solveIntercept(positionAt, origin, speed, observationDelay, State.Config.MaxLead)
+    return lead and positionAt(lead) or nil, lead, airborne, source.."+"..delaySource,
+        positionAt, speed, observationDelay
 end
 local hitPartNames = {
     Gun = {"UpperTorso", "Torso", "LowerTorso", "Head",
@@ -19346,11 +19382,29 @@ local function gunPartAimPriority(kind,name,profile)
     if name=="Head" then return 2 end
     return 1
 end
+function State.GunAutoPartNames(names, root, onScreenOnly)
+    if not onScreenOnly or not root then return names end
+    local v=root.AssemblyLinearVelocity
+    local hum=root.Parent and root.Parent:FindFirstChildOfClass("Humanoid")
+    local state=hum and hum:GetState()
+    local jumping=(v and math.abs(v.Y)>5) or (state and State.IsBallisticAimState(state))
+    if not jumping then return names end
+    -- Rapid jumping makes small arm/leg/head hitboxes a poor use of the gun's
+    -- long reload. Prefer the broad central body for automatic shots only.
+    local stable={}
+    for _,name in ipairs(names) do
+        if name=="UpperTorso" or name=="Torso" or name=="LowerTorso" then
+            table.insert(stable,name)
+        end
+    end
+    return stable
+end
 local function exposedSolution(char, root, kind, origin, item, camera, bodySamples, onScreenOnly)
     if not camera and kind ~= "Gun" then return nil end
     if not bodySamples then local _, body = visibleBodySamples(char, kind, origin, camera,nil,nil,nil,onScreenOnly); bodySamples = body end
     local names = hitPartNames[kind]
     if kind == "Gun" and bodySamples.HumanoidRootPart then names = table.clone(names); table.insert(names, 1, "HumanoidRootPart") end
+    if kind == "Gun" then names=State.GunAutoPartNames(names,root,onScreenOnly) end
     local queryParts = {}
     for _, name in ipairs(names) do
         local info = bodySamples[name]
@@ -19369,7 +19423,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
             local maximumQuality = projectedArea(part, origin, info.Frame, info.Size) * bodyWeight(name)
             local partPriority=gunPartAimPriority(kind,name,bodySamples._GunProfile)
             if partPriority>bestPriority or (partPriority==bestPriority and maximumQuality>bestQuality) then
-                local predicted, lead, airborne, source, positionAt, knifeSpeed
+                local predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay
                 local timingShifts
                 local predictionChecked = false
                 local exposedSamples, partBest, partBestQuality = 0, nil, 0
@@ -19378,7 +19432,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                     if clearPath(origin, sample, char) and (not onScreenOnly or State.IsAimPointOnScreen(sample,char)) then
                             -- Solve once per body part; apply its interior sample offsets.
                             if not predictionChecked then
-                                predicted, lead, airborne, source, positionAt, knifeSpeed = predict(part, root, origin, kind, item, info.Frame.Position, bodySamples._GunProfile)
+                                predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay = predict(part, root, origin, kind, item, info.Frame.Position, bodySamples._GunProfile)
                                 if kind == "Gun" and predicted and positionAt then
                                     timingShifts = State.GunTimingShifts(positionAt, lead, info.Frame.Position)
                                 end
@@ -19388,7 +19442,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                             local sampleLead = lead
                             if point and kind == "Knife" and positionAt then
                                 point, sampleLead = refineKnifeIntercept(positionAt, worldOffset, origin, knifeSpeed,
-                                    State.AimNetworkDelay(), lead, State.Config.MaxLead)
+                                    knifeDelay, lead, State.Config.MaxLead)
                             end
                             -- Translate the ray back into the current body geometry
                             -- rather than accepting an empty corner of a mesh's box.
@@ -20524,6 +20578,8 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     end
     local originFrame=attachment.WorldCFrame
     local snapshot=State.CreateGunPathSnapshot and State.CreateGunPathSnapshot()
+    local sampledRootFrame=root.CFrame
+    local sampledAt=os.clock()
     local function selectAim()
         State.GunPathSnapshot=snapshot
         local ok,frame,name,found=pcall(aimPoint,record,preferred,strict,originFrame.Position,onScreenOnly)
@@ -20542,6 +20598,8 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     end
     if (attachment.WorldPosition-originFrame.Position).Magnitude>.25 then
         originFrame=attachment.WorldCFrame
+        sampledRootFrame=root.CFrame
+        sampledAt=os.clock()
         targetFrame,targetName,solution,aimError=selectAim()
         if aimError then return skip("Shot cancelled: aiming failed: "..aimError) end
     end
@@ -20573,10 +20631,17 @@ local function sendGun(record, preferred, strict, onScreenOnly)
         or root:FindFirstChild("GunRaycastAttachment")~=attachment then
         return skip("Shot cancelled: weapon or character changed")
     end
-    -- Keep the selected origin in both the pending record and payload. A second
-    -- large movement after the bounded recalculation invalidates this click.
-    if (attachment.WorldPosition-originFrame.Position).Magnitude>.25 then
-        return skip("Shot cancelled: muzzle moved during aiming; fire again")
+    -- Keep the latest real muzzle frame in the payload even while the player
+    -- jumps, strafes or spins. A second displacement is safe only when it
+    -- matches the live rig and plausible travel since the last bounded scan.
+    local currentOriginFrame=attachment.WorldCFrame
+    if (currentOriginFrame.Position-originFrame.Position).Magnitude>.25 then
+        if not State.GunMuzzleFollowsRig(sampledRootFrame,root.CFrame,
+            originFrame.Position,currentOriginFrame.Position,root.AssemblyLinearVelocity,
+            os.clock()-sampledAt) then
+            return skip("Shot cancelled: muzzle moved independently of the character; fire again")
+        end
+        originFrame=currentOriginFrame
     end
     local origin=originFrame.Position
     local head=ownCharacter:FindFirstChild("Head")
@@ -20941,6 +21006,13 @@ local function startThrow(record, preferred, strict, canRelease)
             -- no-target manual charge in locked-target mode.
             if chargedTarget or strict or not State.Config.RequireClearKnifeTarget then
                 targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
+                -- A moving/jumping thrower can shift the handle during a costly
+                -- release-time scan. Recompute once from the real new origin,
+                -- never reuse a direction solved for the previous position.
+                if targetFrame and (handle.Position-originFrame.Position).Magnitude>.25 then
+                    originFrame=handle.CFrame
+                    targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
+                end
             end
             -- Player-initiated throws keep native cursor fallback. A charged
             -- assisted target remains locked when the clear-target toggle is on.
@@ -20950,6 +21022,9 @@ local function startThrow(record, preferred, strict, canRelease)
             end
             if not targetFrame then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target no longer clear"); return
+            end
+            if (handle.Position-originFrame.Position).Magnitude>.25 then
+                State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: knife moved again during aiming"); return
             end
             if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
                 or State.IsPlayerExcluded(solution.Player)
@@ -26371,6 +26446,16 @@ local installTriggerbot=function(C)
     -- high-FPS heartbeat. A changed camera immediately invalidates the short
     -- negative cache; a moving target is always reconsidered within 25 ms.
     local rejectInterval=1/40
+    local function ownMovementChanged(rejection)
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if root~=rejection.OwnRoot then return true end
+        if not root then return false end
+        local velocity=root.AssemblyLinearVelocity
+        local previous=rejection.OwnVelocity
+        return (root.Position-rejection.OwnPosition).Magnitude>.18
+            or (velocity and previous and (velocity-previous).Magnitude>4) or false
+    end
     local function cameraChanged(rejection)
         local camera=world.CurrentCamera
         if rejection.Camera~=camera then return true end
@@ -26382,10 +26467,16 @@ local installTriggerbot=function(C)
     end
     local function reject(item,now)
         local camera=world.CurrentCamera
-        return {Item=item,Until=now+rejectInterval,Camera=camera,Frame=camera and camera.CFrame}
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        return {Item=item,At=now,Until=now+rejectInterval,Camera=camera,Frame=camera and camera.CFrame,
+            OwnRoot=root,OwnPosition=root and root.Position,OwnVelocity=root and root.AssemblyLinearVelocity}
     end
     local function deferred(rejection,item,now)
-        return rejection and rejection.Item==item and now<rejection.Until and not cameraChanged(rejection)
+        if not rejection or rejection.Item~=item or now>=rejection.Until or cameraChanged(rejection) then return false end
+        -- A moving shooter can invalidate a rejection sooner, but never turn
+        -- high-speed movement into a full body scan on every 240 Hz heartbeat.
+        return not ownMovementChanged(rejection) or now-rejection.At<1/75
     end
     local function reset(message)
         if message:sub(1,6)=="Paused" then

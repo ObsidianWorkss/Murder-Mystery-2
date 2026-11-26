@@ -115,6 +115,28 @@ do
     f.Step(.001)
     check(f.Attempts==2,"moving the camera bypasses the failed gun check delay")
     f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.World.CurrentCamera={CFrame={Position=vec(0),LookVector=vec(1)}}
+    local ownRoot=f.Own.Character.HumanoidRootPart
+    ownRoot.AssemblyLinearVelocity=vec(0)
+    f.Step(.01); f.Send=true; ownRoot.AssemblyLinearVelocity=vec(55)
+    f.Step(.014)
+    check(f.Attempts==2 and f.Bot.Shots==1,
+        "sudden own-motion or jump velocity bypasses a stale failed gun scan")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.World.CurrentCamera={CFrame={Position=vec(0),LookVector=vec(1)}}
+    f.Step(.01); f.Send=true
+    f.Own.Character.HumanoidRootPart.Position=vec(.23)
+    f.Step(.014)
+    check(f.Attempts==2 and f.Bot.Shots==1,
+        "shooter movement retriggers aim even if the camera remains unchanged")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
+    f.World.CurrentCamera={CFrame={Position=vec(0),LookVector=vec(1)}}
+    local moving=f.Own.Character.HumanoidRootPart
+    f.Step(.002)
+    for i=1,40 do moving.Position=vec(i*.4); f.Step(.001) end
+    check(f.Bot.AimChecks<=5 and f.Bot.SkippedGunChecks>=30,
+        "fast strafing never causes an expensive rejected-aim scan every heartbeat")
+    f=fixture(); f.State.SetTriggerbot(true); f.Send=false
     f.Step(.01); f.Send=true; f.World.CurrentCamera={}
     f.Step(.001)
     check(f.Attempts==2,"new camera object invalidates the previous gun rejection")
