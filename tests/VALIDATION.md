@@ -1,5 +1,13 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.51
+
+- Offline Luau 0.739: all five entry points compile; **1,293 assertions passed** (1,122 main-runtime plus 171 farm).
+- Updated timing fixtures explicitly reject the old 0-to-more-than-double-lead sampling and verify arrival-centered conservative and standard timing probes. Additional fixtures verify gun core/torso priority over narrow limbs, with unchanged knife priority.
+- Manual-firing fixtures reproduce swallowed click events when no assisted candidate qualifies, then verify native cursor fallback while automatic screen-only shots, strict locked targets and protected-player paths remain gated.
+- Baseline live rc.50 diagnostics: 18 gun requests, 8 heuristically correlated server replies, 1 reported target-body ray hit, 7 reported misses and 10 unconfirmed requests. Some misses landed on map parts or corner wedges. These observations motivate improved aim-point choice but do not establish the cause of each miss.
+- Native rc.50 local probes for stationary/crossing/camping prediction and cover checking passed before the update. rc.51 must pass the same live probes and still needs a genuine Sheriff-round server outcome comparison.
+
 ## Release candidate 1.0.0-rc.50
 
 - Official Luau 0.739: all five entry points compiled; **1,285 extracted-source assertions passed** (1,114 main runtime and 171 farm).

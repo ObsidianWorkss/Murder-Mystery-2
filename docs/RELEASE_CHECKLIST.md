@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.50**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.51**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Aim and triggerbot regression (rc.51)
+
+- [x] Five conservative timing hypotheses are centered on estimated shot arrival rather than including the target's old position and an extreme future prediction; the nominal ray is also checked.
+- [x] Gun hitbox selection prefers an eligible center-mass target instead of choosing a smaller limb purely on sampled exposure quality. Knife priority behavior is unchanged.
+- [x] A manual gun click without a valid assisted target falls back to the game's native mouse direction. Automatic screen-only triggerbot and strict target-locked requests cannot use this fallback; excluded-player path rejection remains active.
+- [x] The full offline suite passes 1,293 assertions (1,122 main-runtime, 171 farm), and all five Luau entry points compile.
+- [ ] Run the local aim/cover probes and compare real round shot-to-reply/hit outcomes after a safe rc.51 client reload. No client-only test can guarantee server hit registration.
 
 ## Gun feedback accounting and freshness (rc.50)
 

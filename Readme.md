@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.50-7499ff" alt="Version 1.0.0-rc.50">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.51-7499ff" alt="Version 1.0.0-rc.51">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.50.** Local validation passes **1,114 main-runtime** and **171 standalone-farm Luau assertions** (1,285 total) and compiles all five entry points. Gun diagnostics now retain shot identifiers and classify pending requests interrupted by reload or queue overflow instead of silently losing them. The HUD also retains late server replies for two seconds after receiving them, rather than aging them from the original firing time. Right Shift, the native camera, knife controls and gun cooldown safeguards remain unchanged. **Live hit-rate improvements are not established**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.51.** Local validation passes **1,122 main-runtime** and **171 standalone-farm Luau assertions** (1,293 total) and compiles all five entry points. Gun Aim now checks a realistic, bounded arrival-time window around the network estimate and prefers exposed center-body shots over narrow limbs. An explicit manual gun click falls back to the native cursor when aim assist has no valid target; automatic/locked-target shots never use that fallback. Excluded-player checks, Right Shift, native camera and knife controls remain protected. **Server hit rate has not been proven to improve**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

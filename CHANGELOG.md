@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.51 — 2026-11-26
+
+- Correct overly broad gun timing hypotheses. Conservative aiming now verifies five target-body intersections in a bounded, symmetric window around the estimated one-way arrival time, rather than requiring the ray to cover today's target location and an additional late hypothesis at more than twice estimated delay. Standard mode also samples around predicted arrival.
+- When selecting a valid gun hitbox, prioritize a queryable close-range/stationary core, then exposed torso/center mass, head, and finally narrow arms/legs. Keep the original highest-quality selection among parts of equal priority. Knife targeting remains unchanged.
+- Restore an explicit manual gun click if assist finds no valid opponent: send the game's native cursor CFrame, while preserving local weapon, role, muzzle and excluded-player checks. Locked-target requests and automatic triggerbot shots still refuse to fire without a valid assisted target.
+- Add eight combat regression assertions covering arrival-time windows, center-body priority, manual-gun fallback and protected-player/automatic boundaries. **1,293 offline Luau assertions pass** (1,122 main-runtime, 171 farm). Live server hit outcomes for rc.51 remain unverified.
+
 ## 1.0.0-rc.50 — 2026-11-26
 
 - Reconcile every still-pending gun request when the script unloads or reloads. Retain shot IDs, request timestamps, target information and the precise unknown-outcome cause in the bounded shot history instead of dropping unresolved requests from statistics.

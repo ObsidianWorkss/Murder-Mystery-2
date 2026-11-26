@@ -17893,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.50"
+State.Version = "1.0.0-rc.51"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19311,17 +19311,27 @@ local function gunTimingCoverage(origin, point, translations, params)
     return (1 + passed) / (1 + #translations), passed
 end
 function State.GunTimingShifts(positionAt, lead, position)
-    local window = math.clamp(lead * 0.25, 0.012, 0.035)
-    if State.Config.ConservativeGun then window = math.max(window, 0.04) end
-    local shifts = {positionAt(math.max(0, lead - window)) - position,
-        positionAt(math.min(0.2, lead + window)) - position, Vector3.zero}
-    if State.Config.ConservativeGun then
-        -- Include intermediate and later arrival hypotheses without claiming
-        -- response round-trip time is a measurement of one-way shot latency.
-        table.insert(shifts, positionAt(lead * 0.5) - position)
-        table.insert(shifts, positionAt(math.min(0.2, lead * 2 + 0.02)) - position)
+    -- Keep timing hypotheses around the estimated arrival, including the
+    -- nominal predicted position. Earlier conservative mode required hits at
+    -- the target's CURRENT position and more than twice the network delay.
+    -- That rejected broad torso shots and could prefer narrow limbs instead.
+    local window = math.clamp(lead * 0.4, 0.012, 0.028)
+    local times = State.Config.ConservativeGun
+        and {lead - window, lead - window * 0.5, lead, lead + window * 0.5, lead + window}
+        or {lead - window, lead, lead + window}
+    local shifts = {}
+    for _, t in ipairs(times) do
+        table.insert(shifts, positionAt(math.clamp(t, 0, 0.2)) - position)
     end
     return shifts
+end
+local function gunPartAimPriority(kind,name,profile)
+    if kind~="Gun" then return 0 end
+    if name=="HumanoidRootPart" then return profile and profile.Core and 5 or 0 end
+    if name=="UpperTorso" or name=="Torso" then return 4 end
+    if name=="LowerTorso" then return 3 end
+    if name=="Head" then return 2 end
+    return 1
 end
 local function exposedSolution(char, root, kind, origin, item, camera, bodySamples, onScreenOnly)
     if not camera and kind ~= "Gun" then return nil end
@@ -19338,13 +19348,14 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
     bodyQuery.FilterType = Enum.RaycastFilterType.Include
     bodyQuery.FilterDescendantsInstances = queryParts
     bodyQuery.IgnoreWater = true
-    local best, bestQuality = nil, 0
+    local best, bestQuality, bestPriority = nil, 0, -1
     for _, name in ipairs(names) do
         local info = bodySamples[name]
         local part = info and info.Part
         if part and part.Parent == char then
             local maximumQuality = projectedArea(part, origin, info.Frame, info.Size) * bodyWeight(name)
-            if maximumQuality > bestQuality then
+            local partPriority=gunPartAimPriority(kind,name,bodySamples._GunProfile)
+            if partPriority>bestPriority or (partPriority==bestPriority and maximumQuality>bestQuality) then
                 local predicted, lead, airborne, source, positionAt, knifeSpeed
                 local timingShifts
                 local predictionChecked = false
@@ -19404,8 +19415,8 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                 end
                 if partBest then
                     local quality = partBestQuality * exposedSamples / (info.OffsetCount or #hitOffsets)
-                    if quality > bestQuality then
-                        bestQuality, best = quality, partBest
+                    if partPriority>bestPriority or (partPriority==bestPriority and quality>bestQuality) then
+                        bestPriority,bestQuality,best = partPriority,quality,partBest
                         best.ExposureQuality = quality
                         best.ExposedSamples = exposedSamples
                     end
@@ -20516,18 +20527,28 @@ local function sendGun(record, preferred, strict, onScreenOnly)
         targetFrame,targetName,solution,aimError=selectAim()
         if aimError then return skip("Shot cancelled: aiming failed: "..aimError) end
     end
+    -- The native GunClient lets a real player click toward the cursor even
+    -- without an aim-assist candidate. Do not swallow that manual input.
+    -- Never apply this fallback to the automatic triggerbot or a locked target.
+    local manual=false
+    if not targetFrame and not strict and not onScreenOnly then
+        local ok,cursorFrame=pcall(weapon.GetMouseTargetCFrame,weapon)
+        if ok and typeof(cursorFrame)=="CFrame" and finite(cursorFrame.Position) then
+            targetFrame,manual=cursorFrame,true
+        end
+    end
     if not targetFrame or typeof(targetFrame)~="CFrame" or not finite(targetFrame.Position) then
         return skip(State.Config.ConservativeGun and "Shot skipped: no clear target passes timing checks; reposition and fire again"
             or "Shot skipped: no clear finite target")
     end
-    if State.Config.ConservativeGun and (not solution or solution.TimingCoverage~=1
+    if not manual and State.Config.ConservativeGun and (not solution or solution.TimingCoverage~=1
         or not solution.TimingPassed or solution.TimingPassed<5) then
         return skip("Shot skipped: uncertain target timing; reposition and fire again")
     end
     local targetPlayer=targetName and Players:FindFirstChild(targetName)
     local targetCharacter=solution and solution.Character or targetPlayer and targetPlayer.Character
-    if not targetPlayer or not targetCharacter or targetPlayer.Character~=targetCharacter
-        or State.IsPlayerExcluded(targetPlayer) or not alive(targetPlayer) or not State.IsCombatTarget("Gun",targetPlayer) then
+    if not manual and (not targetPlayer or not targetCharacter or targetPlayer.Character~=targetCharacter
+        or State.IsPlayerExcluded(targetPlayer) or not alive(targetPlayer) or not State.IsCombatTarget("Gun",targetPlayer)) then
         return skip("Shot cancelled: target changed or is protected")
     end
     if player.Character~=ownCharacter or not ready(record) or not record.Item.Enabled
@@ -20547,10 +20568,10 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     if head and not clearPath(head.Position,origin,ownCharacter) then
         return skip("Shot skipped: muzzle obstructed")
     end
-    if not clearPath(origin,targetFrame.Position,targetCharacter) then
+    if not manual and not clearPath(origin,targetFrame.Position,targetCharacter) then
         return skip("Shot skipped: firing path became blocked")
     end
-    if State.GunPathClear and not State.GunPathClear(snapshot,origin,targetFrame.Position,targetCharacter) then
+    if not manual and State.GunPathClear and not State.GunPathClear(snapshot,origin,targetFrame.Position,targetCharacter) then
         return skip("Shot skipped: another player may cross the firing path")
     end
     if State.ExcludedPlayerInShotPath(origin,targetFrame.Position) then
@@ -20597,7 +20618,8 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     trimPendingGun()
     State.Stats.GunRequests+=1
     State.LastRequest={Weapon="Gun",Target=targetName,Position=targetFrame.Position,
-        Offscreen=solution and solution.Offscreen,Mode=onScreenOnly and "OnScreenAssist" or "MagicBullet",AimPart=solution and solution.AimPart,
+        Offscreen=solution and solution.Offscreen,Mode=manual and "ManualCursor" or (onScreenOnly and "OnScreenAssist" or "MagicBullet"),
+        ManualFallback=manual,AimPart=solution and solution.AimPart,
         TargetMode=solution and solution.TargetMode}
     return true
 end
@@ -27044,7 +27066,8 @@ local createMobileUI = function(C)
     home:Paragraph({Title="MM2 Universal",Desc="v" .. State.Version})
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Assists shots at eligible opponents in the current game mode.")
-    option(combat, "Conservative gun shots", "ConservativeGun", "Only fire when every timing check lands.")
+    option(combat, "Conservative gun shots", "ConservativeGun",
+        "Require all five bounded arrival-time checks for assisted shots. Manual clicks still work if no assist target qualifies.")
     option(combat,"Gun triggerbot","Triggerbot","Fast assisted shots at visible on-screen opponents for your mode. Cursor contact is not required. Requires Aim assist and Gun aim.")
     mobile.TriggerbotStatus=combat:Paragraph({Title="Triggerbot status",Desc="Off"})
     option(knife,"Knife triggerbot","KnifeTriggerbot","Fast assisted stabs at clear on-screen opponents within 6.5 studs. Cursor contact is not required.")

@@ -92,8 +92,9 @@ do
     local function sampleRayHitsBody(origin) rays+=1; return origin.X~=blockedX end
     -- INSERT_TIMING
     local shifts=State.GunTimingShifts(function(t) return vec(t*100) end,.04,vec(0))
-    check(#shifts==5 and math.abs(shifts[2].X-8)<.00001 and math.abs(shifts[5].X-10)<.00001,
-        "conservative mode samples a wider bounded timing range")
+    check(#shifts==5 and math.abs(shifts[1].X-2.4)<.00001 and math.abs(shifts[3].X-4)<.00001
+        and math.abs(shifts[5].X-5.6)<.00001,
+        "conservative mode tests a centered bounded arrival window instead of an implausible double-latency sample")
     local coverage,passes=gunTimingCoverage(vec(0),vec(10),shifts,{})
     check(coverage==1 and passes==5,"conservative mode accepts all five intersecting timing samples")
     blockedX=-shifts[5].X
@@ -104,6 +105,9 @@ do
     check(coverage>0 and coverage<1 and passes==4,"standard mode retains partial coverage ranking")
     check(#State.GunTimingShifts(function(t) return vec(t) end,.04,vec(0))==3,
         "standard mode retains the original three timing samples")
+    local normal=State.GunTimingShifts(function(t) return vec(t*100) end,.04,vec(0))
+    check(math.abs(normal[2].X-4)<.00001 and normal[1].X<normal[2].X and normal[3].X>normal[2].X,
+        "standard aim samples around estimated arrival, not the outdated current target position")
     State.Config.ConservativeGun=true; blockedX=nil
     shifts=State.GunTimingShifts(function() return vec(0) end,0,vec(0))
     rays=0
@@ -115,6 +119,15 @@ do
     local latest=0
     State.GunTimingShifts(function(t) latest=math.max(latest,t); return vec(t) end,.15,vec(0))
     check(latest<=.2,"high-ping timing hypotheses remain bounded")
+    check(gunPartAimPriority("Gun","UpperTorso",{}) > gunPartAimPriority("Gun","LeftLowerArm",{})
+        and gunPartAimPriority("Gun","Torso",{}) > gunPartAimPriority("Gun","LeftUpperLeg",{}),
+        "assisted gun shots favor exposed center mass over small limb targets")
+    check(gunPartAimPriority("Gun","HumanoidRootPart",{Core=true})
+        > gunPartAimPriority("Gun","UpperTorso",{Core=true})
+        and gunPartAimPriority("Gun","Head",{}) > gunPartAimPriority("Gun","RightFoot",{}),
+        "validated core and head are preferred to limbs in their eligible cases")
+    check(gunPartAimPriority("Knife","UpperTorso",{})==gunPartAimPriority("Knife","RightFoot",{}),
+        "new center-mass ordering does not change knife target selection")
 end
 
 do
@@ -383,11 +396,14 @@ do
     local calls,move=0,0
     local coverage,passes=1,5
     local seenScreenPolicy
+    local assisted,blockedManual=true,false
+    local weapon={GetMouseTargetCFrame=function() return frame(13) end}
     local bodyVisible,leadVisible=true,true
     State.IsAimPointOnScreen=function(point) return point and (point.X==9 and bodyVisible or point.X==10 and leadVisible) end
     local function aimPoint(_,_,_,origin,onScreenOnly)
         seenScreenPolicy=onScreenOnly
         calls+=1; predictionOrigin=origin
+        if not assisted then return nil,nil,nil end
         attachment.WorldPosition=vec(attachment.WorldPosition.X+move)
         attachment.WorldCFrame=frame(attachment.WorldPosition.X)
         return frame(10),target.Name,{Player=target,Character=target.Character,BodyPoint=vec(9),TimingCoverage=coverage,TimingPassed=passes}
@@ -431,6 +447,21 @@ do
     check(not sendGun(record(),nil,false,true) and payloadOrigin==nil,"final send cancels when body point leaves the screen")
     bodyVisible=true; leadVisible=false
     check(not sendGun(record(),nil,false,true) and payloadOrigin==nil,"final send cancels when predicted lead point leaves the screen")
-    check(sendGun(record()),"screen-only rejection does not change manual shot behavior")
+    leadVisible=true; assisted=false; State.Config.ConservativeGun=true; payloadOrigin=nil
+    check(sendGun(record()) and State.LastRequest.ManualFallback and State.LastRequest.Target==nil
+        and State.LastRequest.Position.X==13,
+        "manual gun click falls back to the native cursor if assisted targeting fails")
+    payloadOrigin=nil
+    check(not sendGun(record(),nil,false,true) and payloadOrigin==nil,
+        "automatic triggerbot still refuses all cursor fallback shots")
+    check(not sendGun(record(),target,true) and payloadOrigin==nil,
+        "explicit locked target refuses cursor fallback")
+    State.ExcludedPlayerInShotPath=function() return blockedManual end
+    blockedManual=true
+    check(not sendGun(record()) and payloadOrigin==nil,
+        "manual cursor fallback cannot fire through a protected player's body")
+    blockedManual=false
+    check(sendGun(record()) and State.LastRequest.ManualFallback,
+        "screen-only rejection does not change manual cursor fallback behavior")
 end
 print(string.format("%d combat assertions passed",passed))
