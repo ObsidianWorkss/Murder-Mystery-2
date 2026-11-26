@@ -197,3 +197,25 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         raise RuntimeError("Unexpanded equip-test source marker")
     harness.write_text(equip, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    lifecycle = (root / "tests" / "weapon_lifecycle.luau").read_text(encoding="utf-8")
+    start = source.index("local function restoreHandler(item)")
+    end = source.index("local function ready(record)", start)
+    lifecycle = lifecycle.replace("-- INSERT_RESTORE", source[start:end])
+    start = source.index("local function takeOver(item)")
+    end = source.index("local function syncWeapons()", start)
+    lifecycle = lifecycle.replace("-- INSERT_TAKEOVER", source[start:end])
+    if "-- INSERT_" in lifecycle:
+        raise RuntimeError("Unexpanded weapon lifecycle source marker")
+    harness.write_text(lifecycle, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    hotkeys = (root / "tests" / "menu_hotkeys.luau").read_text(encoding="utf-8")
+    start = source.index("    local function menuKey()")
+    end = source.index("    local function action(callback)", start)
+    hotkeys = hotkeys.replace("-- INSERT_MENU_INPUT", source[start:end])
+    hotkeys = hotkeys.replace("-- INSERT_MENU_FALLBACK", source[start:end])
+    if "-- INSERT_" in hotkeys:
+        raise RuntimeError("Unexpanded menu keybinding source marker")
+    harness.write_text(hotkeys, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

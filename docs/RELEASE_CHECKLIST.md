@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.45**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.46**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Input and weapon restoration (rc.46)
+
+- [x] Right Shift remains bound to open the UI when saved menu shortcuts change; no duplicate binding when Right Shift is already selected. Extra shortcuts can be replaced without removing Right Shift.
+- [x] Extracted fallback handler opens the menu on Right Shift even when a native input handler marked that key processed. Typing and mobile-mode guards remain in place.
+- [x] Gun hint visibility is restored to its original state. Knife callbacks preserve zero speed and active boost. Delayed weapon restoration does not override another newly equipped tool.
+- [x] All five Luau entry points compile and 1,237 offline assertions pass (1,066 main-runtime and 171 farm).
+- [ ] Verify the new menu shortcut and gun/knife restoration in a live MM2 session. Offline fixtures cannot establish the game's live input or server behavior.
 
 ## Aim reliability (rc.45)
 

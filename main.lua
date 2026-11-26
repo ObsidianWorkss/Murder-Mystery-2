@@ -17855,7 +17855,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.45"
+State.Version = "1.0.0-rc.46"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20212,6 +20212,11 @@ local function restoreHandler(item)
             if sounds and sound and not sounds:FindFirstChild("Throw") then sound.Parent = sounds end
         elseif record.Kind == "Gun" then
             local cantShoot = item:FindFirstChild("CantShoot")
+            if cantShoot and cantShoot == record.CantShoot then
+                -- The takeover hides this native warning; do not leave it
+                -- disabled when the original client script is restored.
+                cantShoot.Enabled = record.CantShootEnabled
+            end
             if cantShoot and not backup:FindFirstChild("CantShoot") then cantShoot.Parent = backup end
         end
         backup.Parent = item
@@ -20222,7 +20227,11 @@ local function restoreHandler(item)
                 -- A subsequent takeover destroys this clone, cancelling re-equip.
                 if backup.Parent == item and item.Parent == player:FindFirstChild("Backpack") and player.Character == char then
                     local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then hum:EquipTool(item) end
+                    -- The user may have equipped a different tool during the
+                    -- restore delay. Never steal that newer selection.
+                    if hum and hum.Health > 0 and not char:FindFirstChildOfClass("Tool") then
+                        hum:EquipTool(item)
+                    end
                 end
             end)
         end
@@ -20849,7 +20858,10 @@ local function takeOver(item)
     native:Destroy()
     if record.Kind == "Gun" then
         local cantShoot = item:FindFirstChild("CantShoot")
-        if cantShoot and cantShoot:IsA("LayerCollector") then cantShoot.Enabled = false end
+        if cantShoot and cantShoot:IsA("LayerCollector") then
+            record.CantShoot,record.CantShootEnabled = cantShoot,cantShoot.Enabled
+            cantShoot.Enabled = false
+        end
     end
     loadTracks(record)
     recordConnect(record, item.Activated, function()
@@ -20864,13 +20876,17 @@ local function takeOver(item)
         stopTracks(record)
         if record.Kind == "Knife" then
             local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.WalkSpeed = 16 end
+            -- The movement controller owns speed boost; never unfreeze a
+            -- character or replace a temporary speed set by another feature.
+            if hum and hum.WalkSpeed > 0 and not State.Config.SpeedBoost then hum.WalkSpeed = 16 end
         end
     end)
     if record.Kind == "Knife" then
         local function equippedSpeed()
             local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.WalkSpeed = item:GetAttribute("EquippedPerk") == "Haste" and 18 or 17 end
+            if hum and hum.WalkSpeed > 0 and not State.Config.SpeedBoost then
+                hum.WalkSpeed = item:GetAttribute("EquippedPerk") == "Haste" and 18 or 17
+            end
         end
         recordConnect(record, item.Equipped, equippedSpeed)
         if item.Parent == player.Character then equippedSpeed() end
@@ -26336,7 +26352,7 @@ local installKeybinds=function(C)
     local State,UIS=C.State,C.UIS
     local cfg=State.Config
     local reserved={}
-    for _,name in ipairs({"W","A","S","D","Space","LeftShift","LeftControl","E","Slash","Tab","Escape",
+    for _,name in ipairs({"W","A","S","D","Space","LeftShift","RightShift","LeftControl","E","Slash","Tab","Escape",
         "Return","Backspace","Delete","Backquote","I","O","Up","Down","Left","Right","F9","F11","F12","Unknown",
         "Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","MouseLeftButton","MouseRightButton"}) do reserved[name]=true end
     local function flip(key) cfg[key]=not cfg[key]; return cfg[key] end
@@ -26448,7 +26464,7 @@ local installKeybinds=function(C)
     local taken={}
     for _,action in ipairs(actions) do
         local key=type(saved[action.Id])=="string" and saved[action.Id] or action.Default
-        if key~="None" and (reserved[key] or taken[key]) then key="None" end
+        if key~="None" and ((reserved[key] and not (action.Id=="Menu" and key=="RightShift")) or taken[key]) then key="None" end
         if action.Special and key=="None" then key=action.Default end
         cfg.Keybinds[action.Id]=key
         if key~="None" then taken[key]=action.Id end
@@ -26460,7 +26476,7 @@ local installKeybinds=function(C)
         if not action then return false,"Unknown keybind" end
         if key==nil or key=="" or key=="Backspace" or key=="Delete" then key="None" end
         if key=="None" and action.Special then return false,action.Title.." needs a key" end
-        if key~="None" and reserved[key] then return false,key.." is reserved" end
+        if key~="None" and reserved[key] and not (id=="Menu" and key=="RightShift") then return false,key.." is reserved" end
         for otherId,otherKey in pairs(cfg.Keybinds) do
             if otherId~=id and otherKey==key and byId[otherId].Special then return false,key.." is used by "..byId[otherId].Title end
         end
@@ -27632,8 +27648,13 @@ local createMobileUI = function(C)
         mobile.EmergencyButton=emergencyButton
         draggable(emergencyButton,emergencyButton,mobile.TriggerEmergencyStop)
     end
-    -- The menu and stop keys come from Settings -> Keybinds (Right Shift and End by default).
+    -- Right Shift always opens the menu, even if saved settings move its
+    -- additional, configurable shortcut (for example, to F10).
     local function menuKey() return keyCode(State.Config.Keybinds and State.Config.Keybinds.Menu) or Enum.KeyCode.RightShift end
+    local function menuKeys()
+        local configured=menuKey()
+        return configured==Enum.KeyCode.RightShift and {configured} or {configured,Enum.KeyCode.RightShift}
+    end
     local function stopKey() return keyCode(State.Config.Keybinds and State.Config.Keybinds.Stop) or Enum.KeyCode.End end
     local function menuPressed(_, state)
         if mobile.Destroyed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then
@@ -27655,7 +27676,7 @@ local createMobileUI = function(C)
         if wantedMenu ~= boundMenuKey then
             if menuBound then actionService:UnbindAction(menuAction) end
             -- High priority so the menu key wins over native mouse-lock bindings.
-            actionService:BindActionAtPriority(menuAction, menuPressed, false, Enum.ContextActionPriority.High.Value + 100, wantedMenu)
+            actionService:BindActionAtPriority(menuAction, menuPressed, false, Enum.ContextActionPriority.High.Value + 100, unpack(menuKeys()))
             menuBound, boundMenuKey = true, wantedMenu
         end
         if State.EmergencyStop and wantedStop ~= boundStopKey then
@@ -27668,7 +27689,11 @@ local createMobileUI = function(C)
         mobile.BindMenuKeys()
     else
         connect(UIS.InputBegan, function(input, processed)
-            if processed or getMode() ~= "PC" or UIS:GetFocusedTextBox() then return end
+            if getMode() ~= "PC" or UIS:GetFocusedTextBox() then return end
+            -- Without ContextActionService, the native camera may already have
+            -- marked Right Shift processed; the menu alias still takes priority.
+            if input.KeyCode == Enum.KeyCode.RightShift then window:Toggle(); return end
+            if processed then return end
             if input.KeyCode == menuKey() then window:Toggle() end
             if input.KeyCode == stopKey() and State.EmergencyStop then mobile.TriggerEmergencyStop() end
         end)

@@ -417,6 +417,9 @@ do
     check(not ok and message=="Open / close menu needs a key" and cfg.Keybinds.Menu=="RightShift","the menu key can never be cleared")
     ok,message=State.SetKeybind("Fly","End")
     check(not ok and message=="End is used by Emergency stop","the stop key cannot be taken by another action")
+    ok,message=State.SetKeybind("Fly","RightShift")
+    check(not ok and message=="RightShift is reserved" and cfg.Keybinds.Menu=="RightShift",
+        "other actions cannot steal the permanent Right Shift menu shortcut")
     ok,message=State.SetKeybind("Menu","H")
     check(ok and message=="H moved from Player ESP to Open / close menu" and cfg.Keybinds.ESP=="None","the menu key can move to a new key")
     check(press("H")==nil,"menu and stop keys are left to the menu's own binding")
@@ -468,6 +471,10 @@ do
     cfg.Keybinds.Fly="F4"; cfg.Keybinds.StreamerMode=nil
     installKeybinds(C)
     check(cfg.Keybinds.Fly=="F4" and cfg.Keybinds.StreamerMode=="None","existing saved F4 action takes precedence over the new default")
+    cfg.Keybinds.Menu="F10"; cfg.Keybinds.Fly="RightShift"
+    installKeybinds(C)
+    check(cfg.Keybinds.Menu=="F10" and cfg.Keybinds.Fly=="None",
+        "saved custom menu key survives while other actions cannot claim the Right Shift alias")
 end
 do
     -- X-ray robustness: Terrain and a part that refuses writes must never break switching off or unloading.

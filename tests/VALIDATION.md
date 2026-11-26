@@ -1,5 +1,12 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.46
+
+- Official Luau 0.739 offline extracted-source tests: **1,237 passed** (1,066 main-runtime and 171 standalone farm); all five entry points compiled.
+- Twelve weapon-lifecycle checks cover the original gun shooting hint (visible and hidden), frozen movement, speed-boost coexistence, ordinary Haste speed, and delayed native re-equipping when the player has or has not selected another tool.
+- Twelve menu-input checks cover saved F10 plus always-on Right Shift, native action binding, rebind replacement, typing/mobile guards, fallback input with Roblox's processed flag, and independent End emergency stop. Two release-keybind assertions reserve Right Shift from feature actions even with saved customization.
+- Changes were verified only through isolated Luau fixtures and static compilation; Right Shift, weapon restoration, and hit rates have not been validated in a live game client.
+
 ## Release candidate 1.0.0-rc.45
 
 - Offline only: official Luau 0.739 compiles all five entry points, and the extracted-source regression suite passes **1,211 assertions** (1,040 main-runtime and 171 standalone farm). Fourteen new triggerbot assertions exercise 25 ms rejection throttling, camera rotation/movement/replacement, toggle and window-focus invalidation, repeated failed knife contact and simulated 240 Hz idle scanning.

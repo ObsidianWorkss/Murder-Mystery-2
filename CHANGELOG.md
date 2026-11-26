@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.46 — 2026-11-26
+
+- Keep Right Shift as a permanent PC menu shortcut even if a saved keybind changes the optional menu key (such as F10). Reserve it against feature bindings, and support it in the native action binding and fallback keyboard handler without consuming Left Shift.
+- Restore a gun's original native CantShoot visibility when relinquishing weapon control. Avoid lifting a frozen player's movement speed or replacing an active speed boost when equipping or unequipping a knife.
+- Prevent delayed native weapon restoration from re-equipping an old tool after the player selects a different one. Preserve re-equip when no other tool was selected.
+- Add extracted-source offline regression checks for native menu shortcut bindings and the weapon lifecycle. Luau 0.739 compiles all five scripts and **1,237 assertions** pass (1,066 main-runtime, 171 farm). Live MM2 input and combat outcomes remain unverified for rc.46.
+
 ## 1.0.0-rc.45 — 2026-11-26
 
 - Limit repeated rejected gun and knife triggerbot target scans to a 25 ms window on an unchanged camera while preserving immediate retries when the camera moves, changes, or the window regains focus. Existing cooldown, protected-player, role, cover and screen-only firing gates remain in place.
