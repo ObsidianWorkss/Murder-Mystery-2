@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.49-7499ff" alt="Version 1.0.0-rc.49">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.50-7499ff" alt="Version 1.0.0-rc.50">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.49.** Local validation passes **1,099 main-runtime** and **171 standalone-farm Luau assertions** (1,270 total) and compiles all five entry points. Automatic gun requests now respect the script's existing 1.5-second readiness interval instead of sending again after 0.15 seconds. Reply correlation can distinguish later shots with identical geometry, and recent server-shot feedback remains visible even when subsequent aim checks fail. Manual gun input, knife controls, Right Shift menu and native camera handling remain unchanged. **Improved real-world hit accuracy and reply rate remain unverified**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.50.** Local validation passes **1,114 main-runtime** and **171 standalone-farm Luau assertions** (1,285 total) and compiles all five entry points. Gun diagnostics now retain shot identifiers and classify pending requests interrupted by reload or queue overflow instead of silently losing them. The HUD also retains late server replies for two seconds after receiving them, rather than aging them from the original firing time. Right Shift, the native camera, knife controls and gun cooldown safeguards remain unchanged. **Live hit-rate improvements are not established**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 
@@ -48,7 +48,7 @@ The loader follows `main`, so re-run it to receive updates. [`loader.lua`](loade
 
 ## Features at a glance
 
-For a separate script with no UI, see the [standalone currency farm](docs/AUTO_FARM.md). Ground paths are the default; a separate loader selects experimental prone/noclip underground tweens with 48 studs/second travel and slower pickup stages. Includes pickup retries, role-opponent avoidance, server-confirmed full-bag resets and unlimited reconnect retries with increasing delays when resume APIs are supported. The buyer discovers the active event's collectible currency and crate prices: the current Halloween box costs 600 Candy. It can spend the existing selected currency balance with no session-time, spending, crate-count or godly cap. It never buys premium currency or substitutes keys/Gems/Robux. An optional [low-graphics loader](docs/AUTO_FARM.md#low-graphics-farming) requests 3D-off and a restorable 20 FPS cap where supported. It does not launch clients or establish a 99-player capacity. There are 171 farm checks alongside the main script's 1,066. Long native sessions remain unverified; movement can still trigger position rejection.
+For a separate script with no UI, see the [standalone currency farm](docs/AUTO_FARM.md). Ground paths are the default; a separate loader selects experimental prone/noclip underground tweens with 48 studs/second travel and slower pickup stages. Includes pickup retries, role-opponent avoidance, server-confirmed full-bag resets and unlimited reconnect retries with increasing delays when resume APIs are supported. The buyer discovers the active event's collectible currency and crate prices: the current Halloween box costs 600 Candy. It can spend the existing selected currency balance with no session-time, spending, crate-count or godly cap. It never buys premium currency or substitutes keys/Gems/Robux. An optional [low-graphics loader](docs/AUTO_FARM.md#low-graphics-farming) requests 3D-off and a restorable 20 FPS cap where supported. It does not launch clients or establish a 99-player capacity. There are 171 farm checks alongside the main script's 1,114. Long native sessions remain unverified; movement can still trigger position rejection.
 
 | Area | Included |
 | --- | --- |

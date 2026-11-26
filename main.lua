@@ -17737,6 +17737,43 @@ if previousStats then
         if State.Stats[key] ~= nil and type(value) == "number" then State.Stats[key] = value end
     end
 end
+-- Every submitted gun request must leave an auditable outcome, including if
+-- the script is reloaded or the bounded reply queue fills up. Unknown means
+-- no uniquely correlated server reply, not that a shot missed.
+local function recordUnconfirmedGun(pending,status)
+    State.Stats.GunUnconfirmed += 1
+    table.insert(State.ShotLog, {ShotId=pending.ShotId,SentAt=pending.SentAt,
+        Target=pending.Target and pending.Target.Name,Confirmed=false,
+        Status=status,RequestedPoint=pending.AimPoint,
+        Origin=pending.Origin,BodyPoint=pending.BodyPoint,
+        AimPart=pending.AimPart,VelocitySource=pending.VelocitySource,
+        LeadTime=pending.LeadTime,TargetMode=pending.TargetMode,
+        TimingCoverage=pending.TimingCoverage,TimingPassed=pending.TimingPassed,
+        OnScreenOnly=pending.OnScreenOnly})
+    while #State.ShotLog>10 do table.remove(State.ShotLog,1) end
+end
+local function expirePendingGun(now)
+    while State.PendingGun[1] and now-State.PendingGun[1].SentAt>3 do
+        local expired=table.remove(State.PendingGun,1)
+        recordUnconfirmedGun(expired,"NoCorrelatedResponse")
+        if expired.ShotId==State.GunShotSequence and expired.OwnCharacter==player.Character
+            and (not State.LastGunFeedback or not State.LastGunFeedback.RoundWon) then
+            State.LastGunFeedback={Target=expired.Target and expired.Target.Name,
+                ShotId=expired.ShotId,SentAt=expired.SentAt,UpdatedAt=now,
+                Message="No unique reply matched this shot; outcome unknown"}
+        end
+    end
+end
+local function drainPendingGun(status)
+    while #State.PendingGun>0 do
+        recordUnconfirmedGun(table.remove(State.PendingGun,1),status)
+    end
+end
+local function trimPendingGun()
+    while #State.PendingGun>8 do
+        recordUnconfirmedGun(table.remove(State.PendingGun,1),"QueueCapacityExceeded")
+    end
+end
 do
 -- Saved settings: loaded on every start and written when they change (checked every 2 s by the main heartbeat),
 -- so a rejoin or a new game keeps toggles, sliders, keybinds, protected players and the menu theme.
@@ -17856,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.49"
+State.Version = "1.0.0-rc.50"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20170,7 +20207,7 @@ if gunFired and gunFired:IsA("RemoteEvent") then
         if pending.ShotId == State.GunShotSequence then
         State.LastGunFeedback = {Target = pending.Target and pending.Target.Name,
             TargetHit = hitTarget, Correlation = correlation, ShotId = pending.ShotId, Endpoint = endpoint, HitPart = typeof(hitPart) == "Instance" and hitPart.Name or nil,
-            SentAt = pending.SentAt,
+            SentAt = pending.SentAt,UpdatedAt=now,
             Message = hitTarget and "Reported ray hit target (heuristic match)"
                 or pending.Target and (hitPath and ("Reported ray hit " .. hitPart.Name .. " instead of target (heuristic match)")
                 or "Reported ray missed target (heuristic match)") or "Server shot received"}
@@ -20202,7 +20239,7 @@ if victory and victory:IsA("RemoteEvent") then
         if won and winnerMatches and (role == "Sheriff" or role == "Hero")
             and (reason == "MurdererDied" or reason == "SheriffWin")
             and State.LastGunSentAt and os.clock() - State.LastGunSentAt < 5 then
-            State.LastGunFeedback = {RoundWon = true, SentAt = State.LastGunSentAt,
+            State.LastGunFeedback = {RoundWon = true, SentAt = State.LastGunSentAt,UpdatedAt=os.clock(),
                 Message = "Sheriff victory after your shot"}
         end
     end)
@@ -20436,8 +20473,11 @@ local function sendGun(record, preferred, strict, onScreenOnly)
         -- A failed subsequent aim scan should not immediately erase a
         -- real server reply (or a still-pending request) from the gun HUD.
         local feedback=State.LastGunFeedback
-        if not feedback or type(feedback.SentAt)~="number" or now-feedback.SentAt>=2 then
-            State.LastGunFeedback={Message=message}
+        local updated=feedback and (feedback.UpdatedAt or feedback.SentAt)
+        if not feedback or type(updated)~="number" or now-updated>=2 then
+            if not feedback or feedback.Message~=message or feedback.TargetHit~=nil or feedback.RoundWon then
+                State.LastGunFeedback={Message=message}
+            end
         end
         return false
     end
@@ -20526,7 +20566,8 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     State.LastGunSentAt=now
     State.GunShotSequence = (State.GunShotSequence or 0) + 1
     local shotId=State.GunShotSequence
-    State.LastGunFeedback={ShotId=shotId,SentAt=now,Message="Waiting for server shot feedback"}
+    State.LastGunFeedback={ShotId=shotId,SentAt=now,UpdatedAt=now,
+        Message="Waiting for server shot feedback"}
     local pending={Item=record.Item,Record=record,Target=targetPlayer,ShotId=shotId,
         OwnCharacter = player.Character,TargetCharacter=targetCharacter,
         Origin=origin,SentAt=now,AimPoint=targetFrame.Position,
@@ -20553,7 +20594,7 @@ local function sendGun(record, preferred, strict, onScreenOnly)
         State.Stats.GunSendErrors=(State.Stats.GunSendErrors or 0)+1
         return false
     end
-    while #State.PendingGun>8 do table.remove(State.PendingGun,1) end
+    trimPendingGun()
     State.Stats.GunRequests+=1
     State.LastRequest={Weapon="Gun",Target=targetName,Position=targetFrame.Position,
         Offscreen=solution and solution.Offscreen,Mode=onScreenOnly and "OnScreenAssist" or "MagicBullet",AimPart=solution and solution.AimPart,
@@ -22703,6 +22744,9 @@ function State.Destroy()
     if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
     if State.StopWeaponEquipRecovery then State.StopWeaponEquipRecovery() end
     if not State.Running then return end
+    -- A reload preserves statistics and the shot log. Reconcile outstanding
+    -- requests before disconnecting their server-reply listener.
+    drainPendingGun("InterruptedByUnload")
     State.Running = false
     if State.StopScreenESP then State.StopScreenESP() end
     if State.DestroyTacticalGuide then State.DestroyTacticalGuide() end
@@ -22862,19 +22906,7 @@ connect(RunService.Heartbeat, function(dt)
         State.Settings.CheckedAt = os.clock()
         State.SaveSettings()
     end
-    while State.PendingGun[1] and os.clock() - State.PendingGun[1].SentAt > 3 do
-        local expired = table.remove(State.PendingGun, 1)
-        State.Stats.GunUnconfirmed += 1
-        table.insert(State.ShotLog, {Target = expired.Target and expired.Target.Name,
-            Confirmed = false, Status = "NoCorrelatedResponse", RequestedPoint = expired.AimPoint,
-            AimPart = expired.AimPart, VelocitySource = expired.VelocitySource})
-        if #State.ShotLog > 10 then table.remove(State.ShotLog, 1) end
-        if expired.ShotId == State.GunShotSequence and expired.OwnCharacter == player.Character
-            and (not State.LastGunFeedback or not State.LastGunFeedback.RoundWon) then
-            State.LastGunFeedback = {Target = expired.Target and expired.Target.Name,
-                Message = "No unique reply matched this shot; outcome unknown"}
-        end
-    end
+    expirePendingGun(os.clock())
     State.FeatureGuard.Run("Weapons",syncWeapons)
     if os.clock()>=(State.NextVisualUpdate or 0) then
         State.NextVisualUpdate=os.clock()+State.GetBackgroundInterval(.2)

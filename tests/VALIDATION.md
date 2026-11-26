@@ -1,5 +1,12 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.50
+
+- Official Luau 0.739: all five entry points compiled; **1,285 extracted-source assertions passed** (1,114 main runtime and 171 farm).
+- Thirteen new gun-pending tests cover three-second timeouts, distinct shot IDs, preserving newer feedback, unload/reload interruption, idempotent shutdown, bounded queue overflow and ten-entry shot-history limits.
+- Two additional combat checks confirm late server replies are retained based on receipt time and stale replies eventually yield to recent aim-rejection messages.
+- A read-only rc.49 client showed six submitted requests, three heuristically correlated replies and three unconfirmed responses; the client later transitioned to the Murderer role. This supports the need for more reliable accounting but does not prove improved hit rates. Live rc.50 performance has not yet been measured.
+
 ## Release candidate 1.0.0-rc.49
 
 - Official Luau 0.739 compilation: all five entry points. Extracted-source offline regressions: **1,270 assertions passed** (1,099 main-runtime, 171 standalone farm).

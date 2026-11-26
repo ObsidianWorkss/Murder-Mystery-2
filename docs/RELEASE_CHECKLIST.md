@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.49**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.50**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Gun feedback accounting and freshness (rc.50)
+
+- [x] Pending shots that expire, overflow the eight-request queue or are interrupted by a successful unload are counted as unknown, with their shot IDs and distinct reasons retained in the bounded history.
+- [x] Repeated cleanup does not double-count already removed pending shots. An older timeout cannot overwrite the result of a newer shot.
+- [x] A late server reply remains visible for two seconds after it arrived, while the original shot's send time is preserved for diagnostics.
+- [x] Full Luau 0.739 suite passes 1,285 assertions (1,114 main-runtime, 171 farm) and all five entry points compile.
+- [ ] Reload rc.50 during a quiet lobby interval and verify the same menu/camera behavior in-game. Server hit-rate, FPS and request acceptance have not been validated for rc.50.
 
 ## Gun requests and feedback correlation (rc.49)
 

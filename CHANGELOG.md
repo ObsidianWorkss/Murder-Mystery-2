@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.50 — 2026-11-26
+
+- Reconcile every still-pending gun request when the script unloads or reloads. Retain shot IDs, request timestamps, target information and the precise unknown-outcome cause in the bounded shot history instead of dropping unresolved requests from statistics.
+- When the eight-request reply queue reaches its limit, log each evicted request as unconfirmed with a separate queue-capacity reason. Keep timeout, unload and overflow bookkeeping single-counted, bounded and distinct from a confirmed miss.
+- Preserve late server-shot feedback for two seconds after the reply was actually received (not two seconds after the original shot). Also timestamp timeout outcomes separately from their originating requests, and avoid rewriting identical failed-aim messages repeatedly.
+- Add 15 extracted-source assertions for timeout/reload/overflow lifecycle and feedback freshness; **1,285 offline assertions pass** (1,114 main-runtime, 171 farm) and all five Luau entry points compile. Live firing performance remains server-controlled and unverified for rc.50.
+
 ## 1.0.0-rc.49 — 2026-11-26
 
 - Fix automatic gun request pacing: after a successful request, the triggerbot now uses the script's existing 1.5-second gun-ready window instead of attempting another send after 150 ms. The first valid shot remains immediate; failed aim scans retain responsive 25 ms rechecks and toggling cannot reset cooldown. Manual shots are unaffected.

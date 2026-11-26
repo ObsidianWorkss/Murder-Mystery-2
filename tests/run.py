@@ -31,6 +31,9 @@ for name, (start, end) in sections.items():
     if name == "GUN":
         code = code[:code.rindex("\ndo\n")]
     template = template.replace("-- INSERT_" + name, code)
+start = source.index("local function recordUnconfirmedGun(")
+end = source.index("do\n-- Saved settings:", start)
+template = template.replace("-- INSERT_PENDING_ACCOUNTING", source[start:end])
 with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness = Path(directory) / "combat.luau"
     modes = (root / "tests" / "game_modes.luau").read_text(encoding="utf-8")
@@ -245,4 +248,13 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     if "-- INSERT_" in feedback:
         raise RuntimeError("Unexpanded gun feedback source marker")
     harness.write_text(feedback, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    pending = (root / "tests" / "gun_pending_lifecycle.luau").read_text(encoding="utf-8")
+    start = source.index("local function recordUnconfirmedGun(")
+    end = source.index("do\n-- Saved settings:", start)
+    pending = pending.replace("-- INSERT_GUN_PENDING_LIFECYCLE", source[start:end])
+    if "-- INSERT_" in pending:
+        raise RuntimeError("Unexpanded pending gun lifecycle source marker")
+    harness.write_text(pending, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)

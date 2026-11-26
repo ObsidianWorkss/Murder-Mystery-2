@@ -396,6 +396,7 @@ do
         FireServer=function(_,origin) payloadOrigin=origin.Position end}
     local item={Enabled=true,FindFirstChild=function() return remote end}
     local function record() return {Item=item,LastGun=-math.huge} end
+    -- INSERT_PENDING_ACCOUNTING
     -- INSERT_GUN
     move=.1
     check(sendGun(record()) and payloadOrigin==predictionOrigin and State.PendingGun[1].Origin==payloadOrigin,
@@ -413,6 +414,13 @@ do
     check(not sendGun(record()) and State.LastGunFeedback.Message=="Recent server ray result"
         and State.LastGunSkip and State.LastGunSkip.Message:find("Shot skipped",1,true),
         "rejected aim checks do not erase a recent correlated gun reply in the HUD")
+    State.LastGunFeedback={Message="Late correlated server reply",
+        SentAt=os.clock()-5,UpdatedAt=os.clock(),TargetHit=true}
+    check(not sendGun(record()) and State.LastGunFeedback.Message=="Late correlated server reply",
+        "a late server reply stays visible based on receipt time, not the older request time")
+    State.LastGunFeedback.UpdatedAt=os.clock()-3
+    check(not sendGun(record()) and State.LastGunFeedback.Message:find("Shot skipped",1,true),
+        "an outdated server reply yields to the next actual aim-rejection reason")
     coverage=1; passes=3
     check(not sendGun(record()),"final firing gate rejects incomplete conservative sampling")
     passes=5
