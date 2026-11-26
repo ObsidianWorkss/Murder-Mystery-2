@@ -7,7 +7,7 @@
 3. Open a repository issue and paste the report, your device/input type, and the exact steps that caused the problem.
 4. Include what you expected and what happened. For attacks, distinguish a skipped request, an unconfirmed reply, a reported hit, and an observed elimination.
 
-The report includes build information, capability availability, enabled combat features, operation counts, and aggregate attack counters. `Visuals` reports map/viewer readiness, eligible rigs and attached native visuals. `Updates` reports the latest health and cumulative error counts for weapons, player ESP, threats, gun ESP and pickup. It omits access keys, saved key contents, usernames, user IDs, server IDs, raw feature errors and individual shot payloads. It is copied only when requested; the script does not submit it to an issue tracker.
+The report includes build information, capability availability, enabled combat features, operation counts, and aggregate attack counters. `Triggerbot` reports separate gun/knife aim-check totals, avoided repeated checks and request counts; `Stats.StabSweepErrors` counts isolated blade contact-query failures. `Visuals` reports map/viewer readiness, eligible rigs and attached native visuals. `Updates` reports the latest health and cumulative error counts for weapons, player ESP, threats, gun ESP and pickup. It omits access keys, saved key contents, usernames, user IDs, server IDs, raw feature errors, raw triggerbot feedback and individual shot payloads. It is copied only when requested; the script does not submit it to an issue tracker.
 
 If clipboard access is unavailable, the button prints the report to the developer console. You can also run:
 

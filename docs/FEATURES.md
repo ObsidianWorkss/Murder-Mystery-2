@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.46**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.47**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 

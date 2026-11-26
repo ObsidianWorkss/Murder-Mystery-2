@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.46**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.47**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Camera and combat resilience (rc.47)
+
+- [x] Eight camera-guard fixture assertions preserve native Shift Lock, hold-pan and active camera rotation, and bound repeated stuck-cursor releases to a 50 ms retry period.
+- [x] Six blade-scan fixture assertions isolate individual collision-query errors, limit error retries to one per 250 ms and verify automatic recovery.
+- [x] Three support-report assertions cover aggregate triggerbot counters, blade-scan error counts and omission of player names/raw error messages.
+- [x] Official Luau 0.739 compiles all five entry points and the complete offline suite passes 1,254 assertions (1,083 main-runtime, 171 farm).
+- [ ] Check cursor handling, gameplay FPS, knife contacts and triggerbot outcomes after rc.47 is reloaded in a real MM2 session. The current live rc.46 read-only check found normal cursor behavior with no camera corrections; that is not rc.47 validation.
 
 ## Input and weapon restoration (rc.46)
 

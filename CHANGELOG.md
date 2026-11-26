@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.47 — 2026-11-26
+
+- Preserve Roblox's native camera-toggle hold-pan cursor lock instead of incorrectly clearing it. Throttle repeated unwanted cursor corrections to at most one every 50 ms if another controller immediately overrides the release, avoiding per-frame property-write fights.
+- Isolate individual knife contact-scanning errors so one transient physics-query failure cannot cancel the main heartbeat's motion, feedback, or weapon updates. Retry only the failed weapon after 250 ms and record aggregate error counts.
+- Extend the privacy-safe support report with triggerbot gun/knife scan counts, avoided redundant scans and request totals; omit raw last-check messages and player names.
+- Add seventeen extracted-source regressions for camera state and repair pacing, fault-isolated blade scans and diagnostic privacy. Luau 0.739 compilation and 1,254 assertions (1,083 main-runtime, 171 farm) pass offline. Live rc.47 FPS and hit results remain unverified.
+
 ## 1.0.0-rc.46 — 2026-11-26
 
 - Keep Right Shift as a permanent PC menu shortcut even if a saved keybind changes the optional menu key (such as F10). Reserve it against feature bindings, and support it in the native action binding and fallback keyboard handler without consuming Left Shift.

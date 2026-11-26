@@ -1,5 +1,13 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.47
+
+- Official Luau 0.739 compiles all five entry points; **1,254 extracted-source offline assertions pass** (1,083 main runtime and 171 standalone farm).
+- The native MM2 PlayerModule's CameraToggleStateController was inspected read-only and confirms that active hold-pan intentionally sets `LockCurrentPosition`. The updated guard now preserves that state, as well as selected Shift Lock, rotation and camera toggle. Eight mock checks cover intended locks, stale locks, rotation-mode restoration and 50 ms corrective-write pacing.
+- Six fault-injection checks confirm that a transient blade physics-query error is counted, throttled and retried without suppressing other weapon scans; the heartbeat continues.
+- Three support-report checks confirm safe aggregate triggerbot and scan-failure diagnostics without player identities or raw internal messages.
+- A read-only rc.46 MM2 client showed `MouseBehavior.Default`, native Shift Lock off and no camera-guard corrections. **rc.47 was not injected or live-tested**. FPS change, verified hits, visual behavior and server acceptance remain unknown.
+
 ## Release candidate 1.0.0-rc.46
 
 - Official Luau 0.739 offline extracted-source tests: **1,237 passed** (1,066 main-runtime and 171 standalone farm); all five entry points compiled.

@@ -219,3 +219,21 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         raise RuntimeError("Unexpanded menu keybinding source marker")
     harness.write_text(hotkeys, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    camera_guard = (root / "tests" / "camera_guard.luau").read_text(encoding="utf-8")
+    start = source.index("    function State.CheckCameraLock()")
+    end = source.index("    function State.StopCameraGuard()", start)
+    camera_guard = camera_guard.replace("-- INSERT_CAMERA_GUARD", source[start:end])
+    if "-- INSERT_" in camera_guard:
+        raise RuntimeError("Unexpanded camera guard source marker")
+    harness.write_text(camera_guard, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    sweeps = (root / "tests" / "weapon_sweeps.luau").read_text(encoding="utf-8")
+    start = source.index("local function scanWeaponContacts()")
+    end = source.index("-- Select one nearby body point for a manual click", start)
+    sweeps = sweeps.replace("-- INSERT_SAFE_WEAPON_SWEEPS", source[start:end])
+    if "-- INSERT_" in sweeps:
+        raise RuntimeError("Unexpanded blade scan source marker")
+    harness.write_text(sweeps, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

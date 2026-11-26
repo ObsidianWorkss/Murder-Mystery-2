@@ -17722,7 +17722,8 @@ local State = {
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true, KnifeDodgeMode = "Side teleport",
         Triggerbot = false, KnifeTriggerbot = false},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
-        StabRequests = 0, StabContactReports = 0, PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
+        StabRequests = 0, StabContactReports = 0, StabSweepErrors = 0,
+        PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
         GunReplies = 0, GunTargetHits = 0, GunMisses = 0, GunUnconfirmed = 0,
         SkippedGunShots = 0, SkippedKnifeThrows = 0},
     PendingGun = {}, Motion = {}, ServerBlockers = previousBlockers or setmetatable({}, {__mode = "k"}),
@@ -17855,7 +17856,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.46"
+State.Version = "1.0.0-rc.47"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -17874,20 +17875,32 @@ function State.GetSupportSnapshot()
     local stats = {}
     flags.KillAll=State.KillAll and State.KillAll.Active==true or false
     for _, name in ipairs({"GunRequests", "GunReplies", "GunTargetHits", "GunMisses", "GunUnconfirmed",
-        "SkippedGunShots", "KnifeRequests", "SkippedKnifeThrows", "StabRequests", "StabContactReports"}) do
+        "SkippedGunShots", "KnifeRequests", "SkippedKnifeThrows", "StabRequests", "StabContactReports",
+        "StabSweepErrors"}) do
         stats[name] = State.Stats[name] or 0
     end
     local performance = {}
     for _, name in ipairs({"Selections", "CandidateEvaluations", "PrunedCandidates", "LastSelectionMs", "MotionSweeps", "PreviewCacheHits"}) do
         performance[name] = State.Performance[name] or 0
     end
+    -- Only aggregate triggerbot counters leave the client. Raw statuses and
+    -- last-check messages can contain internal errors or player names.
+    local bot = State.Triggerbot
+    local triggerbot = bot and {
+        GunEnabled = State.Config.Triggerbot == true,
+        KnifeEnabled = State.Config.KnifeTriggerbot == true,
+        GunChecks = bot.AimChecks or 0, KnifeChecks = bot.KnifeChecks or 0,
+        GunChecksAvoided = bot.SkippedGunChecks or 0,
+        KnifeChecksAvoided = bot.SkippedKnifeChecks or 0,
+        GunRequests = bot.Shots or 0, KnifeStabRequests = bot.Stabs or 0,
+    } or nil
     return {Version=State.Version,Build=State.Build,Channel=State.ReleaseChannel,Running=State.Running,
         PlaceId=game.PlaceId,PlaceVersion=game.PlaceVersion,InputMode=State.InputMode or "Unknown",
         Players=#Players:GetPlayers(),WeaponHandlers=handlers,Connections=connections,PendingShots=#State.PendingGun,
         Capabilities={Clipboard=type(setclipboard)=="function" or type(toclipboard)=="function",
             Touch=type(firetouchinterest)=="function",FileRead=type(readfile)=="function" and type(isfile)=="function",
             FileWrite=type(writefile)=="function" and type(makefolder)=="function" and type(isfolder)=="function"},
-        Settings=flags,Stats=stats,Performance=performance,
+        Settings=flags,Stats=stats,Performance=performance,Triggerbot=triggerbot,
         WeaponEquip=State.GetWeaponEquipSnapshot and State.GetWeaponEquipSnapshot() or nil,
         MapVote=State.GetMapVoteSnapshot and State.GetMapVoteSnapshot() or nil,
         KnifeDodge=State.GetKnifeDodgeSnapshot and State.GetKnifeDodgeSnapshot() or nil,
@@ -18121,9 +18134,13 @@ do
         end
         local firstPerson = controller.inFirstPerson or player.CameraMode == Enum.CameraMode.LockFirstPerson
         local togglePan = controller.isCameraToggle and input.getTogglePan and input.getTogglePan()
+        -- The native camera-toggle controller also intentionally holds the
+        -- cursor at its current position while the pan button is held. It may
+        -- report this separately from getRotationActivated().
+        local holdPan = controller.isCameraToggle and input.getHoldPan and input.getHoldPan()
         local rotation = rightHeld
             or (input.getRotationActivated and input.getRotationActivated())
-        if selected or firstPerson or togglePan or rotation then
+        if selected or firstPerson or togglePan or holdPan or rotation then
             guard.Status = "Native camera selection preserved"
             return false
         end
@@ -18132,6 +18149,15 @@ do
             guard.Status = "Normal free cursor"
             return false
         end
+        -- If another camera controller immediately restores the same lock,
+        -- do not fight it with hundreds of property writes per second.
+        -- Keep retrying a stale lock at most once every 50 ms.
+        local now=os.clock()
+        if now < (guard.NextCorrectionAt or -math.huge) then
+            guard.Status = "Waiting for native camera to release cursor"
+            return false
+        end
+        guard.NextCorrectionAt=now+.05
         -- Clear both the current value and CameraUtils' cached restore value, so the next native frame stays free.
         UIS.MouseBehavior = Enum.MouseBehavior.Default
         utils.setMouseBehaviorOverride(Enum.MouseBehavior.Default)
@@ -20657,6 +20683,22 @@ local function scanStabContacts(record)
         end
     end
 end
+-- A transient physics-query error must not abort the main heartbeat or other
+-- weapon scans. Retry only the failing weapon after a short recovery window.
+local function scanWeaponContacts()
+    local now=os.clock()
+    for _,record in pairs(State.WeaponHandlers) do
+        if not record.NextBladeScanRetryAt or now>=record.NextBladeScanRetryAt then
+            local ok=pcall(scanStabContacts,record)
+            if ok then
+                record.NextBladeScanRetryAt=nil
+            else
+                record.NextBladeScanRetryAt=now+.25
+                State.Stats.StabSweepErrors=(State.Stats.StabSweepErrors or 0)+1
+            end
+        end
+    end
+end
 -- Select one nearby body point for a manual click; no automatic attack loop.
 function State.SelectStabAssistTarget(onScreenOnly,automated)
     if (not automated and not State.Config.StabAssist) or not State.CanUseCombatWeapon("Knife") then return nil end
@@ -22768,7 +22810,7 @@ installPerformancePreset({State=State,UpdateVisuals=function() updateESP(); upda
 end
 local elapsed, pingElapsed = 0, 0
 connect(RunService.Heartbeat, function(dt)
-    for _, record in pairs(State.WeaponHandlers) do scanStabContacts(record) end
+    scanWeaponContacts()
     sampleMotion(os.clock())
     elapsed += dt
     pingElapsed += dt

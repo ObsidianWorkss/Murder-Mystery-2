@@ -4,7 +4,7 @@ local function check(value,message)
 end
 do
     local State={Version="1.0.0-rc.1",Build="test",ReleaseChannel="Release candidate",Running=true,
-        Config={Aim=true,ExcludedPlayers={SecretPlayer=true}},Stats={GunRequests=2,SecretKey="do not include"},
+        Config={Aim=true,ExcludedPlayers={SecretPlayer=true}},Stats={GunRequests=2,StabSweepErrors=4,SecretKey="do not include"},
         WeaponHandlers={[{}]={}},Connections={{Connected=true},{Connected=false},{}},PendingGun={{}},
         Performance={Selections=5,TargetName="do not include"},Target="PrivatePlayer"}
     local Players={GetPlayers=function() return {{},{}} end}
@@ -20,6 +20,7 @@ do
     check(report.Settings.Aim and not report.Settings.KillAura,"support settings are explicit booleans")
     check(report.Target==nil and report.Settings.ExcludedPlayers==nil and report.Stats.SecretKey==nil
         and report.Performance.TargetName==nil,"support report excludes identity and arbitrary secret fields")
+    check(report.Stats.StabSweepErrors==4,"support reports aggregate blade-scan failures without raw error data")
     check(not report.Capabilities.Clipboard and not report.Capabilities.FileWrite,"missing optional capabilities are reported")
     toclipboard=function() end; readfile=function() end; isfile=function() end
     report=State.GetSupportSnapshot()
@@ -28,6 +29,18 @@ do
     State.KillAll={Active=true,Targets={"PrivatePlayer"}}
     report=State.GetSupportSnapshot()
     check(report.Settings.KillAll==true and report.KillAll==nil,"support reports Kill all activity without leaking its target queue")
+    State.Triggerbot={Status="PrivatePlayer injected internal error",AimChecks=27,KnifeChecks=10,
+        SkippedGunChecks=180,SkippedKnifeChecks=42,Shots=3,Stabs=2,
+        LastAimCheck={Sent=false,Message="PrivatePlayer"}}
+    State.Config.Triggerbot=true
+    report=State.GetSupportSnapshot()
+    check(report.Triggerbot and report.Triggerbot.GunChecks==27 and report.Triggerbot.KnifeChecks==10
+        and report.Triggerbot.GunChecksAvoided==180 and report.Triggerbot.KnifeChecksAvoided==42
+        and report.Triggerbot.GunRequests==3 and report.Triggerbot.KnifeStabRequests==2
+        and report.Triggerbot.GunEnabled and not report.Triggerbot.KnifeEnabled,
+        "support report provides bounded triggerbot diagnostics for rejected and sent checks")
+    check(report.Triggerbot.Status==nil and report.Triggerbot.LastAimCheck==nil,
+        "triggerbot report omits user names and raw internal errors")
 end
 do
     local mode,executions="success",0
