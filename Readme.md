@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.47-7499ff" alt="Version 1.0.0-rc.47">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.48-7499ff" alt="Version 1.0.0-rc.48">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.47.** Local validation passes **1,083 main-runtime** and **171 standalone-farm Luau assertions** (1,254 total) and compiles all five entry points. The camera guard now respects Roblox's native hold-pan mode and limits repeated cursor corrections to one every 50 ms. Blade contact scans recover independently from temporary physics-query errors, while the support report exposes aggregate triggerbot rejection counters without private error text. **Right Shift still opens the PC menu**, with Left Shift left to Roblox. **rc.47 live accuracy and runtime performance are not yet verified**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.48.** Local validation passes **1,087 main-runtime** and **171 standalone-farm Luau assertions** (1,258 total) and compiles all five entry points. An explicit **E/right-click knife throw works without an assisted target**: it falls back to the cursor while preserving excluded-player checks. A chosen assisted target stays locked through charging, and automated throws still require a valid target. The existing camera, triggerbot, weapon-recovery and Right Shift menu safeguards remain. **Live combat hit accuracy is not guaranteed**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

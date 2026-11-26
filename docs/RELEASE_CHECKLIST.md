@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.47**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.48**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Knife input and live read-only diagnostics (rc.48)
+
+- [x] Manual E/right-click knife charge without an aim-assist target reaches the native cursor CFrame instead of being rejected by the default clear-target setting.
+- [x] Strict automated throws still reject a missing target; a locked assisted target remains protected through release. Manual cursor fallback still refuses shots crossing excluded players and never switches to another player midway through charging.
+- [x] Live read-only rc.47 inspection confirmed WeaponService:GetMouseTargetCFrame returns a valid CFrame, current menu bindings prioritize Right Shift above native mouse-lock, and five monitored update systems reported zero errors.
+- [x] Full offline regression suite passes 1,258 assertions (1,087 main-runtime, 171 standalone farm), and all five Luau entry points compile.
+- [ ] Verify E/right-click release and server acceptance in an actual knife round. The inspected live client had no knife or gun equipped; no guaranteed-hit or proven FPS improvement claim.
 
 ## Camera and combat resilience (rc.47)
 

@@ -1,5 +1,12 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.48
+
+- Official Luau 0.739 offline extracted-source tests: **1,258 passed** (1,087 main-runtime plus 171 standalone farm). All five entry points compiled.
+- Four added knife-throw assertions validate manual fallback without a clear assisted target, protected-player path rejection during fallback, no surprise retargeting after charge begins, and continued strict gating of automated throws. Existing charge cancellation, cooldown, target-lock and remote-failure tests still pass.
+- Read-only MM2 rc.47 session: the live native WeaponService:GetMouseTargetCFrame call returned a finite CFrame; Right Shift and the saved F10 key both appeared in the script's registered high-priority menu action. The five monitored script update categories had zero reported errors. At the observation point the player had no weapon equipped and both triggerbots were off, so firing performance was not measured.
+- A console animation error and additional scripts were present in the session. Their ownership/cause was not established and was not changed. rc.48 attack outcomes and actual server damage still require in-game verification.
+
 ## Release candidate 1.0.0-rc.47
 
 - Official Luau 0.739 compiles all five entry points; **1,254 extracted-source offline assertions pass** (1,083 main runtime and 171 standalone farm).

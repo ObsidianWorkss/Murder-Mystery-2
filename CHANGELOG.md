@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.48 — 2026-11-26
+
+- Fix manual knife throwing with the default locked-target setting: E/right-click no longer fails just because no assisted target is available. A no-target manual charge releases at the cursor, including if a new candidate appears midway through the charge.
+- Preserve target-lock safety for already-selected assisted players and keep strict automated throws gated on a clear target. Existing excluded-player path rejection, weapon readiness, cooldown, respawn and charging cancellation still apply.
+- Inspect live rc.47 read-only: Right Shift and optional F10 menu actions were bound, the five guarded feature categories reported zero errors, and WeaponService returned a valid cursor CFrame. The current client had no weapon equipped with triggerbots off, so live hit-rate testing was unavailable.
+- Four new extracted-source combat assertions pass; **1,258 assertions** total (1,087 main-runtime, 171 farm) and all five Luau entry points compile. Server damage outcomes remain unverified.
+
 ## 1.0.0-rc.47 — 2026-11-26
 
 - Preserve Roblox's native camera-toggle hold-pan cursor lock instead of incorrectly clearing it. Throttle repeated unwanted cursor corrections to at most one every 50 ms if another controller immediately overrides the release, avoiding per-frame property-write fights.

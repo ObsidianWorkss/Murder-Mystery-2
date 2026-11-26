@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.47**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.48**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 
@@ -44,12 +44,12 @@ The mode suppresses native script ESP in favor of projected companion boxes/labe
 | Knife triggerbot | Automatically stabs a clear on-screen opponent within 6.5 studs while you are murderer. No crosshair contact or dwell needed. Independent of gun triggerbot; off by default. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |
-| Require clear throw target | Skips assisted throws without a clear target. Keeps the charged target through release instead of silently switching or throwing at the cursor. Enabled by default. |
+| Lock assisted throw target | When a clear assisted target is chosen, keep it through release instead of silently switching or falling back to the cursor. Normal E/right-click throws without a target still use the cursor. Enabled by default. |
 | Clicked stab assist | Attempts contact with the nearest clear opponent within 6.5 studs when the murderer clicks to stab. Enabled by default. |
 | Stab sweep | Checks blade overlaps and movement during a stab. |
 | Kill aura | Automatically swings/reports contact for an eligible owned knife role and opponent; physical blade overlap is not required. Disabled by default. |
 
-Clicking with a knife stabs; it does not automatically throw. Turn off **Knife throw prediction** for manual cursor throws. To keep prediction while allowing cursor fallback when no target is available, turn off **Require clear throw target**.
+Clicking with a knife stabs; it does not automatically throw. Press **E or right-click** to throw. Knife prediction helps when a clear target is available, but a manual throw without a target still follows your cursor. With **Lock assisted throw target** enabled, a previously selected assisted target must remain valid through release; automatic attacks always require a valid target. Excluded-player checks still apply.
 
 Assistance does not move the camera or cursor. Gun shots retain wall, player-path, and exclusion checks. Nearby stab assistance respects range, exclusions, and line of sight. Target death, character replacement, weapon changes, or lost visibility can cancel a charged throw.
 

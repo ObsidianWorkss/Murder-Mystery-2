@@ -303,11 +303,25 @@ do
         local f=table.remove(jobs,1)
         assert(f,"missing charge job"); f()
     end
-    sends=0; acquired=nil
+    sends=0; acquired=nil; releaseTarget=nil; releaseLost=true
     r=record()
-    check(not startThrow(r) and #jobs==0 and r.LastThrow==-math.huge,
-        "protected throw without target does not charge or consume cooldown")
-    acquired=near; releaseLost=true; r=record()
+    check(startThrow(r) and #jobs==1 and r.Charging,
+        "manual right-click can charge a knife even without a clear assisted target")
+    release()
+    check(sends==1 and State.LastRequest.ManualFallback and State.LastRequest.Target==nil,
+        "manual throw without an assisted target releases toward the player's cursor")
+    r=record(); startThrow(r); excludedPath=true; release(); excludedPath=false
+    check(sends==1 and not r.Charging and r.LastThrow==-math.huge,
+        "manual cursor fallback still refuses shots crossing an excluded player")
+    r=record(); releaseLost=false; releaseTarget=nil
+    startThrow(r); releaseTarget=far; release()
+    check(sends==2 and State.LastRequest.ManualFallback and State.LastRequest.Target==nil,
+        "manual no-target charge cannot silently retarget to another player during release")
+    sends=0
+    r=record()
+    check(not startThrow(r,near,true) and #jobs==0 and r.LastThrow==-math.huge,
+        "automated target-locked throws still require a clear target before charging")
+    acquired=near; releaseTarget=near; releaseLost=true; r=record()
     startThrow(r); release()
     check(sends==0 and not r.Charging and r.LastThrow==-math.huge,
         "losing protected target cancels without cursor fallback")

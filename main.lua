@@ -17856,7 +17856,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.47"
+State.Version = "1.0.0-rc.48"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20788,7 +20788,10 @@ local function startThrow(record, preferred, strict, canRelease)
     local handle=record.Item:FindFirstChild("Handle")
     if not remote or not remote:IsA("RemoteEvent") or not handle or not handle:IsA("BasePart") then knifeFeedback("Knife throw objects unavailable"); return false end
     local chosen=State.Config.KnifeAim and chooseTarget("Knife",handle.Position,record.Item,preferred,strict)
-    if not chosen and (strict or (State.Config.KnifeAim and State.Config.RequireClearKnifeTarget)) then
+    -- A player-initiated E/right-click throw is still a real manual throw
+    -- when there is no aim-assist target. Only automated strict throws require
+    -- a target before charging.
+    if not chosen and strict then
         State.Stats.SkippedKnifeThrows += 1
         knifeFeedback("No clear throw target"); return false
     end
@@ -20832,10 +20835,16 @@ local function startThrow(record, preferred, strict, canRelease)
             end
             local originFrame=handle.CFrame
             local lockTarget=strict or (chargedTarget~=nil and State.Config.RequireClearKnifeTarget)
-            local targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
-            -- Cursor fallback is explicit; protected assisted throws keep their target.
+            local targetFrame,targetName,solution
+            -- Never silently pick a new assisted player after starting a
+            -- no-target manual charge in locked-target mode.
+            if chargedTarget or strict or not State.Config.RequireClearKnifeTarget then
+                targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
+            end
+            -- Player-initiated throws keep native cursor fallback. A charged
+            -- assisted target remains locked when the clear-target toggle is on.
             local manual=false
-            if not targetFrame and not strict and (not State.Config.KnifeAim or not State.Config.RequireClearKnifeTarget) then
+            if not targetFrame and not strict and (not chargedTarget or not State.Config.RequireClearKnifeTarget) then
                 targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
             end
             if not targetFrame then
@@ -26448,7 +26457,7 @@ local installKeybinds=function(C)
         {"Combat","ConservativeGun","Conservative gun shots"},{"Combat","TargetContinuity","Stable target choice"},
         {"Combat","KnifeAim","Knife throw prediction"},
         {"Combat","Triggerbot","Gun triggerbot"},{"Combat","KnifeTriggerbot","Knife triggerbot"},
-        {"Combat","KnifeAllDirections","All-direction knife aim"},{"Combat","RequireClearKnifeTarget","Require clear throw target"},
+        {"Combat","KnifeAllDirections","All-direction knife aim"},{"Combat","RequireClearKnifeTarget","Lock assisted throw target"},
         {"Combat","StabAssist","Clicked stab assist"},{"Combat","StabSweep","Stab sweep"},
         {"Combat","AuraEquipKnife","Equip knife for aura"},{"Combat","AuraExtendedReach","Extended stab reach"},
         {"Combat","AutoKnifeDodge","Dodge incoming knives"},{"Combat","AutoPickup","Auto gun pickup"},
@@ -26986,7 +26995,8 @@ local createMobileUI = function(C)
     mobile.KnifeTriggerbotStatus=knife:Paragraph({Title="Triggerbot status",Desc="Off"})
     option(knife, "Knife throw prediction", "KnifeAim", "Leads throws to where players will be.")
     option(knife, "All-direction knife aim", "KnifeAllDirections", "Also target players off screen.")
-    option(knife, "Require clear throw target", "RequireClearKnifeTarget", "Only throw at a clear target.")
+    option(knife, "Lock assisted throw target", "RequireClearKnifeTarget",
+        "Keep a selected target during a charged throw. Manual throws without a target use your cursor.")
     option(knife, "Clicked stab assist", "StabAssist", "Clicks stab the nearest player in reach.")
     if State.SetKillAura then
         option(automation,"Kill aura","KillAura","Swings at eligible opponents while you have a knife role (Murderer, Zombie or Freezer). Server decides damage.")
