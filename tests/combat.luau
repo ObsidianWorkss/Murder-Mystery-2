@@ -409,6 +409,10 @@ do
     target.Excluded=false; State.Config.ConservativeGun=true; coverage=.8
     payloadOrigin=nil
     check(not sendGun(record()) and payloadOrigin==nil,"final firing gate rejects partial timing coverage")
+    State.LastGunFeedback={Message="Recent server ray result",SentAt=os.clock(),TargetHit=false}
+    check(not sendGun(record()) and State.LastGunFeedback.Message=="Recent server ray result"
+        and State.LastGunSkip and State.LastGunSkip.Message:find("Shot skipped",1,true),
+        "rejected aim checks do not erase a recent correlated gun reply in the HUD")
     coverage=1; passes=3
     check(not sendGun(record()),"final firing gate rejects incomplete conservative sampling")
     passes=5

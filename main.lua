@@ -17856,7 +17856,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.48"
+State.Version = "1.0.0-rc.49"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18819,9 +18819,7 @@ local installAimFeedbackSafety = function(State)
         local receipts=State.GunReplyReceipts
         for i=#receipts,1,-1 do
             local receipt=receipts[i]
-            if now-receipt.Time>3 then table.remove(receipts,i)
-            elseif receipt.Item==item and receipt.Origin==origin and receipt.Endpoint==endpoint
-                and receipt.HitPart==hitPart then return nil,"Duplicate or indistinguishable reply" end
+            if now-receipt.Time>3 then table.remove(receipts,i) end
         end
         local match
         for index,pending in ipairs(State.PendingGun) do
@@ -18842,8 +18840,22 @@ local installAimFeedbackSafety = function(State)
                 end
             end
         end
+        local pending=match and State.PendingGun[match]
+        for _,receipt in ipairs(receipts) do
+            if receipt.Item==item and receipt.Origin==origin and receipt.Endpoint==endpoint
+                and receipt.HitPart==hitPart then
+                -- A subsequent legitimate shot can have identical geometry.
+                -- Only a new request SENT after the prior reply can claim
+                -- that geometry again. Old/ambiguous notifications stay blocked.
+                if not pending or pending.SentAt<=receipt.Time
+                    or (receipt.ShotId and receipt.ShotId==pending.ShotId) then
+                    return nil,"Duplicate or indistinguishable reply"
+                end
+            end
+        end
         if not match then return nil,"Unmatched or stale reply" end
-        table.insert(receipts,{Item=item,Origin=origin,Endpoint=endpoint,HitPart=hitPart,Time=now})
+        table.insert(receipts,{Item=item,Origin=origin,Endpoint=endpoint,HitPart=hitPart,
+            ShotId=pending.ShotId,Time=now})
         while #receipts>16 do table.remove(receipts,1) end
         return match,"Heuristic"
     end
@@ -20419,7 +20431,14 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     if not State.Config.MagicBullet or not ready(record) or os.clock()-record.LastGun<0.1 then return end
     local function skip(message)
         State.Stats.SkippedGunShots+=1
-        State.LastGunFeedback={Message=message}
+        local now=os.clock()
+        State.LastGunSkip={Message=message,At=now}
+        -- A failed subsequent aim scan should not immediately erase a
+        -- real server reply (or a still-pending request) from the gun HUD.
+        local feedback=State.LastGunFeedback
+        if not feedback or type(feedback.SentAt)~="number" or now-feedback.SentAt>=2 then
+            State.LastGunFeedback={Message=message}
+        end
         return false
     end
     if not record.Item.Enabled then return skip("Gun is not ready to fire") end
@@ -20529,6 +20548,7 @@ local function sendGun(record, preferred, strict, onScreenOnly)
         if State.GunShotSequence==shotId then
             record.LastGun,State.LastGunSentAt=previousLastGun,previousSentAt
             State.LastGunFeedback={ShotId=shotId,Message="Shot request failed: "..tostring(why)}
+            State.LastGunSkip={Message=State.LastGunFeedback.Message,At=os.clock()}
         end
         State.Stats.GunSendErrors=(State.Stats.GunSendErrors or 0)+1
         return false
@@ -26290,9 +26310,11 @@ local installTriggerbot=function(C)
             if not State.Config.Triggerbot then reset("Gun triggerbot off"); return end
             if not State.Config.MagicBullet then reset("Turn on Gun aim"); return end
             if C.CanUseWeapon and not C.CanUseWeapon("Gun") or not C.CanUseWeapon and C.Role(player)~="Sheriff" and C.Role(player)~="Hero" then reset("Waiting for an eligible gun role"); return end
-            -- Match the native tool's readiness instead of imposing a 3-second wait.
-            -- Bound requests and unresolved feedback; toggling cannot reset either gate.
-            if not item.Enabled or record.GunSending or now-math.max(record.LastGun or -math.huge,bot.LastShot)<.15 then
+            -- Match the existing 1.5 s gun-ready gate used by tactical guidance.
+            -- Item.Enabled alone can remain true while the server rejects
+            -- repeated requests during a reload. Keep the first-shot reaction
+            -- immediate; toggling cannot shorten an existing reload window.
+            if not item.Enabled or record.GunSending or now-math.max(record.LastGun or -math.huge,bot.LastShot)<1.5 then
                 reset("Waiting for gun cooldown"); return
             end
             for _,pending in ipairs(State.PendingGun or {}) do
@@ -26314,7 +26336,9 @@ local installTriggerbot=function(C)
                 reset("Assisted shot sent; outcome is server-controlled")
             else
                 if sent==false then bot.GunRejection=reject(item,now) end
-                reset(sent==false and State.LastGunFeedback and State.LastGunFeedback.Message
+                local lastSkip=State.LastGunSkip
+                local reason=lastSkip and lastSkip.At and now-lastSkip.At<.25 and lastSkip.Message
+                reset(sent==false and (reason or State.LastGunFeedback and State.LastGunFeedback.Message)
                     or "Waiting for gun readiness")
             end
             bot.LastAimCheck={At=now,Sent=sent==true,Message=bot.Status}

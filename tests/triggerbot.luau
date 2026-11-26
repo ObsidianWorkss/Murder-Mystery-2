@@ -68,7 +68,8 @@ do
     f.Step(.1); check(f.Attempts==1,"fast reaction respects the bounded request interval")
     f.State.SetTriggerbot(false); f.State.SetTriggerbot(true); f.Step()
     check(f.Attempts==1,"toggle cannot reset gun cooldown")
-    f.Step(.051); check(f.Attempts==2,"gun retries without the old three-second delay")
+    f.Step(.051); check(f.Attempts==1,"automatic gun respects the game's longer gun-reload window")
+    f.Step(1.4); check(f.Attempts==2,"gun resumes promptly after its full reload window")
 end
 for _,case in ipairs({
     {"menu or text input",function(f) f.Blocked=true end},
@@ -128,10 +129,15 @@ do
     for _=1,240 do f.Step(1/240) end
     check(f.Bot.AimChecks<=42 and f.Bot.SkippedGunChecks>=190,
         "240 Hz idle gun checks stay bounded near 40 Hz")
-    f=fixture(); f.State.SetTriggerbot(true); f.State.PendingGun={{Item=f.Gun,SentAt=f.Now}}; f.Step(.74)
+    f=fixture(); f.State.SetTriggerbot(true)
+    f.State.PendingGun={{Item=f.Gun,SentAt=f.Now}}
+    f.Record.LastGun=f.Now; f.Bot.LastShot=f.Now
+    f.Step(.74)
     check(f.Attempts==0,"unresolved feedback blocks automatic retry after the request interval")
     f.Step(.02)
-    check(f.Attempts==1,"unanswered feedback has a bounded timeout instead of stalling three seconds")
+    check(f.Attempts==0,"feedback timeout alone cannot bypass a gun's reload window")
+    f.Step(.75)
+    check(f.Attempts==1,"unanswered feedback cannot stall the next shot beyond gun readiness")
     f=fixture(); f.State.SetTriggerbot(true); f.Send=false; f.Step(); f.Blocked=true; f.Step()
     check(f.Bot.BeforePause=="No clear on-screen shot" and f.Bot.LastAimCheck.Message=="No clear on-screen shot","pause preserves last rejection")
     f=fixture(); f.State.SetTriggerbot(true); f.ThrowError=true; f.Step()

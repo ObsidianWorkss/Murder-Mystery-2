@@ -2,7 +2,7 @@
 
 [Overview](../Readme.md) · [Support](SUPPORT.md) · [Validation](../tests/VALIDATION.md)
 
-Detailed behavior and controls for **v1.0.0-rc.48**. Experimental actions remain subject to server validation.
+Detailed behavior and controls for **v1.0.0-rc.49**. Experimental actions remain subject to server validation.
 
 ## Halloween and event modes
 
@@ -40,7 +40,7 @@ The mode suppresses native script ESP in favor of projected companion boxes/labe
 | Aim assist | Master switch for weapon assistance. Enabled by default. |
 | Gun aim | Redirects a fired shot toward a clear body point on an eligible opponent for the current mode, including targets outside the camera view. |
 | Conservative gun shots | Requires the nominal aim ray and five additional timing samples to intersect the target geometry. Skips uncertain shots; enabled by default. Turn off to restore the previous timing-based ranking. |
-| Gun triggerbot | Automatically aims at a clear visible on-screen opponent for the current gun role. Both body sample and predicted aim point must remain on screen. Requires Aim assist and Gun aim. Off by default. |
+| Gun triggerbot | Automatically aims at a clear visible on-screen opponent for the current gun role. Both body sample and predicted aim point must remain on screen. Requires Aim assist and Gun aim. Successful automatic requests respect the existing 1.5-second gun-ready interval; failed aim scans can retry sooner. Off by default. |
 | Knife triggerbot | Automatically stabs a clear on-screen opponent within 6.5 studs while you are murderer. No crosshair contact or dwell needed. Independent of gun triggerbot; off by default. |
 | Knife throw prediction | Predicts movement when you explicitly throw. Refreshes the solution after charging. |
 | All-direction knife aim | Includes clear offscreen targets, with visible targets ranked first. Enabled by default. |

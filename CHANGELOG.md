@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.49 — 2026-11-26
+
+- Fix automatic gun request pacing: after a successful request, the triggerbot now uses the script's existing 1.5-second gun-ready window instead of attempting another send after 150 ms. The first valid shot remains immediate; failed aim scans retain responsive 25 ms rechecks and toggling cannot reset cooldown. Manual shots are unaffected.
+- Fix feedback correlation for two separate gun shots with identical origin, endpoint, and hit part. A newly issued request after an earlier reply can match the next reply; duplicates, overlapping older requests, replaced characters and removed weapon handlers remain guarded. The game does not echo shot IDs, so all matches remain heuristic.
+- Keep a recent server reply or pending-shot message visible for up to two seconds rather than replacing it on every failed aim scan; preserve the latest rejection separately for accurate triggerbot status.
+- Add extracted-source gun feedback fixtures and extend combat/triggerbot regressions. **1,270 offline assertions pass** (1,099 main runtime, 171 standalone farm) and all five Luau entry points compile. A previous rc.48 live round showed 9 sent requests, 3 heuristic replies, and 6 unconfirmed requests; this change has not yet demonstrated improved live server outcomes.
+
 ## 1.0.0-rc.48 — 2026-11-26
 
 - Fix manual knife throwing with the default locked-target setting: E/right-click no longer fails just because no assisted target is available. A no-target manual charge releases at the cursor, including if a new candidate appears midway through the charge.

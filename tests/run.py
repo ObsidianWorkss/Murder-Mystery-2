@@ -237,3 +237,12 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
         raise RuntimeError("Unexpanded blade scan source marker")
     harness.write_text(sweeps, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    feedback = (root / "tests" / "gun_feedback.luau").read_text(encoding="utf-8")
+    start = source.index("local installAimFeedbackSafety = function(State)")
+    end = source.index("installAimFeedbackSafety(State)", start)
+    feedback = feedback.replace("-- INSERT_GUN_FEEDBACK", source[start:end])
+    if "-- INSERT_" in feedback:
+        raise RuntimeError("Unexpanded gun feedback source marker")
+    harness.write_text(feedback, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)

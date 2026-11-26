@@ -1,5 +1,13 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.49
+
+- Official Luau 0.739 compilation: all five entry points. Extracted-source offline regressions: **1,270 assertions passed** (1,099 main-runtime, 171 standalone farm).
+- Triggerbot fixtures reproduce the former 150 ms repeat-send gap and check the full 1.5-second reload window, including toggling and outstanding shot-feedback gating. Failed target checks retain their short retry behavior.
+- Nine new gun-reply tests verify the heuristic correlator: identical ray geometry from independent shots is not automatically discarded, duplicate notifications are rejected, an overlapping older request cannot steal a reply, and removed weapons and replaced characters remain ineligible.
+- One additional combat regression confirms that subsequent rejected aim checks preserve a recent reported server-shot result in the HUD while retaining the newest skip reason separately.
+- Previous rc.48 read-only observations: 9 gun requests, 3 correlated server replies, 6 unconfirmed; live causes were not established. rc.49's actual request acceptance, hit rate, and runtime impact need a new in-game sample.
+
 ## Release candidate 1.0.0-rc.48
 
 - Official Luau 0.739 offline extracted-source tests: **1,258 passed** (1,087 main-runtime plus 171 standalone farm). All five entry points compiled.

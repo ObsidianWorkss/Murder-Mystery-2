@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.48**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.49**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Gun requests and feedback correlation (rc.49)
+
+- [x] Automatic gun requests use the script's existing 1.5-second gun-ready interval instead of 150 ms; the first valid shot is immediate, and failed aim checks still respond to camera movement and short cache expiry.
+- [x] Different shots with identical ray geometry can each match a distinct server reply, while duplicate and stale reply safeguards remain in place.
+- [x] A real server reply remains visible in the gun HUD for up to two seconds when later aim checks are rejected; the current rejected-shot reason stays visible through triggerbot status.
+- [x] Full offline suite passes 1,270 Luau assertions (1,099 main runtime, 171 farm), with all five entry points compiling.
+- [ ] Verify new shot pacing, request-to-reply correlation and hit outcomes in a live Sheriff round. No client-side test can prove that the server accepted every request.
 
 ## Knife input and live read-only diagnostics (rc.48)
 
