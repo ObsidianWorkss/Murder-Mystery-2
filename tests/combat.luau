@@ -148,6 +148,7 @@ do
         if name=="HumanoidRootPart" then return root end
     end}
     local camera={WorldToViewportPoint=function(_,v) return {X=v.X,Y=0,Z=1},v.X==10 end}
+    -- INSERT_RELIABLE_GUN_HELPER
     -- INSERT_VISIBLE
     local _,normal=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=false},true)
     local _,screen=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=false},true,true)
@@ -159,6 +160,10 @@ do
     local _,realBody=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=true},true)
     check(realBody.HumanoidRootPart==nil and realBody.Torso~=nil,
         "gun aim cannot treat the native fully transparent root as a shootable body target")
+    table.insert(hitPartNames.Gun,"RightUpperArm")
+    local _,centralOnly=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=false},true)
+    check(centralOnly.Torso~=nil and centralOnly.RightUpperArm==nil,
+        "gun aim does not spend scans or assisted shots on narrow moving arm targets")
     part.Transparency=1
     local _,invisible=visibleBodySamples(char,"Gun",vec(0),camera,nil,{Core=true},true)
     check(invisible.Torso==nil and invisible.HumanoidRootPart==nil,
@@ -477,8 +482,14 @@ do
         "manual charge selects a fresh eligible aim candidate only at release")
     r=record(); throwMove={1,2}; throwAimCalls=0; releaseTarget=near
     startThrow(r); release()
-    check(sends==3 and throwAimCalls==2 and State.LastRequest.ManualFallback and lastOrigin.Position.X==2,
-        "manual throw keeps releasing toward the cursor during repeated shooter movement")
+    check(sends==3 and throwAimCalls==3 and not State.LastRequest.ManualFallback
+        and State.LastRequest.Target==near.Name and lastOrigin.Position.X==2 and seenOnScreen==true,
+        "manual throw re-aims from repeated moving origins and keeps a clear torso target")
+    r=record(); throwMove={1,2,3}; throwAimCalls=0
+    startThrow(r);release()
+    check(sends==4 and throwAimCalls==3 and State.LastRequest.ManualFallback
+        and lastOrigin.Position.X==3,
+        "continuous movement still falls back to native cursor after bounded re-aims")
     handle.CFrame=frame(0); handle.Position=vec(0)
     sends=0
     r=record()

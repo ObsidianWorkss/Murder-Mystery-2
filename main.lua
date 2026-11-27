@@ -17696,6 +17696,7 @@ local env = (getgenv and getgenv()) or _G
 local previousConfig = env.MM2Assist and env.MM2Assist.Config
 local previousMode = env.MM2Assist and env.MM2Assist.AimMode
 local previousStats = env.MM2Assist and env.MM2Assist.Stats
+local previousStyle = env.MM2Assist and env.MM2Assist.StyleMoves
 local previousShotLog = env.MM2Assist and env.MM2Assist.ShotLog
 local previousBlockers = env.MM2Assist and env.MM2Assist.ServerBlockers
 local previousGunDelay = nil -- old reply-derived half-delay is not a calibration
@@ -17720,7 +17721,9 @@ local State = {
         MaxRange = 1000, MaxLead = 8, Ping = 0.04,
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true, KnifeDodgeMode = "Side teleport",
-        Triggerbot = false, KnifeTriggerbot = false},
+        Triggerbot = false, KnifeTriggerbot = false, AutoJuke = true, AutoTrickshot = true,
+        AdaptiveJukeLearning = true,
+        StyleSpeedPreset = "Adaptive"},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, StabSweepErrors = 0,
         PickupAttempts = 0, RepairRequests = 0, GhostRequests = 0, ServerCoinEvents = 0,
@@ -17884,6 +17887,8 @@ State.Config.StreamerMode = false -- A local companion must authenticate on each
 if State.Config.MageAnimations then State.Config.PoseEnabled = false end
 -- Replace the earlier guessed default rather than persisting it across reloads.
 if State.Config.KnifeSpeed == 100 then State.Config.KnifeSpeed = 96 end
+if State.Config.StyleSpeedPreset~="Adaptive" and State.Config.StyleSpeedPreset~="Fast"
+    and State.Config.StyleSpeedPreset~="Smooth" then State.Config.StyleSpeedPreset="Adaptive" end
 -- Old caps stopped aiming past 300 studs / 3.5 s of knife flight; maps reach ~700 studs corner to corner.
 if State.Config.MaxLead == 1.5 or State.Config.MaxLead == 3.5 then State.Config.MaxLead = 8 end
 if State.Config.MaxRange == 300 then State.Config.MaxRange = 1000 end
@@ -17893,7 +17898,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.56"
+State.Version = "1.0.0-rc.57"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18441,6 +18446,743 @@ function State.IsCombatTarget(kind,p) return State.GameContext.Target(player,p,k
 function State.CanUseCombatWeapon(kind) return State.GameContext.CanUse(player,kind) end
 function State.CanThrowKnife() return State.GameContext.CanThrow(player) end
 function State.GetGameModeSnapshot() return State.GameContext.Snapshot() end
+local function styleOpponentRole(ownRole,otherRole)
+    if ownRole=="Murderer" then return otherRole=="Sheriff" or otherRole=="Hero" end
+    return (ownRole=="Sheriff" or ownRole=="Hero" or ownRole=="Innocent") and otherRole=="Murderer"
+end
+local function stylePlanarSpeed(velocity)
+    if not velocity or type(velocity.X)~="number" or type(velocity.Z)~="number"
+        or velocity.X~=velocity.X or velocity.Z~=velocity.Z then return 0 end
+    local speed=math.sqrt(velocity.X*velocity.X+velocity.Z*velocity.Z)
+    return speed<=100 and speed or 0
+end
+local function styleMotionReversed(previous,current,elapsed)
+    -- Adapted from FSS Adaptive Defense: accept only recent, physically
+    -- plausible velocity samples. Warps, low-speed jitter and stale data
+    -- must not teach the juke controller a fake opponent feint.
+    if not previous or not current or elapsed<0.055 or elapsed>0.35 then return false end
+    local a,b=stylePlanarSpeed(previous),stylePlanarSpeed(current)
+    if a<7 or b<7 or a>42 or b>42 then return false end
+    return (previous.X*current.X+previous.Z*current.Z)/(a*b)<0.2
+end
+local function styleFeintResponse(reversals,lastReverse,distance,closing,now)
+    local age=now-(lastReverse or -math.huge)
+    if age<0 then return "Normal" end
+    if age<=0.35 then
+        if distance>8 and closing<6 then return "Hold" end
+        if distance<=17 and closing>=6 then return "Counter" end
+    end
+    if reversals>=3 and age<=2.5 and distance>9 and closing<8 then return "Hold" end
+    return "Normal"
+end
+local function styleMotionHorizon(lastReverse,now)
+    local age=now-(lastReverse or -math.huge)
+    return age>=0 and age<=0.4 and 0.045 or 0.15
+end
+local function styleSpeedFactor(preset)
+    if preset=="Fast" then return 0.82 end
+    if preset=="Smooth" then return 1.18 end
+    return 1
+end
+local function styleJukeDuration(ownSpeed,opponentSpeed,closing,preset)
+    local base=0.55-math.clamp(opponentSpeed,0,60)*0.0025
+        -math.clamp(closing,0,20)*0.003+math.clamp(ownSpeed,0,30)*0.001
+    return math.clamp(base*styleSpeedFactor(preset),0.32,0.68)
+end
+local function styleSpinDuration(ownSpeed,opponentSpeed,preset)
+    local base=0.72-math.clamp(opponentSpeed,0,60)*0.0035
+        -math.clamp(ownSpeed,0,35)*0.0015
+    return math.clamp(base*styleSpeedFactor(preset),0.34,0.84)
+end
+local function styleAutoCooldown(kind,opponentSpeed,preset)
+    if kind=="Juke" then
+        return math.clamp((3.4-math.clamp(opponentSpeed,0,60)*0.018)
+            *styleSpeedFactor(preset),2.1,4.2)
+    end
+    return math.clamp((14-math.clamp(opponentSpeed,0,60)*0.035)
+        *styleSpeedFactor(preset),9.5,16.5)
+end
+local function styleThreatPriority(distance,closing)
+    -- Close threats matter more than distant fast movers; approach speed breaks near ties.
+    if distance>60 or distance<0 then return -math.huge end
+    return (60-distance)*3+math.clamp(closing,0,35)*1.5
+end
+local function styleJukePattern(distance,closing,opponentSpeed,index,canFeint,canJump,crowd,space,reactive)
+    if space=="Retreat" then return "Retreat step" end
+    if space=="Corner" then return "Corner escape" end
+    if space=="Narrow" then return "Tight cut" end
+    if reactive then return "Counter cut" end
+    if not canFeint then return "Quick cut" end
+    if distance<=7 and closing>=8 then return "Brake cut" end
+    if crowd and crowd>=2 and index%3==0 then return "Wide arc" end
+    if opponentSpeed>=25 and index%7==0 then return "Zigzag" end
+    if canJump and distance>=10 and closing>=8 and index%3==0 then return "Jump cut" end
+    if index%9==0 then return "Wide arc" end
+    if index%8==0 then return "Sprint cut" end
+    if index%6==0 then return "Reverse bait" end
+    if opponentSpeed>=24 and index%2==0 then return "Double fake" end
+    if index%4==0 then return "Brake cut" end
+    if canJump and index%5==0 then return "Jump cut" end
+    return "Fake cut"
+end
+local function styleJukePhase(elapsed,pattern,duration)
+    local portion=elapsed/(duration and duration>0 and duration or 0.48)
+    if portion>=1 then return nil end
+    if pattern=="Quick cut" or pattern=="Jump cut" or pattern=="Sprint cut" or pattern=="Wide arc"
+        or pattern=="Counter cut"
+        or pattern=="Retreat step" or pattern=="Corner escape" or pattern=="Tight cut" then return 1 end
+    if pattern=="Brake cut" then return portion<0.18 and 0 or 1 end
+    if pattern=="Reverse bait" then return portion<0.20 and -1 or portion<0.31 and 0 or 1 end
+    if pattern=="Zigzag" then
+        if portion<0.18 then return -1 end
+        if portion<0.38 then return 1 end
+        if portion<0.55 then return -1 end
+        return 1
+    end
+    if pattern=="Double fake" then
+        if portion<0.14 then return -1 end
+        if portion<0.30 then return 1 end
+        if portion<0.45 then return -1 end
+        return 1
+    end
+    return portion<0.25 and -1 or 1
+end
+local function styleLaneRisk(ownX,ownZ,dirX,dirZ,threats,reach)
+    local goalX,goalZ=ownX+dirX*(reach or 3.5),ownZ+dirZ*(reach or 3.5)
+    local risk=0
+    for _,threat in ipairs(threats) do
+        local dx,dz=goalX-threat.X,goalZ-threat.Z
+        local distance=math.sqrt(dx*dx+dz*dz)
+        if distance<22 then risk+=1/(distance+2) end
+    end
+    return risk
+end
+local function styleSpaceScore(clearance,risk,kind,preferredSide,moveAlignment)
+    local turnCost=kind=="Side" and 0 or kind=="Diagonal" and 0.7 or 1.5
+    -- Follow the player's current movement when several safe exits are close
+    -- in quality. Clearance and avoiding nearby players remain more important.
+    return clearance*1.8-risk*14-turnCost+(preferredSide and 0.08 or 0)
+        +math.clamp(moveAlignment or 0,-1,1)*0.8
+end
+local function styleSpaceClass(kind,clearance,oppositeClearance,desired)
+    if kind=="Retreat" then return "Retreat" end
+    if kind=="Diagonal" or oppositeClearance<2.2 then return "Corner" end
+    if clearance<desired*0.8 or oppositeClearance<desired*0.75 then return "Narrow" end
+    return "Open"
+end
+local function styleSpaceDuration(duration,clearance,walkSpeed)
+    if walkSpeed<=0 or clearance<2.1 then return nil end
+    local available=(clearance-0.28)/walkSpeed*0.85
+    local result=math.min(duration,available)
+    return result>=0.13 and result or nil
+end
+local function styleSpinAngle(elapsed,duration)
+    return math.pi*2*math.clamp(elapsed/(duration and duration>0 and duration or 0.60),0,1)
+end
+local function styleAutoAction(ownRole,opponentRole,distance,closing,weapon,visible,canJuke,canTrickshot)
+    if not styleOpponentRole(ownRole,opponentRole) then return nil end
+    if canJuke and distance>=2 and distance<=17 and (distance<=9 or closing>=2.5) then return "Juke" end
+    local armed=(ownRole=="Murderer" and weapon=="Knife")
+        or ((ownRole=="Sheriff" or ownRole=="Hero") and weapon=="Gun")
+    if canTrickshot and armed and visible and distance>=18 and distance<=48 then return "Trickshot" end
+    return nil
+end
+local function styleCanAutoSpin(closeThreats,airborne,risingSpeed,weapon,cursorError,remainingAirTime)
+    -- An automatic trickshot is an airborne *combat* flourish, not a random
+    -- jump from flat ground. Require a real rising jump, a centred target and
+    -- enough airborne time to finish before landing.
+    return closeThreats==0 and airborne and risingSpeed>=10
+        and weapon~="None" and cursorError<=135 and remainingAirTime>=0.38
+end
+local function styleRemainingAirTime(risingSpeed,gravity,clearance)
+    if gravity<=0 or clearance<0 then return 0 end
+    return math.max(0,(risingSpeed+math.sqrt(risingSpeed*risingSpeed
+        +2*gravity*clearance))/gravity)
+end
+do
+-- One-shot style moves: manual B/Y or guarded automatic triggers.
+-- The weapon/camera controllers remain untouched, and neither action auto-fires.
+local style={Status="Ready",Active=nil,LastStart=-math.huge,LastSide=1,
+    Jukes=previousStyle and previousStyle.Jukes or 0,
+    Trickshots=previousStyle and previousStyle.Trickshots or 0,
+    PatternCounts={},LastPattern="None",LastJukeSpeed=0,LastJukeDuration=0,LastSpinDuration=0,
+    LastSpace="Unknown",LastClearance=0,LastDesiredClearance=0,
+    OpponentMotion={},LastOpponentRead="Normal",LastOpponentReversals=0,
+    ObservedReversals=previousStyle and previousStyle.ObservedReversals or 0,
+    FeintHolds=previousStyle and previousStyle.FeintHolds or 0,
+    CounterCuts=previousStyle and previousStyle.CounterCuts or 0,
+    LastFeintHoldAt=-math.huge,NextMotionSweep=0,TrackedOpponents=0,
+    ObservedPlayers=0,ObservedOpponents=0,CloseThreats=0,ClosestThreat=0,
+    LastLaneRisk=0,AutoJukes=previousStyle and previousStyle.AutoJukes or 0,
+    ManualJukes=previousStyle and previousStyle.ManualJukes or 0,
+    LastAutoJuke=-math.huge,LastAutoTrickshot=-math.huge,NextAutoScan=0,Focused=true}
+for _,name in ipairs({"Quick cut","Fake cut","Double fake","Brake cut","Jump cut",
+    "Zigzag","Reverse bait","Wide arc","Sprint cut","Corner escape","Tight cut",
+    "Retreat step","Counter cut"}) do
+    style.PatternCounts[name]=previousStyle and previousStyle.PatternCounts
+        and previousStyle.PatternCounts[name] or 0
+end
+local earlierPatterns=0
+for _,count in pairs(style.PatternCounts) do earlierPatterns+=count end
+style.LegacyJukes=previousStyle and previousStyle.LegacyJukes
+    or math.max(0,style.Jukes-earlierPatterns)
+-- Keep only short-lived motion observations from the same client/session.
+-- Never write players' identities or behavioral rows to disk.
+if previousStyle and type(previousStyle.OpponentMotion)=="table" then
+    for key,row in pairs(previousStyle.OpponentMotion) do
+        if type(key)=="string" and type(row)=="table" and row.Root
+            and type(row.SeenAt)=="number" and os.clock()-row.SeenAt<12 then
+            style.OpponentMotion[key]=row
+        end
+    end
+end
+State.StyleMoves=style
+local function ownRig()
+    local char=player.Character
+    local hum=char and char:FindFirstChildOfClass("Humanoid")
+    local root=char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or not root or hum.Health<=0 or root.Anchored or hum.Sit
+        or (State.Invis and (State.Invis.Active or State.Invis.Busy))
+        or (State.Fling and State.Fling.Active)
+        or (State.FlingQueue and State.FlingQueue.Active)
+        or State.Config.Fly then return nil end
+    return char,hum,root
+end
+function State.StopStyleMove(reason)
+    local active=style.Active
+    style.Active=nil
+    if active then
+        if active.Kind=="Juke" and active.Humanoid.Parent then
+            active.Humanoid:Move(Vector3.zero,false)
+        elseif active.Kind=="Trickshot" and active.Humanoid.Parent and active.Humanoid.AutoRotate==false then
+            active.Humanoid.AutoRotate=active.PreviousAutoRotate
+        end
+    end
+    style.Status=reason or "Ready"
+end
+local function styleObserveOpponent(other,root,now)
+    local key=tostring(other.UserId)
+    local rows=style.OpponentMotion
+    local row=rows[key]
+    if row and (row.Root~=root or now-row.SeenAt>12 or now<row.SeenAt) then
+        rows[key]=nil
+        row=nil
+    end
+    if not row then
+        row={Root=root,SeenAt=now,Velocity=root.AssemblyLinearVelocity,
+            Reversals=0,LastReverseAt=-math.huge}
+        rows[key]=row
+    else
+        local velocity=root.AssemblyLinearVelocity
+        local elapsed=now-row.SeenAt
+        if elapsed>=0.055 then
+            if styleMotionReversed(row.Velocity,velocity,elapsed)
+                and now-row.LastReverseAt>=0.24 then
+                if now-row.LastReverseAt>2.5 then row.Reversals=0 end
+                row.Reversals=math.min(8,row.Reversals+1)
+                row.LastReverseAt=now
+                style.ObservedReversals+=1
+            end
+            row.Velocity=velocity
+            row.SeenAt=now
+        end
+    end
+    if now>=style.NextMotionSweep then
+        style.NextMotionSweep=now+8
+        local count,oldest,oldestSeen=0,nil,math.huge
+        for name,record in pairs(rows) do
+            if not record.Root or not record.Root.Parent or now-record.SeenAt>12 then
+                rows[name]=nil
+            else
+                count+=1
+                if record.SeenAt<oldestSeen then oldest,oldestSeen=name,record.SeenAt end
+            end
+        end
+        if count>24 and oldest and oldest~=key then rows[oldest]=nil end
+    end
+    return row
+end
+local function scanStyleThreats(origin,ownVelocity)
+    if State.GameContext.Mode()~="Classic" then return {},0,0 end
+    local myRole=roleFor(player)
+    local threats,observed,close={},0,0
+    local now=os.clock()
+    for _,other in ipairs(Players:GetPlayers()) do
+        if other~=player and State.GameContext.Alive(other) then
+            observed+=1
+            local role=roleFor(other)
+            local opponent=styleOpponentRole(myRole,role)
+            local root=other.Character and other.Character:FindFirstChild("HumanoidRootPart")
+            if opponent and root then
+                local delta=root.Position-origin
+                local flat=Vector3.new(delta.X,0,delta.Z)
+                local distance=flat.Magnitude
+                if distance>=1 and distance<=60 then
+                    local motion=State.Config.AdaptiveJukeLearning
+                        and styleObserveOpponent(other,root,now) or nil
+                    local velocity=(ownVelocity or Vector3.zero)-root.AssemblyLinearVelocity
+                    local closing=Vector3.new(velocity.X,0,velocity.Z):Dot(flat.Unit)
+                    local score=styleThreatPriority(distance,closing)
+                    table.insert(threats,{Root=root,Player=other,Distance=distance,
+                        Closing=closing,Speed=stylePlanarSpeed(root.AssemblyLinearVelocity),
+                        Score=score,Motion=motion})
+                    if distance<=22 then close+=1 end
+                end
+            end
+        end
+    end
+    table.sort(threats,function(a,b)
+        if a.Score==b.Score then return a.Distance<b.Distance end
+        return a.Score>b.Score
+    end)
+    local count=0
+    for _ in pairs(style.OpponentMotion) do count+=1 end
+    style.TrackedOpponents=count
+    return threats,observed,close
+end
+local function nearestThreat(origin,velocity)
+    local threats=scanStyleThreats(origin,velocity)
+    local first=threats[1]
+    return first and first.Root,first and first.Distance,first and first.Player,threats
+end
+local function styleLaneClearance(root,hum,direction,desired,params)
+    local origin=root.Position
+    local hip=math.clamp(hum.HipHeight+root.Size.Y*0.5,1.5,6)
+    local rayDown=Vector3.new(0,-(hip+3.5),0)
+    local startFloor=workspace:Raycast(origin+Vector3.new(0,1,0),rayDown,params)
+    if not startFloor or startFloor.Normal.Y<0.53 then return 0 end
+
+    -- Sweep the full standing body, not only a single ray through the root.
+    -- Keep a small gap to walls so a running character does not scrape corners.
+    local free=desired
+    local size=Vector3.new(math.max(2.1,root.Size.X+0.35),
+        math.max(4.8,hip*1.5),math.max(2.1,root.Size.Z+0.35))
+    local swept,wall=pcall(function()
+        return workspace:Blockcast(CFrame.new(origin+Vector3.new(0,-0.15,0)),
+            size,direction*desired,params)
+    end)
+    if swept then
+        if wall then free=math.min(free,wall.Distance-0.32) end
+    else
+        -- Older executor/game runtimes may not expose Blockcast.
+        -- Probe three standing-body heights instead of assuming clear space.
+        for _,height in ipairs({-1.6,0,1.65}) do
+            local hit=workspace:Raycast(origin+Vector3.new(0,height,0),direction*desired,params)
+            if hit then free=math.min(free,hit.Distance-0.32) end
+        end
+    end
+    free=math.max(0,free)
+    if free<1.3 then return 0 end
+
+    -- Sample the ground all along the proposed step. This rejects gaps,
+    -- steep edges and ledges instead of checking only the final landing spot.
+    local traversable=0
+    for _,fraction in ipairs({0.25,0.5,0.75,1}) do
+        local step=free*fraction
+        local floor=workspace:Raycast(origin+direction*step+Vector3.new(0,1,0),
+            rayDown,params)
+        if not floor or floor.Normal.Y<0.53
+            or floor.Position.Y<startFloor.Position.Y-1.45
+            or floor.Position.Y>startFloor.Position.Y+1.25 then
+            break
+        end
+        traversable=step
+    end
+    return traversable
+end
+local function stylePlanEscape(char,hum,root,opponent,threats,duration)
+    local delta=opponent.Position-root.Position
+    local flat=Vector3.new(delta.X,0,delta.Z)
+    if flat.Magnitude<1 then return nil,"Opponent is too close for a safe escape" end
+    local away=-flat.Unit
+    local side=Vector3.new(-flat.Z,0,flat.X).Unit
+    local desired=math.clamp(hum.WalkSpeed*duration*1.1+0.5,3.5,7.5)
+    local params=RaycastParams.new()
+    params.FilterType=Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances={char}
+    params.RespectCanCollide=true
+    params.IgnoreWater=true
+    local predicted={}
+    for _,candidate in ipairs(threats) do
+        local enemy=candidate.Root
+        if enemy and enemy.Parent then
+            local velocity=enemy.AssemblyLinearVelocity
+            -- FSS-style anti-feint: shorten prediction immediately after a
+            -- velocity reversal instead of projecting the old run direction.
+            local horizon=styleMotionHorizon(candidate.Motion
+                and candidate.Motion.LastReverseAt,os.clock())
+            local position=enemy.Position+Vector3.new(velocity.X,0,velocity.Z)*horizon
+            table.insert(predicted,{X=position.X,Z=position.Z})
+        end
+    end
+    local entries={
+        {Direction=side,Kind="Side",Sign=1},
+        {Direction=-side,Kind="Side",Sign=-1},
+        {Direction=(side*0.7+away*0.7).Unit,Kind="Diagonal",Sign=1},
+        {Direction=(-side*0.7+away*0.7).Unit,Kind="Diagonal",Sign=-1},
+        {Direction=away,Kind="Retreat",Sign=0},
+    }
+    local best,bestScore=nil,-math.huge
+    local movement=hum.MoveDirection
+    local planarMove=movement and Vector3.new(movement.X,0,movement.Z)
+    if planarMove and planarMove.Magnitude>0.1 then
+        planarMove=planarMove.Unit
+    else
+        planarMove=nil
+    end
+    for _,entry in ipairs(entries) do
+        entry.Clearance=styleLaneClearance(root,hum,entry.Direction,desired,params)
+        entry.Risk=styleLaneRisk(root.Position.X,root.Position.Z,
+            entry.Direction.X,entry.Direction.Z,predicted,math.min(3.5,entry.Clearance))
+        if entry.Clearance>=2.1 then
+            local score=styleSpaceScore(entry.Clearance,entry.Risk,entry.Kind,
+                entry.Sign~=-style.LastSide,
+                planarMove and entry.Direction:Dot(planarMove))
+            if score>bestScore then best,bestScore=entry,score end
+        end
+    end
+    if not best then return nil,"No supported escape route around walls or ledges" end
+    local opposite=0
+    if best.Kind=="Side" then
+        opposite=entries[best.Sign==1 and 2 or 1].Clearance
+    end
+    local space=styleSpaceClass(best.Kind,best.Clearance,opposite,desired)
+    local usableDuration=styleSpaceDuration(duration,best.Clearance,hum.WalkSpeed)
+    if not usableDuration then return nil,"Too little space for a safe juke" end
+    return {Direction=best.Direction,Kind=best.Kind,Sign=best.Sign,
+        Clearance=best.Clearance,Desired=desired,Duration=usableDuration,
+        Space=space,CanFeint=space=="Open" and opposite>=2.2,
+        Risk=best.Risk,Params=params}
+end
+function State.PreviewJukeSpace()
+    local char,hum,root=ownRig()
+    if not char or hum.WalkSpeed<=0 then return {OK=false,Reason="Normal movement unavailable"} end
+    local threats=scanStyleThreats(root.Position,root.AssemblyLinearVelocity)
+    if not threats[1] then return {OK=false,Reason="No known opponent within 60 studs"} end
+    local selected=threats[1]
+    local duration=styleJukeDuration(stylePlanarSpeed(root.AssemblyLinearVelocity),
+        selected.Speed,math.max(0,selected.Closing),State.Config.StyleSpeedPreset)
+    local plan,reason=stylePlanEscape(char,hum,root,selected.Root,threats,duration)
+    if not plan then return {OK=false,Reason=reason} end
+    return {OK=true,Space=plan.Space,Kind=plan.Kind,Clearance=plan.Clearance,
+        Duration=plan.Duration,Risk=plan.Risk,Desired=plan.Desired}
+end
+function State.ProbeJukeGeometry()
+    -- Diagnostic only: run the same collision/ground sweep as a real juke
+    -- without requiring an opponent or moving the local character.
+    local char,hum,root=ownRig()
+    if not char then return {OK=false,Reason="Standing character unavailable"} end
+    local params=RaycastParams.new()
+    params.FilterType=Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances={char}
+    params.RespectCanCollide=true
+    params.IgnoreWater=true
+    local forward=root.CFrame.LookVector
+    forward=Vector3.new(forward.X,0,forward.Z)
+    if forward.Magnitude<0.01 then return {OK=false,Reason="No valid facing direction"} end
+    forward=forward.Unit
+    local right=Vector3.new(-forward.Z,0,forward.X)
+    local directions={Forward=forward,Backward=-forward,Left=-right,Right=right,
+        ForwardLeft=(forward-right).Unit,ForwardRight=(forward+right).Unit,
+        BackLeft=(-forward-right).Unit,BackRight=(-forward+right).Unit}
+    local clearance={}
+    for name,direction in pairs(directions) do
+        clearance[name]=styleLaneClearance(root,hum,direction,6,params)
+    end
+    return {OK=true,Clearance=clearance,WalkSpeed=hum.WalkSpeed}
+end
+local function startAllowed()
+    if not State.Running then return false,"Script stopped" end
+    if style.Active then return false,"Finish the current juke or spin first" end
+    if os.clock()-style.LastStart<0.8 then return false,"Style move cooling down" end
+    local char,hum,root=ownRig()
+    if not char or not State.GameContext.InRound(player) then return false,"Enter a round with normal movement enabled" end
+    if GuiService.MenuIsOpen or UIS:GetFocusedTextBox() then return false,"Close chat or Roblox menu first" end
+    return char,hum,root
+end
+function State.StartJuke(automatic,preferredRoot,knownThreats)
+    local char,hum,root=startAllowed()
+    if char==false then return false,hum end
+    if hum.WalkSpeed<=0 then return false,"Movement unavailable" end
+    local threats=knownThreats or scanStyleThreats(root.Position,root.AssemblyLinearVelocity)
+    local chosen=threats[1]
+    if preferredRoot then
+        for _,candidate in ipairs(threats) do
+            if candidate.Root==preferredRoot and candidate.Root.Parent then chosen=candidate;break end
+        end
+    end
+    local opponent,distance=chosen and chosen.Root,chosen and chosen.Distance
+    if not opponent then return false,"No known opposing Murderer or Sheriff within 60 studs" end
+    local ownSpeed=stylePlanarSpeed(root.AssemblyLinearVelocity)
+    local opponentSpeed=stylePlanarSpeed(opponent.AssemblyLinearVelocity)
+    local delta=opponent.Position-root.Position
+    local flat=Vector3.new(delta.X,0,delta.Z)
+    if flat.Magnitude<1 then return false,"Opponent too close for escape planning" end
+    local relative=root.AssemblyLinearVelocity-opponent.AssemblyLinearVelocity
+    local closing=math.max(0,Vector3.new(relative.X,0,relative.Z):Dot(flat.Unit))
+    local duration=styleJukeDuration(ownSpeed,opponentSpeed,closing,State.Config.StyleSpeedPreset)
+    local escape,reason=stylePlanEscape(char,hum,root,opponent,threats,duration)
+    if not escape then return false,reason end
+    local reading=styleFeintResponse(chosen.Motion and chosen.Motion.Reversals or 0,
+        chosen.Motion and chosen.Motion.LastReverseAt,distance,closing,os.clock())
+    local pattern=styleJukePattern(distance,closing,opponentSpeed,style.Jukes+1,
+        escape.CanFeint,hum.FloorMaterial~=Enum.Material.Air,#threats,escape.Space,
+        reading=="Counter")
+    if pattern=="Zigzag" or pattern=="Double fake" then
+        duration=math.clamp(duration*1.12,0.36,0.75)
+        duration=styleSpaceDuration(duration,escape.Clearance,hum.WalkSpeed)
+        if not duration then return false,"Not enough room for repeated feints" end
+    else
+        duration=escape.Duration
+    end
+    -- A juke changes steering and timing only, not Humanoid.WalkSpeed.
+    -- The separate opt-in Speed Boost remains under its original controls.
+    local nativeSpeed=hum.WalkSpeed
+    if escape.Sign~=0 then style.LastSide=escape.Sign end
+    style.LastStart=os.clock()
+    style.Active={Kind="Juke",Character=char,Humanoid=hum,Root=root,Started=style.LastStart,
+        Direction=escape.Direction,Opponent=opponent,CanFeint=escape.CanFeint,
+        Automatic=automatic==true,Pattern=pattern,Duration=duration,
+        Space=escape.Space,Params=escape.Params,LastSpaceCheck=0}
+    style.Jukes+=1
+    style.PatternCounts[pattern]+=1
+    style.LastPattern,style.LastJukeSpeed,style.LastJukeDuration=pattern,nativeSpeed,duration
+    style.LastLaneRisk=escape.Risk
+    style.LastSpace,style.LastClearance,style.LastDesiredClearance=escape.Space,
+        escape.Clearance,escape.Desired
+    style.LastOpponentRead,style.LastOpponentReversals=reading,
+        chosen.Motion and chosen.Motion.Reversals or 0
+    if pattern=="Counter cut" then style.CounterCuts+=1 end
+    if automatic then style.AutoJukes+=1 else style.ManualJukes+=1 end
+    if pattern=="Jump cut" then hum.Jump=true end
+    style.Status=("%s (%s, %.1f studs clear) vs %s"):format(pattern,escape.Space,
+        escape.Clearance,roleFor(player)=="Murderer" and "Sheriff" or "Murderer")
+    return true,style.Status
+end
+function State.StartTrickshot(automatic,preferredRoot)
+    local char,hum,root=startAllowed()
+    if char==false then return false,hum end
+    if automatic and (hum.FloorMaterial~=Enum.Material.Air
+        or root.AssemblyLinearVelocity.Y<10) then
+        return false,"Automatic spin requires an existing airborne jump"
+    end
+    local now=os.clock()
+    local opponent=preferredRoot or nearestThreat(root.Position,root.AssemblyLinearVelocity)
+    local duration=styleSpinDuration(stylePlanarSpeed(root.AssemblyLinearVelocity),
+        opponent and stylePlanarSpeed(opponent.AssemblyLinearVelocity) or 0,State.Config.StyleSpeedPreset)
+    style.LastStart=now
+    style.Active={Kind="Trickshot",Character=char,Humanoid=hum,Root=root,Started=now,
+        AppliedAngle=0,PreviousAutoRotate=hum.AutoRotate,Automatic=automatic==true,Duration=duration}
+    hum.AutoRotate=false
+    -- A manual Y spin may deliberately start a jump. Automatic spins never do.
+    if not automatic and hum.FloorMaterial~=Enum.Material.Air then hum.Jump=true end
+    style.Trickshots+=1
+    style.LastSpinDuration=duration
+    style.Status=("360 spin in %.2f s; shoot or throw manually"):format(duration)
+    return true,style.Status
+end
+function State.GetStyleMoveSnapshot()
+    local counts={}
+    for name,count in pairs(style.PatternCounts) do counts[name]=count end
+    return {Status=style.Status,Active=style.Active and style.Active.Kind or "None",
+        Jukes=style.Jukes,Trickshots=style.Trickshots,
+        AutoJuke=State.Config.AutoJuke==true,AutoTrickshot=State.Config.AutoTrickshot==true,
+        Preset=State.Config.StyleSpeedPreset,Patterns=counts,LastPattern=style.LastPattern,
+        LegacyJukes=style.LegacyJukes,
+        AutoJukes=style.AutoJukes,ManualJukes=style.ManualJukes,
+        ObservedPlayers=style.ObservedPlayers,ObservedOpponents=style.ObservedOpponents,
+        CloseThreats=style.CloseThreats,ClosestThreat=style.ClosestThreat,LastLaneRisk=style.LastLaneRisk,
+        LastJukeSpeed=style.LastJukeSpeed,LastJukeDuration=style.LastJukeDuration,
+        LastSpinDuration=style.LastSpinDuration,LastSpace=style.LastSpace,
+        LastClearance=style.LastClearance,LastDesiredClearance=style.LastDesiredClearance,
+        LastOpponentRead=style.LastOpponentRead,
+        LastOpponentReversals=style.LastOpponentReversals,
+        TrackedOpponents=style.TrackedOpponents,
+        ObservedReversals=style.ObservedReversals,
+        FeintHolds=style.FeintHolds,CounterCuts=style.CounterCuts}
+end
+function State.SetStyleSpeedPreset(preset)
+    if preset~="Adaptive" and preset~="Fast" and preset~="Smooth" then
+        return false,"Choose Adaptive, Fast or Smooth"
+    end
+    State.Config.StyleSpeedPreset=preset
+    return true
+end
+function State.SetAutoStyleMove(kind,enabled)
+    if kind~="Juke" and kind~="Trickshot" then return false,"Choose Juke or Trickshot" end
+    if not State.Running then return false,"Script stopped" end
+    State.Config["Auto"..kind]=enabled==true
+    if not enabled and style.Active and style.Active.Kind==kind and style.Active.Automatic then
+        State.StopStyleMove("Automatic "..kind.." disabled")
+    end
+    return true
+end
+connect(RunService.Heartbeat,function()
+    local now=os.clock()
+    if now<style.NextAutoScan then return end
+    -- The rising half of a normal jump is short; do not miss the airborne
+    -- window because the grounded threat scan waited another 200 ms.
+    local quickAirScan=State.Config.AutoTrickshot and player.Character
+        and player.Character:FindFirstChildOfClass("Humanoid")
+        and player.Character:FindFirstChildOfClass("Humanoid").FloorMaterial==Enum.Material.Air
+    style.NextAutoScan=now+(quickAirScan and 0.06 or 0.20)
+    if not State.Running then return end
+    local char,hum,root=ownRig()
+    if not char or not State.GameContext.InRound(player) then
+        style.ObservedPlayers,style.ObservedOpponents,style.CloseThreats,style.ClosestThreat=0,0,0,0
+        return
+    end
+    local threats,observed,close=scanStyleThreats(root.Position,root.AssemblyLinearVelocity)
+    style.ObservedPlayers,style.ObservedOpponents,style.CloseThreats=observed,#threats,close
+    style.ClosestThreat=threats[1] and threats[1].Distance or 0
+    if threats[1] then
+        local top=threats[1]
+        style.LastOpponentRead=styleFeintResponse(top.Motion and top.Motion.Reversals or 0,
+            top.Motion and top.Motion.LastReverseAt,top.Distance,top.Closing,now)
+        style.LastOpponentReversals=top.Motion and top.Motion.Reversals or 0
+    else
+        style.LastOpponentRead,style.LastOpponentReversals="Normal",0
+    end
+    if #threats==0 or not style.Focused or style.Active
+        or not (State.Config.AutoJuke or State.Config.AutoTrickshot)
+        or now-style.LastStart<1.2 or GuiService.MenuIsOpen or UIS:GetFocusedTextBox()
+        or (State.MobileUI and (State.MobileUI.MenuOpen or now<(State.MobileUI.InputUntil or 0))) then return end
+    local weapon="None"
+    for _,kind in ipairs({"Gun","Knife"}) do
+        local item=char:FindFirstChild(kind)
+        if item and item:IsA("Tool") and item.Enabled then weapon=kind;break end
+    end
+    local dodging=State.KnifeDodge and (State.KnifeDodge.Direction or State.KnifeDodge.TeleportBusy)
+    if dodging then return end
+    local preset=State.Config.StyleSpeedPreset
+    local ownRole=roleFor(player)
+    -- Prioritise a close incoming attack over showy spins, even when another
+    -- opponent is closer in ordinary 3D distance or a different target is on screen.
+    for _,threat in ipairs(threats) do
+        local allowed=State.Config.AutoJuke
+            and now-style.LastAutoJuke>=styleAutoCooldown("Juke",threat.Speed,preset)
+        if styleAutoAction(ownRole,roleFor(threat.Player),threat.Distance,threat.Closing,
+            weapon,false,allowed,false)=="Juke" then
+            local response=styleFeintResponse(threat.Motion and threat.Motion.Reversals or 0,
+                threat.Motion and threat.Motion.LastReverseAt,threat.Distance,threat.Closing,now)
+            if response=="Hold" then
+                -- FSS containment idea: don't waste a move reacting to a
+                -- fresh feint while the player is outside immediate danger.
+                style.LastOpponentRead="Hold"
+                style.LastOpponentReversals=threat.Motion and threat.Motion.Reversals or 0
+                if now-style.LastFeintHoldAt>=0.65 then
+                    style.FeintHolds+=1
+                    style.LastFeintHoldAt=now
+                end
+            else
+                local ok=State.StartJuke(true,threat.Root,threats)
+                if ok then style.LastAutoJuke=now;return end
+            end
+        end
+    end
+    -- Do not trade a nearby emergency dodge for a cosmetic spin, even while
+    -- the juke cooldown is active or another distant opponent is on screen.
+    if not State.Config.AutoTrickshot or close>0
+        or weapon=="None" or hum.FloorMaterial~=Enum.Material.Air then return end
+    local camera=workspace.CurrentCamera
+    if not camera then return end
+    local params=RaycastParams.new()
+    params.FilterType=Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances={char}
+    params.RespectCanCollide=true
+    local downward=workspace:Raycast(root.Position,Vector3.new(0,-24,0),params)
+    if not downward then return end
+    local gravity=workspace.Gravity
+    if gravity<=0 then return end
+    local verticalSpeed=root.AssemblyLinearVelocity.Y
+    local floorClearance=math.max(0,root.Position.Y-downward.Position.Y
+        -(hum.HipHeight+root.Size.Y*0.5))
+    local remainingAirTime=styleRemainingAirTime(verticalSpeed,gravity,floorClearance)
+    local mouse=UIS.MouseBehavior==Enum.MouseBehavior.LockCenter
+        and camera.ViewportSize*0.5 or UIS:GetMouseLocation()
+    for _,threat in ipairs(threats) do
+        local allowed=now-style.LastAutoTrickshot>=styleAutoCooldown("Trickshot",threat.Speed,preset)
+        if allowed and threat.Root.Parent and threat.Player.Character
+            and threat.Distance>=18 and threat.Distance<=48 then
+            local point,onScreen=camera:WorldToViewportPoint(threat.Root.Position+Vector3.new(0,1,0))
+            if onScreen and point.Z>0 then
+                local cursorError=(Vector2.new(point.X,point.Y)-Vector2.new(mouse.X,mouse.Y)).Magnitude
+                local origin=root.Position+Vector3.new(0,1.5,0)
+                local hit=workspace:Raycast(origin,threat.Root.Position+Vector3.new(0,1,0)-origin,params)
+                local visible=not hit or hit.Instance:IsDescendantOf(threat.Player.Character)
+                if styleCanAutoSpin(close,true,verticalSpeed,weapon,cursorError,remainingAirTime)
+                    and styleAutoAction(ownRole,roleFor(threat.Player),threat.Distance,threat.Closing,
+                    weapon,visible,false,true)=="Trickshot" then
+                    local ok=State.StartTrickshot(true,threat.Root)
+                    if ok then
+                        local active=style.Active
+                        if active and active.Automatic then
+                            active.Duration=math.min(active.Duration,remainingAirTime-0.055)
+                            style.LastSpinDuration=active.Duration
+                            style.Status=("Airborne 360 in %.2f s; fire manually"):format(active.Duration)
+                        end
+                        style.LastAutoTrickshot=now
+                        return
+                    end
+                end
+            end
+        end
+    end
+end)
+-- Apply the juke before physics, after Roblox's native input has been sampled.
+connect(RunService.Stepped,function()
+    local active=style.Active
+    if not active then return end
+    if not State.Running or player.Character~=active.Character or active.Humanoid.Health<=0
+        or not active.Root.Parent or active.Humanoid.Sit or GuiService.MenuIsOpen
+        or UIS:GetFocusedTextBox() or (State.Invis and State.Invis.Active)
+        or (State.Fling and State.Fling.Active)
+        or (State.KnifeDodge and (State.KnifeDodge.Direction or State.KnifeDodge.TeleportBusy))
+        or (active.Kind=="Trickshot" and active.Automatic
+            and active.Humanoid.FloorMaterial~=Enum.Material.Air) then
+        State.StopStyleMove("Style move cancelled")
+        return
+    end
+    local elapsed=os.clock()-active.Started
+    if active.Kind=="Juke" then
+        local phase=styleJukePhase(elapsed,active.Pattern,active.Duration)
+        if not phase then State.StopStyleMove("Juke finished")
+        else
+            local direction=active.Direction*phase
+            if active.Pattern=="Wide arc" and phase~=0 and active.Opponent and active.Opponent.Parent then
+                local away=active.Root.Position-active.Opponent.Position
+                away=Vector3.new(away.X,0,away.Z)
+                if away.Magnitude>1 then direction=(direction+away.Unit*0.45).Unit end
+            end
+            if phase~=0 and elapsed-active.LastSpaceCheck>=0.075 then
+                -- Check full-body clearance and floor continuity again as
+                -- the player moves, not just at the original starting point.
+                local lookAhead=math.clamp(active.Humanoid.WalkSpeed*0.14,1.8,3.5)
+                local remaining=styleLaneClearance(active.Root,active.Humanoid,
+                    direction,lookAhead,active.Params)
+                active.LastSpaceCheck=elapsed
+                if remaining<math.min(1.5,lookAhead*0.7) then
+                    State.StopStyleMove("Juke stopped: wall, corner or ledge ahead")
+                    return
+                end
+            end
+            active.Humanoid:Move(direction,false)
+        end
+    else
+        -- Adaptive body-only 360; camera and weapon controls stay native.
+        local angle=styleSpinAngle(elapsed,active.Duration)
+        active.Root.CFrame=active.Root.CFrame*CFrame.Angles(0,angle-active.AppliedAngle,0)
+        active.AppliedAngle=angle
+        if elapsed>=active.Duration then State.StopStyleMove("Trickshot spin finished") end
+    end
+end)
+connect(UIS.WindowFocusReleased,function()
+    style.Focused=false
+    State.StopStyleMove("Paused: window unfocused")
+end)
+connect(UIS.WindowFocused,function() style.Focused=true end)
+connect(player.CharacterRemoving,function() State.StopStyleMove("Waiting for respawn") end)
+end
 local function equippedWeapon()
     local char = player.Character
     if not char then return nil end
@@ -19208,6 +19950,10 @@ local hitOffsets = {Vector3.zero, Vector3.new(0.22, 0, 0), Vector3.new(-0.22, 0,
     Vector3.new(0.30, 0, -0.30), Vector3.new(-0.30, 0, -0.30)}
 local bodyPartSet = {}
 for _, name in ipairs(hitPartNames.Gun) do bodyPartSet[name] = true end
+local function reliableGunPart(name)
+    return name=="UpperTorso" or name=="Torso" or name=="LowerTorso"
+        or name=="Head" or name=="HumanoidRootPart"
+end
 local function hiddenBodyPart(part)
     return part.Transparency >= 0.95 or part.LocalTransparencyModifier >= 0.95
 end
@@ -19304,7 +20050,8 @@ local function visibleBodySamples(char, kind, origin, camera, cursor, profileOve
         local part = char:FindFirstChild(name)
         -- Native WeaponService's WeaponRaycast ignores Transparency == 1.
         -- An invisible, queryable HRP must not be accepted by our hit tests.
-        if part and part:IsA("BasePart") and (kind~="Gun" or (part.Transparency<1 and part.CanQuery)) then
+        if part and part:IsA("BasePart") and (kind~="Gun"
+            or (reliableGunPart(name) and part.Transparency<1 and part.CanQuery)) then
             local frame, size = part.CFrame, part.Size
             local offsets = hitOffsets
             if kind == "Gun" and body._GunProfile and body._GunProfile.Stationary and not clearPath(origin, frame.Position, char) then
@@ -19339,7 +20086,11 @@ end
 local function sampleRayHitsBody(origin, point, params)
     local direction = point - origin
     if direction.Magnitude < 0.001 then return false end
-    return workspace:Raycast(origin, direction.Unit * (direction.Magnitude + 8), params) ~= nil
+    -- A validation ray only proves the sampled point if it reaches the body
+    -- at (or immediately before) that point. Extending eight studs past the
+    -- sample falsely accepted narrow limb and near-floor shots that continued
+    -- into a body much farther down the ray.
+    return workspace:Raycast(origin, direction.Unit * (direction.Magnitude + 0.15), params) ~= nil
 end
 local function gunTimingCoverage(origin, point, translations, params)
     if not translations then return 1, 0 end
@@ -19408,12 +20159,26 @@ function State.GunAutoPartNames(names, root, onScreenOnly)
     end
     return stable
 end
+function State.GunReliablePartNames(names)
+    -- Stop assisted shots from picking tiny, fast-moving hands, feet and legs.
+    -- A normal manual click still has its original cursor fallback.
+    local reliable={}
+    for _,name in ipairs(names) do
+        if reliableGunPart(name) then
+            table.insert(reliable,name)
+        end
+    end
+    return reliable
+end
 local function exposedSolution(char, root, kind, origin, item, camera, bodySamples, onScreenOnly)
     if not camera and kind ~= "Gun" then return nil end
     if not bodySamples then local _, body = visibleBodySamples(char, kind, origin, camera,nil,nil,nil,onScreenOnly); bodySamples = body end
     local names = hitPartNames[kind]
     if kind == "Gun" and bodySamples.HumanoidRootPart then names = table.clone(names); table.insert(names, 1, "HumanoidRootPart") end
-    if kind == "Gun" then names=State.GunAutoPartNames(names,root,onScreenOnly) end
+    if kind == "Gun" then
+        names=State.GunAutoPartNames(names,root,onScreenOnly)
+        names=State.GunReliablePartNames(names)
+    end
     local queryParts = {}
     for _, name in ipairs(names) do
         local info = bodySamples[name]
@@ -21052,7 +21817,7 @@ local function startThrow(record, preferred, strict, canRelease)
                 -- never reuse a direction solved for the previous position.
                 if targetFrame and (handle.Position-originFrame.Position).Magnitude>.25 then
                     originFrame=handle.CFrame
-                    targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
+                    targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position,not strict)
                 end
             end
             -- A manual throw can always fall back to the native cursor when
@@ -21069,11 +21834,21 @@ local function startThrow(record, preferred, strict, canRelease)
                 if strict then
                     State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: knife moved again during aiming"); return
                 end
-                -- The user is still moving. Re-sample the *real* throw origin
-                -- and current cursor rather than swallowing manual input.
+                -- Recalculate from the live moving origin before discarding
+                -- an otherwise valid assisted torso/head solution. Two
+                -- additional bounded scans, then preserve manual cursor input.
                 originFrame=handle.CFrame
-                targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
-                targetName,solution=nil,nil; manual=true
+                targetFrame,targetName,solution=aimPoint(record,nil,false,originFrame.Position,true)
+                if (handle.Position-originFrame.Position).Magnitude>.25 then
+                    originFrame=handle.CFrame
+                    targetFrame=nil
+                end
+                if not targetFrame then
+                    targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
+                    targetName,solution=nil,nil; manual=true
+                else
+                    manual,manualLift=false,false
+                end
             end
             if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
                 or State.IsPlayerExcluded(solution.Player)
@@ -22982,6 +23757,7 @@ function State.Destroy()
     if State.StopStreamerMode then local stopped,message=State.StopStreamerMode(); if stopped==false then return false,message end end
     -- Only now can unload no longer be refused, so a refused unload keeps movement and X-ray as they were.
     if State.StopMovement then State.StopMovement() end
+    if State.StopStyleMove then State.StopStyleMove("Unloaded") end
     if State.StopXRay then State.StopXRay() end
     if State.StopAntiFling then State.StopAntiFling() end
     if State.StopTriggerbot then State.StopTriggerbot("Unloaded") end
@@ -25141,6 +25917,8 @@ local installEmergencyStop = function(C)
         -- End dodge before fling return so a dodge restore cannot replace that return.
         State.Config.AutoKnifeDodge = false
         run("dodge",function() if State.SetAutoKnifeDodge then State.SetAutoKnifeDodge(false) end end)
+        State.Config.AutoJuke,State.Config.AutoTrickshot=false,false
+        run("style moves",function() if State.StopStyleMove then State.StopStyleMove("Emergency stop") end end)
         run("target memory",State.ClearTargetContinuity)
         run("movement",State.StopMovement)
         run("fling queue",function() if State.StopFlingAll then local ok,message=State.StopFlingAll("Emergency stop"); if ok==false then error(message) end end end)
@@ -26766,6 +27544,14 @@ local installKeybinds=function(C)
         {Id="TeleportMap",Title="Teleport to map",Default="None",Run=function() local ok,message=State.TeleportToArea("Map"); return nil,ok and "Teleported to map" or tostring(message),not ok end},
         {Id="TeleportLobby",Title="Teleport to lobby",Default="None",Run=function() local ok,message=State.TeleportToArea("Lobby"); return nil,ok and "Teleported to lobby" or tostring(message),not ok end},
         {Id="RepairCamera",Title="Repair camera",Default="F10",Run=function() local ok,message=State.FixCamera(); return nil,ok and "Camera repaired" or tostring(message),not ok end},
+        {Id="QuickJuke",Title="Quick juke",Default="B",Group="Movement",Run=function()
+            local ok,message=State.StartJuke(); return nil,message,not ok end},
+        {Id="TrickshotSpin",Title="360 trickshot spin",Default="Y",Group="Combat",Run=function()
+            local ok,message=State.StartTrickshot(); return nil,message,not ok end},
+        {Id="AutoJuke",Title="Auto juke",Default="None",Group="Movement",Run=function()
+            State.SetAutoStyleMove("Juke",not cfg.AutoJuke); return cfg.AutoJuke end},
+        {Id="AutoTrickshot",Title="Auto trickshot",Default="None",Group="Combat",Run=function()
+            State.SetAutoStyleMove("Trickshot",not cfg.AutoTrickshot); return cfg.AutoTrickshot end},
     }
     -- Every other menu toggle and action can have a key too; they start unbound.
     for _,entry in ipairs({
@@ -27270,6 +28056,8 @@ local createMobileUI = function(C)
         elseif key == "KillAura" then accepted,reason=State.SetKillAura(enabled)
         elseif key == "AuraExtendedReach" then accepted,reason=State.SetAuraExtendedReach(enabled)
         elseif key == "AutoKnifeDodge" then accepted,reason=State.SetAutoKnifeDodge(enabled)
+        elseif key == "AutoJuke" then accepted,reason=State.SetAutoStyleMove("Juke",enabled)
+        elseif key == "AutoTrickshot" then accepted,reason=State.SetAutoStyleMove("Trickshot",enabled)
         elseif key == "ExperimentalInvisibility" then accepted,reason=State.SetExperimentalInvisibility(enabled)
         elseif key == "Invisibility" then accepted,reason=State.SetInvisibility(enabled)
         elseif key == "StreamerMode" then accepted,reason=State.SetStreamerMode(enabled)
@@ -27417,6 +28205,27 @@ local createMobileUI = function(C)
     option(hud,"Gun aim marker","AimMarker","Marks where your shot will land.")
     option(displayOptions,"Stable body colors","StableBodyESP","Box fill for hard-to-see bodies.")
     option(dodgeTab, "Dodge incoming knives", "AutoKnifeDodge", "Moves aside from incoming thrown knives.")
+    option(dodgeTab,"Auto juke","AutoJuke",
+        "Checks walls, corridors, floor edges, nearby players and five escape routes before moving. Does not boost walk speed.")
+    option(dodgeTab,"Learn opponent feints","AdaptiveJukeLearning",
+        "FSS-style short-term reversal reading. Holds baited jukes and uses Counter Cut against committed approaches. Stored only in this session.")
+    option(advancedCombat,"Auto trickshot","AutoTrickshot",
+        "Airborne only: spin when rising with a ready weapon and a clear target near the crosshair. Never jumps from the ground or auto-fires.")
+    mobile.FeaturePickers.StyleSpeedPreset={Value=State.Config.StyleSpeedPreset,Widget=dodgeTab:Dropdown({
+        Title="Juke and spin timing",Desc="Fast, Adaptive and Smooth change move duration only. They do not change walk speed.",
+        Values={"Adaptive","Fast","Smooth"},Value=State.Config.StyleSpeedPreset,Multi=false,
+        Callback=function(value)
+            if mobile.PickerSyncing or syncing or value==State.Config.StyleSpeedPreset then return end
+            suppressInput()
+            State.SetStyleSpeedPreset(value)
+            refresh()
+        end})}
+    dodgeTab:Button({Title="Quick juke (B)",Desc="Picks a safe lane, corner escape or retreat based on the nearby space.",
+        Callback=function() local ok,message=State.StartJuke(); if mobile.Toast then mobile.Toast(message,ok and "info" or "warn") end end})
+    advancedCombat:Button({Title="360 trickshot (Y)",Desc="Jump and spin once. Fire manually during or after the spin.",
+        Callback=function() local ok,message=State.StartTrickshot(); if mobile.Toast then mobile.Toast(message,ok and "info" or "warn") end end})
+    mobile.StyleStatus=dodgeTab:Paragraph({Title="Adaptive juke and trickshot counters",
+        Desc="Thirteen patterns | space and observed opponent feints"})
     mobile.FeaturePickers.KnifeDodgeMode={Value=State.Config.KnifeDodgeMode,Widget=dodgeTab:Dropdown({Title="Dodge mode",
         Desc="Side teleport tries a supported 4–8 stud move; falls back to jump/sidestep when unavailable.",
         Values={"Side teleport","Jump / sidestep"},Value=State.Config.KnifeDodgeMode,Multi=false,Callback=function(value)
@@ -27825,6 +28634,39 @@ local createMobileUI = function(C)
             updateDescription(mobile.KnifeTriggerbotStatus,"KnifeTriggerbot",detail)
         end
         if State.KillAll then updateDescription(mobile.KillAllStatus,"KillAll",State.KillAll.Status) end
+        if mobile.StyleStatus and State.GetStyleMoveSnapshot then
+            local info=State.GetStyleMoveSnapshot()
+            local counts=info.Patterns
+            local countText,secondLine,thirdLine={},{},{}
+            for index,pattern in ipairs({"Quick cut","Fake cut","Double fake","Brake cut","Jump cut",
+                "Zigzag","Reverse bait","Wide arc","Sprint cut",
+                "Corner escape","Tight cut","Retreat step","Counter cut"}) do
+                table.insert(index<=4 and countText or index<=8 and secondLine or thirdLine,
+                    ("%s %d"):format(pattern,counts[pattern] or 0))
+            end
+            local details=("Jukes %d (auto %d / manual %d) | Spins %d | %s"
+                .."\n%s\n%s\n%s"
+                .."\nPlayers in round %d | Opposing threats %d | Nearby %d"
+                .."\nPriority opponent %.1f studs | Chosen lane risk %.3f"
+                .."\nSpace: %s | Clear %.1f / %.1f studs"
+                .."\nOpponent read: %s | Recent reversals %d | Tracked %d"
+                .."\nObserved turns %d | Held feints %d | Counter cuts %d"
+                .."\nLast: %s | %.1f studs/s | %.2f s"
+                .."\nSpin time %.2f s | %s")
+                :format(info.Jukes,info.AutoJukes,info.ManualJukes,info.Trickshots,info.Preset,
+                    table.concat(countText,"  |  "),table.concat(secondLine,"  |  "),
+                    table.concat(thirdLine,"  |  "),
+                    info.ObservedPlayers,info.ObservedOpponents,info.CloseThreats,
+                    info.ClosestThreat,info.LastLaneRisk,
+                    info.LastSpace,info.LastClearance,info.LastDesiredClearance,
+                    info.LastOpponentRead,info.LastOpponentReversals,info.TrackedOpponents,
+                    info.ObservedReversals,info.FeintHolds,info.CounterCuts,
+                    info.LastPattern,info.LastJukeSpeed,info.LastJukeDuration,info.LastSpinDuration,info.Status)
+            if info.LegacyJukes>0 then
+                details..=("\nEarlier jukes (before pattern tracking): %d"):format(info.LegacyJukes)
+            end
+            updateDescription(mobile.StyleStatus,"StyleMoves",details)
+        end
         if mobile.ResultsStatus and State.GetCombatResults then
             updateDescription(mobile.ResultsStatus,"CombatResults",State.GetCombatResults().Text)
             updateDescription(mobile.ResultsHistory,"CombatHistory",select(2,State.GetRecentCombatRuns()))

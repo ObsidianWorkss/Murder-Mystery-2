@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.56-7499ff" alt="Version 1.0.0-rc.56">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.57-7499ff" alt="Version 1.0.0-rc.57">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.56.** Local validation passes **1,179 main-runtime** and **171 standalone-farm Luau assertions** (1,350 total) and compiles all five entry points. Knife throwing now favors torso/head instead of exposed feet, uses the existing adaptive turn/brake prediction for moving targets, and corrects near-level flat-ground cursor fallback to body height instead of launching directly into the floor. Manual E/right-click and native input restoration from rc.55 remain. Live throw accuracy and server hit registration are **unverified** because a connected MM2 client was unavailable. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.57.** All five Luau entry points compile and the complete offline regression suite passes. This update adds automatic and manual space-aware jukes, 13 movement patterns, FSS-inspired opponent-feint reading, airborne-only automatic trickshot spins, and reliable gun-point and moving-knife-target selection. Jukes do not alter WalkSpeed; the separate opt-in Speed Boost remains independent. The script loaded successfully in a connected MM2 client, but live hit-rate gains and successful evasions against human opponents remain **unverified**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

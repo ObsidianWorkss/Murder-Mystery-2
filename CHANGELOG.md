@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.57 — 2026-11-28
+
+- Add manual **B** quick jukes and **Y** trickshot spins with optional automatic, role-aware activation and independent toggles. Automatic 360 spins only trigger during an existing rising jump, with an equipped weapon, visible near-crosshair opponent and sufficient estimated airtime; weapon firing remains a separate feature.
+- Add 13 juke patterns, including corner escapes, tight cuts, retreat steps and FSS-inspired counter cuts. Choose among five space-aware routes with full-body wall sweeps, floor-continuity checks, nearby-opponent risk scoring and movement-direction preference. Stop jukes if a new obstacle or ledge is detected.
+- Borrow bounded short-term motion-reversal tracking and anti-feint containment from the local FSS script. Opponent data is session-only and can be disabled using **Learn opponent feints**; no cross-game mechanics or saved opponent profiles are imported.
+- Make juke and spin timing adapt to observed movement without changing the character's WalkSpeed. Add pattern counts, threat observations, clearance metrics and automatic/manual action counters.
+- Tighten gun sample-ray validation to prevent intersections far behind the intended body point; favor central gun targets over tiny exposed limbs. Recalculate manual knife aim after the shooter changes position before falling back to the native cursor path.
+- Luau compile and local regression checks pass, including dedicated style, motion-learning, space-geometry and gun-ray suites. A connected MM2 client accepted the updated script and its feature controls, but server-confirmed hit-rate improvement and player-versus-player dodge success remain unverified.
+
 ## Unreleased — standalone farm
 
 - Add an opt-in `auto-farm-low-graphics.lua` loader using the existing Underground farm. Request 3D-off and a 20 FPS cap only with capability checks; save available prior values, retain lower caps, respect later FPS changes and expose retryable cleanup diagnostics. Restore on Stop/replacement and carry the mode through reconnect. Normal loaders leave graphics untouched. This does not launch clients or validate 99-player operation.

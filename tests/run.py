@@ -20,6 +20,7 @@ sections = {
     "MUZZLE": ("function State.GunMuzzleFollowsRig(", "local function predict("),
     "SCREEN": ("function State.IsAimPointOnScreen(", "local function visibleBodySamples("),
     "VISIBLE": ("local function visibleBodySamples(", "local function sampleRayHitsBody("),
+    "RELIABLE_GUN_HELPER": ("local function reliableGunPart(", "local function hiddenBodyPart("),
     "MOTION": ("local function sampleMotion(", "connect(Players.PlayerRemoving, function(other) State.Motion[other] = nil end)"),
     "PREVIEW": ("function State.GetCachedAimPreview(", "-- This executor cannot hook the live script's module cache."),
     "AIMPOINT": ("local function aimPoint(", "\ndo\n-- Predict only other players' possible ray obstruction"),
@@ -268,4 +269,66 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     if "-- INSERT_" in transparent_cover:
         raise RuntimeError("Unexpanded transparent cover source marker")
     harness.write_text(transparent_cover, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    style = (root / "tests" / "style_moves.luau").read_text(encoding="utf-8")
+    start = source.index("local function styleOpponentRole(")
+    end = source.index("do\n-- One-shot style moves:", start)
+    style = style.replace("-- INSERT_STYLE_POLICY", source[start:end])
+    # No juke/trickshot may override movement speed, even as an instant boost.
+    # The separate, user-controlled Speed Boost feature is outside this block.
+    start_runtime = source.index("do\n-- One-shot style moves:", end)
+    end_runtime = source.index("local function equippedWeapon()", start_runtime)
+    style_runtime = source[start_runtime:end_runtime]
+    import re
+    if re.search(r"\.WalkSpeed\s*=(?!=)", style_runtime):
+        raise AssertionError("Style movement must never assign Humanoid.WalkSpeed")
+    if "AppliedWalkSpeed" in style_runtime or "PreviousWalkSpeed" in style_runtime:
+        raise AssertionError("Old juke speed-boost tracking remains in the style controller")
+    if "-- INSERT_STYLE_POLICY" in style:
+        raise RuntimeError("Unexpanded style policy source marker")
+    harness.write_text(style, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    learning = (root / "tests" / "juke_learning.luau").read_text(encoding="utf-8")
+    learning = learning.replace("-- INSERT_STYLE_POLICY", source[start:end])
+    begin = source.index("local function styleObserveOpponent(")
+    finish = source.index("local function scanStyleThreats(", begin)
+    learning = learning.replace("-- INSERT_MOTION_TRACKER", source[begin:finish])
+    if "-- INSERT_" in learning:
+        raise RuntimeError("Unexpanded motion learning test marker")
+    harness.write_text(learning, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    juke_geometry = (root / "tests" / "juke_space.luau").read_text(encoding="utf-8")
+    begin = source.index("local function styleLaneClearance(")
+    finish = source.index("local function stylePlanEscape(", begin)
+    juke_geometry = juke_geometry.replace("-- INSERT_JUKE_LANE", source[begin:finish])
+    begin = source.index("local function styleMotionHorizon(")
+    finish = source.index("local function styleSpeedFactor(", begin)
+    juke_geometry = juke_geometry.replace("-- INSERT_MOTION_HORIZON", source[begin:finish])
+    begin = source.index("local function styleLaneRisk(")
+    finish = source.index("local function styleSpinAngle(", begin)
+    juke_geometry = juke_geometry.replace("-- INSERT_JUKE_SPACE_POLICY", source[begin:finish])
+    begin = source.index("local function stylePlanEscape(")
+    finish = source.index("function State.PreviewJukeSpace()", begin)
+    juke_geometry = juke_geometry.replace("-- INSERT_JUKE_PLANNER", source[begin:finish])
+    if "-- INSERT_JUKE_" in juke_geometry:
+        raise RuntimeError("Unexpanded juke geometry marker")
+    harness.write_text(juke_geometry, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    aim_ray = (root / "tests" / "aim_ray.luau").read_text(encoding="utf-8")
+    begin = source.index("local function reliableGunPart(")
+    finish = source.index("local function hiddenBodyPart(", begin)
+    reliable = source[begin:finish]
+    begin = source.index("function State.GunReliablePartNames(")
+    finish = source.index("local function exposedSolution(", begin)
+    aim_ray = aim_ray.replace("-- INSERT_RELIABLE_PART", reliable + source[begin:finish])
+    begin = source.index("local function sampleRayHitsBody(")
+    finish = source.index("local function gunTimingCoverage(", begin)
+    aim_ray = aim_ray.replace("-- INSERT_SAMPLE_RAY", source[begin:finish])
+    if "-- INSERT_" in aim_ray:
+        raise RuntimeError("Unexpanded aim-ray test source marker")
+    harness.write_text(aim_ray, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
