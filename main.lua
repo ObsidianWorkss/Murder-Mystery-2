@@ -17893,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.54"
+State.Version = "1.0.0-rc.55"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -20953,10 +20953,10 @@ local function startThrow(record, preferred, strict, canRelease)
     local remote=events and events:FindFirstChild("KnifeThrown")
     local handle=record.Item:FindFirstChild("Handle")
     if not remote or not remote:IsA("RemoteEvent") or not handle or not handle:IsA("BasePart") then knifeFeedback("Knife throw objects unavailable"); return false end
-    local chosen=State.Config.KnifeAim and chooseTarget("Knife",handle.Position,record.Item,preferred,strict)
-    -- A player-initiated E/right-click throw is still a real manual throw
-    -- when there is no aim-assist target. Only automated strict throws require
-    -- a target before charging.
+    -- Only an explicitly automated/locked throw selects a player at charge
+    -- time. Manual E/right-click must not inherit a transient target lock:
+    -- native knife input can release normally even if that player moves away.
+    local chosen=strict and State.Config.KnifeAim and chooseTarget("Knife",handle.Position,record.Item,preferred,true)
     if not chosen and strict then
         State.Stats.SkippedKnifeThrows += 1
         knifeFeedback("No clear throw target"); return false
@@ -21000,12 +21000,12 @@ local function startThrow(record, preferred, strict, canRelease)
                 cancel("Throw cancelled: knife prediction disabled"); return
             end
             local originFrame=handle.CFrame
-            local lockTarget=strict or (chargedTarget~=nil and State.Config.RequireClearKnifeTarget)
+            local lockTarget=strict==true
             local targetFrame,targetName,solution
-            -- Never silently pick a new assisted player after starting a
-            -- no-target manual charge in locked-target mode.
-            if chargedTarget or strict or not State.Config.RequireClearKnifeTarget then
-                targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
+            -- Manual input chooses a fresh, on-screen candidate at release.
+            -- Strict automatic actions keep their explicitly charged target.
+            if strict or State.Config.KnifeAim then
+                targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position,not strict)
                 -- A moving/jumping thrower can shift the handle during a costly
                 -- release-time scan. Recompute once from the real new origin,
                 -- never reuse a direction solved for the previous position.
@@ -21014,22 +21014,31 @@ local function startThrow(record, preferred, strict, canRelease)
                     targetFrame,targetName,solution=aimPoint(record,chargedTarget,lockTarget,originFrame.Position)
                 end
             end
-            -- Player-initiated throws keep native cursor fallback. A charged
-            -- assisted target remains locked when the clear-target toggle is on.
+            -- A manual throw can always fall back to the native cursor when
+            -- no candidate qualifies, regardless of RequireClearKnifeTarget.
             local manual=false
-            if not targetFrame and not strict and (not chargedTarget or not State.Config.RequireClearKnifeTarget) then
+            if not targetFrame and not strict then
                 targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
             end
             if not targetFrame then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target no longer clear"); return
             end
             if (handle.Position-originFrame.Position).Magnitude>.25 then
-                State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: knife moved again during aiming"); return
+                if strict then
+                    State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: knife moved again during aiming"); return
+                end
+                -- The user is still moving. Re-sample the *real* throw origin
+                -- and current cursor rather than swallowing manual input.
+                originFrame=handle.CFrame
+                targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
             end
             if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
                 or State.IsPlayerExcluded(solution.Player)
                 or not clearPath(originFrame.Position,targetFrame.Position,solution.Character)) then
-                State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target or firing path changed"); return
+                if strict then
+                    State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target or firing path changed"); return
+                end
+                targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
             end
             if State.ExcludedPlayerInShotPath(originFrame.Position,targetFrame.Position) then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: excluded player in firing path"); return
@@ -21332,7 +21341,25 @@ if throwAction then
     connect(throwAction.Pressed, function()
         local item = equippedWeapon()
         local record = item and State.WeaponHandlers[item]
-        if record and record.Kind == "Knife" then startThrow(record) end
+        if record and record.Kind == "Knife" then
+            State.LastThrowInput = "GameplayThrowPressed"
+            startThrow(record)
+        end
+    end)
+end
+-- Native MM2 controls can route E, controller and touch throws through this
+-- WeaponService bindable instead of InputBegan. Our replaced KnifeClient no
+-- longer listens to it, so preserve that signal while assisted aim is on.
+local nativeKnifeThrown = weapon and weapon.KnifeThrown
+if typeof(nativeKnifeThrown)=="Instance" and nativeKnifeThrown:IsA("BindableEvent") then
+    connect(nativeKnifeThrown.Event, function()
+        State.NativeKnifeInputEvents=(State.NativeKnifeInputEvents or 0)+1
+        local item = equippedWeapon()
+        local record = item and State.WeaponHandlers[item]
+        if record and record.Kind == "Knife" then
+            State.LastThrowInput = "WeaponServiceKnifeThrown"
+            startThrow(record)
+        end
     end)
 end
 

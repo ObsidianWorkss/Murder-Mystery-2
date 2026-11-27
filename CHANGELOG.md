@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.55 — 2026-11-27
+
+- Fix manual E/right-click knife throws while assisted aim is on: never charge with a hard target lock. Select an eligible on-screen opponent only at release, otherwise fall back to the actual mouse target even when `RequireClearKnifeTarget` is enabled. Automatic strict throws still pin their selected target and enforce target validity.
+- If the shooter moves twice while a manual knife aim is being computed, use the real latest handle position and cursor direction instead of dropping the manual release. Continue to reject implausible repeated shifts for automatic targeted throws.
+- Restore the native `WeaponService.KnifeThrown` bindable listener, which can carry gamepad/touch/keyboard throw actions after the original `KnifeClient` is temporarily replaced. Keep direct right-click and gameplay-action listeners with a shared charging guard to avoid duplicate releases.
+- **1,344 offline Luau assertions pass** (1,173 main runtime, 171 farm); five entry points compile. The in-client throw-event connection can be validated without sending a weapon request, but confirmed human-input throw accuracy still requires an active Murderer round.
+
 ## 1.0.0-rc.54 — 2026-11-26
 
 - Add bounded, measured `BasePart.ReceiveAge` compensation to moving gun and knife target prediction. Fall back to ping-only prediction if the property is unavailable, keep stationary gun targets at zero lead, and reject excessively stale target snapshots instead of guessing.

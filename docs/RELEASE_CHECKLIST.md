@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.54**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.55**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Native manual knife throws (rc.55)
+
+- [x] Keep manual E/right-click releases independent of charge-time target locks and allow cursor fallback with Require Clear Knife Target enabled.
+- [x] Recalculate from the moving shooter's actual handle; use current cursor direction rather than cancel a manual release after a second movement.
+- [x] Listen to the native WeaponService knife throw bindable for inputs routed through MM2's control system, with the charging guard preventing duplicate requests.
+- [x] Run 1,344 Luau assertions and compile all five entry points.
+- [ ] Verify live E/right-click/controller throw and actual server-registered trajectory in a Murderer round; simulator assertions do not prove a real hit.
 
 ## Moving-target gun and knife aim (rc.54)
 

@@ -1,5 +1,11 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.55
+
+- **1,344 offline Luau assertions passed** across 20 suites (1,173 main runtime, 171 farm), including the manual release-target timing and repeated shooter-motion fallback regressions. All five entry points compile.
+- Live rc.54 inspection found `KnifeAim=true` and `RequireClearKnifeTarget=true` with six prior knife requests. The replaced native `KnifeClient` no longer handled the verified `WeaponService.KnifeThrown` BindableEvent; the custom script had not connected it. Manual throws also captured a hard target at charge start, permitting cancellation when the target changed during the delay.
+- rc.55 hooks the native bindable and keeps manual charging independent of a transient target. Explicit automated/strict throws continue to fail closed on invalid targets or multiple origin shifts. A controlled user-input/remote-confirmed throw still needs a Murderer round.
+
 ## Release candidate 1.0.0-rc.54
 
 - Luau 0.739: **1,340 regression assertions passed** across 20 suites (1,169 main runtime, 171 farm); all five entry points compiled. Source diff whitespace validation also passed.

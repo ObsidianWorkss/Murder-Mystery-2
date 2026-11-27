@@ -384,13 +384,13 @@ do
     local jobs={}
     local task={spawn=function(f) table.insert(jobs,f) end,wait=function() end}
     local acquired,releaseTarget,releaseLost=near,near,false
-    local seenStrict,seenOrigin,throwMove,throwAimCalls
+    local seenStrict,seenOrigin,seenOnScreen,throwMove,throwAimCalls
     local function chooseTarget()
         return acquired and {Player=acquired,Character=acquired.Character}
     end
     local weapon={GetMouseTargetCFrame=function() return frame(30) end}
-    local function aimPoint(_,preferred,strict,origin)
-        seenStrict,seenOrigin=strict,origin
+    local function aimPoint(_,preferred,strict,origin,onScreenOnly)
+        seenStrict,seenOrigin,seenOnScreen=strict,origin,onScreenOnly
         throwAimCalls=(throwAimCalls or 0)+1
         if throwMove then
             local shift=type(throwMove)=="table" and table.remove(throwMove,1) or throwMove
@@ -421,6 +421,7 @@ do
     r=record()
     check(startThrow(r) and #jobs==1 and r.Charging,
         "manual right-click can charge a knife even without a clear assisted target")
+    check(r.ThrowTargetUserId==nil,"manual throw never pins a player during its charge")
     release()
     check(sends==1 and State.LastRequest.ManualFallback and State.LastRequest.Target==nil,
         "manual throw without an assisted target releases toward the player's cursor")
@@ -429,20 +430,30 @@ do
         "manual cursor fallback still refuses shots crossing an excluded player")
     r=record(); releaseLost=false; releaseTarget=nil
     startThrow(r); releaseTarget=far; release()
-    check(sends==2 and State.LastRequest.ManualFallback and State.LastRequest.Target==nil,
-        "manual no-target charge cannot silently retarget to another player during release")
+    check(sends==2 and not State.LastRequest.ManualFallback and State.LastRequest.Target==far.Name
+        and seenStrict==false and seenOnScreen==true,
+        "manual charge selects a fresh eligible aim candidate only at release")
+    r=record(); throwMove={1,2}; throwAimCalls=0; releaseTarget=near
+    startThrow(r); release()
+    check(sends==3 and throwAimCalls==2 and State.LastRequest.ManualFallback and lastOrigin.Position.X==2,
+        "manual throw keeps releasing toward the cursor during repeated shooter movement")
+    handle.CFrame=frame(0); handle.Position=vec(0)
     sends=0
     r=record()
     check(not startThrow(r,near,true) and #jobs==0 and r.LastThrow==-math.huge,
         "automated target-locked throws still require a clear target before charging")
     acquired=near; releaseTarget=near; releaseLost=true; r=record()
     startThrow(r); release()
-    check(sends==0 and not r.Charging and r.LastThrow==-math.huge,
-        "losing protected target cancels without cursor fallback")
+    check(sends==1 and State.LastRequest.ManualFallback and not r.Charging,
+        "manual charge uses native cursor when a previously selectable target disappears")
     releaseLost=false; releaseTarget=far; r=record()
     startThrow(r); release()
+    check(sends==2 and not seenStrict and State.LastRequest.Target==far.Name and seenOrigin==lastOrigin.Position,
+        "manual release is not forced to the target present when the charge started")
+    sends=0; r=record(); releaseTarget=far
+    startThrow(r,near,true); release()
     check(sends==1 and seenStrict and State.LastRequest.Target==near.Name and seenOrigin==lastOrigin.Position,
-        "protected throw stays on charged target and uses its sampled origin")
+        "strict automated throw remains locked to its originally selected target")
     r=record(); throwMove=1; throwAimCalls=0; startThrow(r,near,true); release()
     check(sends==2 and throwAimCalls==2 and lastOrigin.Position.X==1 and seenOrigin==lastOrigin.Position,
         "moving thrower reaims once from the real release origin before sending")
@@ -451,15 +462,15 @@ do
     check(sends==1 and throwAimCalls==2 and not r.Charging and r.LastThrow==-math.huge,
         "multiple moving-origin shifts cancel a stale throw rather than sending a bad trajectory")
     handle.CFrame=frame(0); handle.Position=vec(0)
-    r=record(); startThrow(r); near.Character=character(3); release()
+    r=record(); startThrow(r,near,true); near.Character=character(3); release()
     check(sends==1 and not r.Charging,"target respawn cancels charged throw")
-    r=record(); startThrow(r); near.Dead=true; release(); near.Dead=false
+    r=record(); startThrow(r,near,true); near.Dead=true; release(); near.Dead=false
     check(sends==1,"target death cancels charged throw")
-    r=record(); startThrow(r); near.Excluded=true; release(); near.Excluded=false
+    r=record(); startThrow(r,near,true); near.Excluded=true; release(); near.Excluded=false
     check(sends==1,"target exclusion cancels charged throw")
-    r=record(); startThrow(r); blocked[near.Character]=true; release(); blocked[near.Character]=nil
+    r=record(); startThrow(r,near,true); blocked[near.Character]=true; release(); blocked[near.Character]=nil
     check(sends==1,"new obstruction cancels charged throw")
-    r=record(); startThrow(r); State.Config.KnifeAim=false; release()
+    r=record(); startThrow(r,near,true); State.Config.KnifeAim=false; release()
     check(sends==1,"disabling prediction cancels a protected charge")
     r=record()
     check(not startThrow(r,near,true),"selected-target automation requires prediction")
@@ -468,6 +479,11 @@ do
     State.Config.KnifeAim=true; State.Config.RequireClearKnifeTarget=false
     acquired=nil; releaseLost=true; r=record(); startThrow(r); release()
     check(sends==3 and State.LastRequest.ManualFallback,"explicit fallback setting allows cursor throwing")
+    State.Config.RequireClearKnifeTarget=true; releaseLost=false; releaseTarget=near
+    r=record(); blocked[near.Character]=true; startThrow(r); release(); blocked[near.Character]=nil
+    check(sends==4 and State.LastRequest.ManualFallback,
+        "manual throw falls back to cursor if the release-time assisted path became obstructed")
+    sends=3
     State.Config.RequireClearKnifeTarget=true; acquired=near; releaseLost=false
     r=record(); startThrow(r); excludedPath=true; release(); excludedPath=false
     check(sends==3,"excluded player in path cancels throw")
