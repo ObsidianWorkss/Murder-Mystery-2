@@ -17722,7 +17722,7 @@ local State = {
         KnifeAllDirections = true, RequireClearKnifeTarget = true, StabAssist = true, ConservativeGun = true, MenuTheme = "Midnight", AntiFling = true,
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true, KnifeDodgeMode = "Side teleport",
         Triggerbot = false, KnifeTriggerbot = false, AutoJuke = true, AutoTrickshot = true,
-        AdaptiveJukeLearning = true,
+        AdaptiveJukeLearning = true, SelfLearningJukes = true, SelfLearningAim = true,
         StyleSpeedPreset = "Adaptive"},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, StabSweepErrors = 0,
@@ -17898,7 +17898,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.57"
+State.Version = "1.0.0-rc.58"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18599,6 +18599,126 @@ local function styleRemainingAirTime(risingSpeed,gravity,clearance)
     return math.max(0,(risingSpeed+math.sqrt(risingSpeed*risingSpeed
         +2*gravity*clearance))/gravity)
 end
+-- FSS-inspired contextual bandit: three modest timing/pattern choices, never
+-- movement speed changes, target teleports, or unaudited "successful dodges".
+local function styleRLContext(role,space,distance,crowd)
+    local band=distance<=9 and "Close" or distance<=17 and "Approach" or "Far"
+    local class=role=="Murderer" and "Attacker" or "Defender"
+    return class.."/"..tostring(space).."/"..band.."/"..(crowd>=2 and "Crowd" or "Solo")
+end
+local function styleRLActions(space,canFeint)
+    if space=="Open" and canFeint then return {"Balanced","Snap","Feint"} end
+    return {"Balanced","Snap"}
+end
+local function styleRLChoose(rows,key,actions)
+    local record=rows[key]
+    if not record or record.N<3 then return "Balanced" end
+    local best,bestScore="Balanced",-math.huge
+    for _,name in ipairs(actions) do
+        local arm=record.Arms[name]
+        if not arm or arm.N==0 then return name end
+        local value=arm.Q+0.22*math.sqrt(math.log(record.N+1)/arm.N)
+        if value>bestScore then best,bestScore=name,value end
+    end
+    return best
+end
+local function styleRLApply(action,basePattern,duration,clearance,walkSpeed,canFeint,space)
+    local pattern=basePattern
+    if action=="Snap" then
+        if space=="Open" then pattern="Quick cut" end
+        duration*=0.84
+    elseif action=="Feint" and space=="Open" and canFeint then
+        pattern="Fake cut"
+        duration*=1.08
+    end
+    -- Never lengthen a route beyond the prevalidated floor/wall clearance.
+    local permitted=styleSpaceDuration(duration,clearance,walkSpeed)
+    if not permitted then return nil,nil end
+    return pattern,permitted
+end
+local function styleRLUpdate(rows,key,action,reward,serial)
+    if not rows or type(key)~="string" or #key>100
+        or (action~="Balanced" and action~="Snap" and action~="Feint"
+            and action~="Short" and action~="Long")
+        or (reward~=1 and reward~=-1) then return false end
+    local record=rows[key]
+    if not record then
+        local count,oldest,at=0,nil,math.huge
+        for name,row in pairs(rows) do
+            count+=1
+            if row.At<at then oldest,at=name,row.At end
+        end
+        if count>=48 and oldest then rows[oldest]=nil end
+        record={N=0,Arms={},At=serial}
+        rows[key]=record
+    end
+    local arm=record.Arms[action]
+    if not arm then arm={N=0,Q=0};record.Arms[action]=arm end
+    if arm.N>=48 then arm.N=24 end
+    arm.N+=1
+    arm.Q+=(reward-arm.Q)/arm.N
+    record.N+=1
+    record.At=serial
+    return true
+end
+local function styleRLGrade(completed,blocked,died,before,after,moved,elapsed,sameThreat)
+    if not sameThreat or elapsed<0 or elapsed>1.8 then return nil,"Inconclusive" end
+    if died then return -1,"Death after nearby juke" end
+    if blocked then return -1,"Blocked by wall or ledge" end
+    if completed and before<=22 and after and after-before>=1.5
+        and moved>=1.0 and elapsed>=0.45 then
+        return 1,"Observed separation improved"
+    end
+    return nil,"Inconclusive"
+end
+local learningFile="MM2Universal/learning-v1.json"
+local learningHttp=nil
+local learningSaved=nil
+local learningLoadStatus="Session-only learning"
+local function importRLRows(raw,allowed)
+    local rows={}
+    if type(raw)~="table" then return rows end
+    local count=0
+    for key,record in pairs(raw) do
+        if count>=48 then break end
+        if type(key)=="string" and #key<=100
+            and type(record)=="table" and type(record.Arms)=="table" then
+            local restored={N=0,At=0,Arms={}}
+            if type(record.At)=="number" and record.At==record.At then
+                restored.At=math.floor(math.clamp(record.At,0,1e8))
+            end
+            for _,action in ipairs(allowed) do
+                local arm=record.Arms[action]
+                if type(arm)=="table" and type(arm.N)=="number"
+                    and arm.N==arm.N and type(arm.Q)=="number"
+                    and arm.Q==arm.Q and math.abs(arm.Q)<=1 then
+                    local n=math.floor(math.clamp(arm.N,0,48))
+                    if n>0 then
+                        restored.Arms[action]={N=n,Q=arm.Q}
+                        restored.N+=n
+                    end
+                end
+            end
+            if restored.N>0 then rows[key]=restored;count+=1 end
+        end
+    end
+    return rows
+end
+if type(isfile)=="function" and type(readfile)=="function" then
+    learningHttp=game:GetService("HttpService")
+    local ok,raw=pcall(function()
+        return isfile(learningFile) and readfile(learningFile) or nil
+    end)
+    if ok and type(raw)=="string" and #raw<=100000 then
+        local decoded,data=pcall(function() return learningHttp:JSONDecode(raw) end)
+        if decoded and type(data)=="table" and data.Schema==1 then
+            learningSaved=data
+            learningLoadStatus="Saved learning loaded"
+        else
+            learningLoadStatus="Saved learning invalid; using session model"
+        end
+    end
+end
 do
 -- One-shot style moves: manual B/Y or guarded automatic triggers.
 -- The weapon/camera controllers remain untouched, and neither action auto-fires.
@@ -18616,6 +18736,116 @@ local style={Status="Ready",Active=nil,LastStart=-math.huge,LastSide=1,
     LastLaneRisk=0,AutoJukes=previousStyle and previousStyle.AutoJukes or 0,
     ManualJukes=previousStyle and previousStyle.ManualJukes or 0,
     LastAutoJuke=-math.huge,LastAutoTrickshot=-math.huge,NextAutoScan=0,Focused=true}
+local oldLearner=previousStyle and previousStyle.SelfLearner
+local resumeLearningRound=oldLearner and oldLearner.InRound
+    and oldLearner.RoundCharacter==player.Character
+    and State.GameContext.InRound(player) and oldLearner.Current~=nil
+local learner={
+    Rows=oldLearner and type(oldLearner.Rows)=="table" and oldLearner.Rows
+        or importRLRows(learningSaved and learningSaved.Juke,
+            {"Balanced","Snap","Feint"}),
+    Sessions=oldLearner and oldLearner.Sessions or 0,
+    Graded=oldLearner and oldLearner.Graded or 0,
+    Positive=oldLearner and oldLearner.Positive or 0,
+    Negative=oldLearner and oldLearner.Negative or 0,
+    Inconclusive=oldLearner and oldLearner.Inconclusive or 0,
+    Serial=oldLearner and oldLearner.Serial or 0,
+    History=oldLearner and oldLearner.History or {},
+    InRound=resumeLearningRound==true,
+    RoundCharacter=resumeLearningRound and player.Character or nil,
+    Current=resumeLearningRound and oldLearner.Current or nil,
+    Pending=nil,LastOutcome=oldLearner and oldLearner.LastOutcome or "Waiting for a juke",
+    LastAction="Balanced",LastContext="None",LastReward=0}
+style.SelfLearner=learner
+local function styleRLCurrent()
+    if not learner.Current then
+        learner.Current={Round=learner.Sessions,Attempts=0,Manual=0,
+            Graded=0,Positive=0,Negative=0,Inconclusive=0,
+            Blocked=0,Deaths=0,Last="No observed juke outcome"}
+    end
+    return learner.Current
+end
+local function styleRLFinish(reward,reason)
+    local pending=learner.Pending
+    if not pending then return end
+    learner.Pending=nil
+    reason=reason or "Inconclusive"
+    learner.LastOutcome=reason
+    local current=styleRLCurrent()
+    current.Last=reason
+    if reward==nil or not State.Config.SelfLearningJukes then
+        learner.Inconclusive+=1
+        current.Inconclusive+=1
+        return
+    end
+    learner.Serial+=1
+    if not styleRLUpdate(learner.Rows,pending.Context,pending.Action,reward,learner.Serial) then
+        learner.Inconclusive+=1
+        current.Inconclusive+=1
+        return
+    end
+    learner.Graded+=1
+    current.Graded+=1
+    learner.LastReward=reward
+    if reward>0 then
+        learner.Positive+=1
+        current.Positive+=1
+    else
+        learner.Negative+=1
+        current.Negative+=1
+        if pending.Blocked then current.Blocked+=1 end
+        if reason=="Death after nearby juke" then current.Deaths+=1 end
+    end
+    if State.SaveLearning then State.SaveLearning(false) end
+end
+local function styleRLTick(now,inRound)
+    if inRound and not learner.InRound then
+        learner.InRound=true
+        learner.Sessions+=1
+        learner.Current=nil
+        learner.RoundCharacter=player.Character
+        styleRLCurrent()
+    end
+    local pending=learner.Pending
+    if pending then
+        local same=player.Character==pending.Character
+            and pending.Root and pending.Root.Parent
+            and pending.Opponent and pending.Opponent.Parent
+            and pending.OpponentPlayer and pending.OpponentPlayer.Character
+            and pending.OpponentPlayer.Character:FindFirstChild("HumanoidRootPart")==pending.Opponent
+        local died=pending.Humanoid and pending.Humanoid.Health<=0
+        local elapsed=now-pending.Started
+        if same and died and elapsed<=1.6 then
+            styleRLFinish(-1,"Death after nearby juke")
+        elseif pending.Blocked then
+            styleRLFinish(same and -1 or nil,
+                same and "Blocked by wall or ledge" or "Inconclusive")
+        elseif pending.Interrupted or not same or not inRound then
+            styleRLFinish(nil,"Interrupted or uncertain juke")
+        elseif pending.Completed and elapsed>=1.05 then
+            local delta=pending.Opponent.Position-pending.Root.Position
+            local separation=Vector3.new(delta.X,0,delta.Z).Magnitude
+            local displacement=pending.Root.Position-pending.Origin
+            local moved=Vector3.new(displacement.X,0,displacement.Z):Dot(pending.Direction)
+            local reward,reason=styleRLGrade(true,false,false,pending.Before,
+                separation,moved,elapsed,true)
+            styleRLFinish(reward,reason)
+        elseif elapsed>=1.65 then
+            styleRLFinish(nil,"Observation expired")
+        end
+    end
+    if not inRound and learner.InRound then
+        learner.InRound=false
+        learner.RoundCharacter=nil
+        local current=learner.Current
+        if current then
+            table.insert(learner.History,current)
+            if #learner.History>8 then table.remove(learner.History,1) end
+            learner.Current=nil
+        end
+        if State.SaveLearning then State.SaveLearning(true) end
+    end
+end
 for _,name in ipairs({"Quick cut","Fake cut","Double fake","Brake cut","Jump cut",
     "Zigzag","Reverse bait","Wide arc","Sprint cut","Corner escape","Tight cut",
     "Retreat step","Counter cut"}) do
@@ -18656,6 +18886,12 @@ function State.StopStyleMove(reason)
             active.Humanoid:Move(Vector3.zero,false)
         elseif active.Kind=="Trickshot" and active.Humanoid.Parent and active.Humanoid.AutoRotate==false then
             active.Humanoid.AutoRotate=active.PreviousAutoRotate
+        end
+        local pending=learner.Pending
+        if active.Kind=="Juke" and pending and pending.Move==active then
+            if reason=="Juke finished" then pending.Completed=true
+            elseif reason and reason:find("Juke stopped:",1,true) then pending.Blocked=true
+            else pending.Interrupted=true end
         end
     end
     style.Status=reason or "Ready"
@@ -18935,6 +19171,19 @@ function State.StartJuke(automatic,preferredRoot,knownThreats)
     else
         duration=escape.Duration
     end
+    local learningAction,learningContext=nil,nil
+    if automatic and State.Config.SelfLearningJukes then
+        learningContext=styleRLContext(roleFor(player),escape.Space,distance,#threats)
+        learningAction=styleRLChoose(learner.Rows,learningContext,
+            styleRLActions(escape.Space,escape.CanFeint))
+        local chosenPattern,chosenDuration=styleRLApply(learningAction,pattern,duration,
+            escape.Clearance,hum.WalkSpeed,escape.CanFeint,escape.Space)
+        if chosenPattern then
+            pattern,duration=chosenPattern,chosenDuration
+        else
+            learningAction="Balanced"
+        end
+    end
     -- A juke changes steering and timing only, not Humanoid.WalkSpeed.
     -- The separate opt-in Speed Boost remains under its original controls.
     local nativeSpeed=hum.WalkSpeed
@@ -18944,6 +19193,23 @@ function State.StartJuke(automatic,preferredRoot,knownThreats)
         Direction=escape.Direction,Opponent=opponent,CanFeint=escape.CanFeint,
         Automatic=automatic==true,Pattern=pattern,Duration=duration,
         Space=escape.Space,Params=escape.Params,LastSpaceCheck=0}
+    if State.GameContext.InRound(player) and not learner.InRound then
+        styleRLTick(style.LastStart,true)
+    end
+    local round=styleRLCurrent()
+    if automatic then
+        round.Attempts+=1
+        if learner.Pending then styleRLFinish(nil,"Overlapping move") end
+        if learningAction then
+            learner.LastAction,learner.LastContext=learningAction,learningContext
+            learner.Pending={Move=style.Active,Character=char,Humanoid=hum,Root=root,
+                Opponent=opponent,OpponentPlayer=chosen.Player,Origin=root.Position,
+                Before=distance,Started=style.LastStart,Direction=escape.Direction,
+                Context=learningContext,Action=learningAction,Completed=false}
+        end
+    else
+        round.Manual+=1
+    end
     style.Jukes+=1
     style.PatternCounts[pattern]+=1
     style.LastPattern,style.LastJukeSpeed,style.LastJukeDuration=pattern,nativeSpeed,duration
@@ -18999,7 +19265,13 @@ function State.GetStyleMoveSnapshot()
         LastOpponentReversals=style.LastOpponentReversals,
         TrackedOpponents=style.TrackedOpponents,
         ObservedReversals=style.ObservedReversals,
-        FeintHolds=style.FeintHolds,CounterCuts=style.CounterCuts}
+        FeintHolds=style.FeintHolds,CounterCuts=style.CounterCuts,
+        LearningEnabled=State.Config.SelfLearningJukes==true,
+        Learning={Rounds=learner.Sessions,Graded=learner.Graded,Positive=learner.Positive,
+            Negative=learner.Negative,Inconclusive=learner.Inconclusive,
+            LastAction=learner.LastAction,LastContext=learner.LastContext,
+            LastOutcome=learner.LastOutcome,Current=learner.Current,History=learner.History,
+            Storage=State.LearningStorage and State.LearningStorage.Status or "Session-only"}}
 end
 function State.SetStyleSpeedPreset(preset)
     if preset~="Adaptive" and preset~="Fast" and preset~="Smooth" then
@@ -19028,7 +19300,9 @@ connect(RunService.Heartbeat,function()
     style.NextAutoScan=now+(quickAirScan and 0.06 or 0.20)
     if not State.Running then return end
     local char,hum,root=ownRig()
-    if not char or not State.GameContext.InRound(player) then
+    local inRound=char~=nil and State.GameContext.InRound(player)
+    styleRLTick(now,inRound)
+    if not inRound then
         style.ObservedPlayers,style.ObservedOpponents,style.CloseThreats,style.ClosestThreat=0,0,0,0
         return
     end
@@ -19870,6 +20144,116 @@ function State.TestObservedAimIntegration()
     return result
 end
 
+local previousAimLearning=env.MM2Assist and env.MM2Assist.AimLearning
+State.AimLearning={
+    Rows=previousAimLearning and type(previousAimLearning.Rows)=="table"
+        and previousAimLearning.Rows or importRLRows(learningSaved and learningSaved.Aim,
+            {"Balanced","Short","Long"}),
+    Observed=previousAimLearning and previousAimLearning.Observed or 0,
+    Hits=previousAimLearning and previousAimLearning.Hits or 0,
+    Misses=previousAimLearning and previousAimLearning.Misses or 0,
+    Unknown=previousAimLearning and previousAimLearning.Unknown or 0,
+    Serial=previousAimLearning and previousAimLearning.Serial or 0,
+    Round=previousAimLearning and previousAimLearning.Round or 0,
+    RoundObserved=previousAimLearning and previousAimLearning.RoundObserved or 0,
+    RoundHits=previousAimLearning and previousAimLearning.RoundHits or 0,
+    RoundMisses=previousAimLearning and previousAimLearning.RoundMisses or 0,
+    Last="Awaiting correlated server gun feedback"}
+State.LearningStorage={Path=learningFile,Status=learningLoadStatus,
+    LastFlush=-math.huge,Available=type(writefile)=="function"}
+function State.SaveLearning(force)
+    local storage=State.LearningStorage
+    if not storage.Available then
+        storage.Status="No local file-write API; learning remains in session"
+        return false
+    end
+    local now=os.clock()
+    if not force and now-storage.LastFlush<20 then return false end
+    local movement=State.StyleMoves and State.StyleMoves.SelfLearner
+    if not movement then return false end
+    local payload={Schema=1,Juke=movement.Rows,Aim=State.AimLearning.Rows}
+    local encoded,raw=pcall(function()
+        learningHttp=learningHttp or game:GetService("HttpService")
+        return learningHttp:JSONEncode(payload)
+    end)
+    if not encoded or type(raw)~="string" or #raw>100000 then
+        storage.Status="Learning data could not be safely serialized"
+        return false
+    end
+    local saved,reason=pcall(function()
+        if type(makefolder)=="function" and type(isfolder)=="function"
+            and not isfolder("MM2Universal") then makefolder("MM2Universal") end
+        writefile(learningFile,raw)
+    end)
+    if not saved then
+        storage.Status="Local learning save unavailable: "..tostring(reason):sub(1,100)
+        return false
+    end
+    storage.LastFlush=now
+    storage.Status="Local learning saved"
+    return true
+end
+function State.GetAimLearningSnapshot()
+    local a=State.AimLearning
+    local session=State.StyleMoves and State.StyleMoves.SelfLearner
+    local round=session and session.Sessions or 0
+    if a.Round~=round then
+        a.Round=round
+        a.RoundObserved,a.RoundHits,a.RoundMisses=0,0,0
+    end
+    local contexts=0
+    for _ in pairs(a.Rows) do contexts+=1 end
+    return {Enabled=State.Config.SelfLearningAim==true,Observed=a.Observed,
+        Hits=a.Hits,Misses=a.Misses,Unknown=a.Unknown,Contexts=contexts,
+        RoundObserved=a.RoundObserved,RoundHits=a.RoundHits,
+        RoundMisses=a.RoundMisses,Last=a.Last,
+        Storage=State.LearningStorage and State.LearningStorage.Status or "Session-only"}
+end
+function State.RecordAimLearning(pending,hitTarget,hitPart,correlation)
+    local a=State.AimLearning
+    if not pending or not pending.AimLearningContext or not pending.AimLearningAction then
+        return false,"No learned aim action"
+    end
+    local session=State.StyleMoves and State.StyleMoves.SelfLearner
+    local round=session and session.Sessions or 0
+    if round~=a.Round then
+        a.Round=round
+        a.RoundObserved,a.RoundHits,a.RoundMisses=0,0,0
+    end
+    -- The server's GunFired event is only a heuristic request correlation.
+    -- Learn from its reported ray, never infer a confirmed kill or a hit
+    -- from an unanswered request or a round-victory announcement.
+    if correlation~="Heuristic" or not State.Config.SelfLearningAim then
+        a.Unknown+=1
+        return false,"Uncertain or disabled"
+    end
+    local outcome
+    if hitTarget then
+        outcome=1
+    elseif hitPart==nil then
+        outcome=-1
+    else
+        a.Unknown+=1
+        a.Last="Ray obstruction: ignored for lead learning"
+        return false,a.Last
+    end
+    a.Serial+=1
+    if not styleRLUpdate(a.Rows,pending.AimLearningContext,pending.AimLearningAction,
+        outcome,a.Serial) then return false,"Invalid learning sample" end
+    a.Observed+=1
+    a.RoundObserved+=1
+    if outcome>0 then
+        a.Hits+=1
+        a.RoundHits+=1
+        a.Last="Reported gun ray hit intended body"
+    else
+        a.Misses+=1
+        a.RoundMisses+=1
+        a.Last="Reported gun ray missed intended body"
+    end
+    if State.SaveLearning then State.SaveLearning(false) end
+    return true,a.Last
+end
 function State.AimNetworkDelay(ping)
     local roundTrip = ping
     if roundTrip == nil then roundTrip = State.Config.Ping end
@@ -19891,8 +20275,17 @@ function State.AimObservationDelay(root, ping)
     return math.clamp(base+math.min(age,.14)*.8,0,.16), "ObservedAge"
 end
 function State.GunPredictionLead(root, profile, ping)
-    if profile and profile.Stationary then return 0, "Stationary" end
-    return State.AimObservationDelay(root,ping)
+    local lead,source=State.AimObservationDelay(root,ping)
+    if profile and profile.Stationary then return 0,"Stationary" end
+    if not lead or lead<=0 or not State.Config.SelfLearningAim then return lead,source end
+    local distance=profile and profile.Distance or 25
+    local context=(profile and profile.Mode or "Moving").."/"
+        ..(distance<=14 and "Near" or distance<=35 and "Mid" or "Far")
+    local learner=State.AimLearning
+    if not learner then return lead,source end
+    local action=styleRLChoose(learner.Rows,context,{"Balanced","Short","Long"})
+    local factor=action=="Short" and 0.92 or action=="Long" and 1.08 or 1
+    return math.clamp(lead*factor,0,0.16),source,action,context
 end
 function State.GunMuzzleFollowsRig(beforeRoot, afterRoot, beforeMuzzle, afterMuzzle, velocity, elapsed)
     -- A fast-moving or turning shooter can move the muzzle during a costly aim
@@ -19910,12 +20303,13 @@ end
 local function predict(part, root, origin, kind, item, samplePosition, gunProfile)
     local positionAt, airborne, source = motionPredictor(part, root, samplePosition, kind == "Gun")
     if kind == "Gun" then
-        local lead,leadSource=State.GunPredictionLead(root,gunProfile)
+        local lead,leadSource,action,context=State.GunPredictionLead(root,gunProfile)
         State.CurrentGunLead = lead or 0
-        if not lead then return nil,nil,airborne,source.."+"..leadSource,positionAt end
+        if not lead then return nil,nil,airborne,source.."+"..leadSource,positionAt,nil,nil,nil,nil end
         source ..= "+"..leadSource
         local point, blocked = positionAt(lead)
-        return point, lead, airborne, blocked and (source .. "+Wall") or source, positionAt
+        return point, lead, airborne, blocked and (source .. "+Wall") or source,
+            positionAt,nil,nil,action,context
     end
     local speed = item and (item:GetAttribute("ProjectileSpeed") or item:GetAttribute("KnifeSpeed"))
     speed = type(speed) == "number" and speed == speed and speed >= 20 and speed <= 1000 and speed
@@ -20200,7 +20594,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
             local maximumQuality = projectedArea(part, origin, info.Frame, info.Size) * bodyWeight(name)
             local partPriority=gunPartAimPriority(kind,name,bodySamples._GunProfile)
             if partPriority>bestPriority or (partPriority==bestPriority and maximumQuality>bestQuality) then
-                local predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay
+                local predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay, aimAction, aimContext
                 local timingShifts
                 local predictionChecked = false
                 local exposedSamples, partBest, partBestQuality = 0, nil, 0
@@ -20209,7 +20603,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                     if clearPath(origin, sample, char) and (not onScreenOnly or State.IsAimPointOnScreen(sample,char)) then
                             -- Solve once per body part; apply its interior sample offsets.
                             if not predictionChecked then
-                                predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay = predict(part, root, origin, kind, item, info.Frame.Position, bodySamples._GunProfile)
+                                predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay, aimAction, aimContext = predict(part, root, origin, kind, item, info.Frame.Position, bodySamples._GunProfile)
                                 if kind == "Gun" and predicted and positionAt then
                                     timingShifts = State.GunTimingShifts(positionAt, lead, info.Frame.Position)
                                 end
@@ -20247,6 +20641,8 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                                         partBest = {Position = point, BodyPoint = sample, LeadTime = sampleLead,
                                             Airborne = airborne, VelocitySource = source, AimPart = name, SampleOffset = offset,
                                             TargetMode = bodySamples._GunProfile and bodySamples._GunProfile.Mode,
+                                            AimLearningAction=kind=="Gun" and aimAction or nil,
+                                            AimLearningContext=kind=="Gun" and aimContext or nil,
                                             TimingCoverage = kind == "Gun" and timingCoverage or nil,
                                             TimingPassed = kind == "Gun" and timingPassed or nil,
                                             CursorScore = candidate.CursorScore, Offscreen = not candidate.Visible,
@@ -21057,6 +21453,9 @@ if gunFired and gunFired:IsA("RemoteEvent") then
         local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
         local hitPath = typeof(hitPart) == "Instance" and hitPart:GetFullName() or nil
         local hitTarget = targetChar and isDirectBodyHit(hitPart, targetChar) or false
+        if pending.Target and targetChar and pending.Target.Character==targetChar then
+            State.RecordAimLearning(pending,hitTarget,hitPart,correlation)
+        end
         if not hitTarget and typeof(hitPart) == "Instance" and hitPart:IsA("BasePart")
             and not isCharacterEquipmentPart(hitPart) then
             State.ServerBlockers[hitPart] = true
@@ -21455,6 +21854,8 @@ local function sendGun(record, preferred, strict, onScreenOnly)
         BodyPoint=solution and solution.BodyPoint,Velocity=solution and solution.Velocity,
         LeadTime=solution and solution.LeadTime,Airborne=solution and solution.Airborne,
         AimPart=solution and solution.AimPart,SampleOffset=solution and solution.SampleOffset,
+        AimLearningAction=solution and solution.AimLearningAction,
+        AimLearningContext=solution and solution.AimLearningContext,
         VelocitySource=solution and solution.VelocitySource,TargetMode=solution and solution.TargetMode,
         ExposureQuality=solution and solution.ExposureQuality,ClearNeighbours=solution and solution.ClearNeighbours,
         TimingCoverage=solution and solution.TimingCoverage,TimingPassed=solution and solution.TimingPassed,
@@ -23741,6 +24142,9 @@ end
 function State.Destroy()
     -- Saved before unload switches features off. A copy replaced by a newer one never writes over newer settings.
     if State.SaveSettings and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then State.SaveSettings() end
+    if State.SaveLearning and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then
+        pcall(State.SaveLearning,true)
+    end
     if State.StopFlingAll then local ok,message=State.StopFlingAll("Unloaded"); if ok==false then return false,message end end
     if State.StopGunPickup then local ok,message=State.StopGunPickup(); if ok==false then return false,message end end
     if State.DestroyMapVoteRepeat then local ok,message=State.DestroyMapVoteRepeat(); if ok==false then return false,message end end
@@ -28209,6 +28613,10 @@ local createMobileUI = function(C)
         "Checks walls, corridors, floor edges, nearby players and five escape routes before moving. Does not boost walk speed.")
     option(dodgeTab,"Learn opponent feints","AdaptiveJukeLearning",
         "FSS-style short-term reversal reading. Holds baited jukes and uses Counter Cut against committed approaches. Stored only in this session.")
+    option(dodgeTab,"Learn juke choices","SelfLearningJukes",
+        "Per-round adaptive learning from observed separation and blocked routes. Uncertain attempts are not scored.")
+    option(advancedCombat,"Learn gun aim timing","SelfLearningAim",
+        "Adjusts only small prediction lead timings using correlated server-reported gun rays; no unconfirmed kills or shots counted as hits.")
     option(advancedCombat,"Auto trickshot","AutoTrickshot",
         "Airborne only: spin when rising with a ready weapon and a clear target near the crosshair. Never jumps from the ground or auto-fires.")
     mobile.FeaturePickers.StyleSpeedPreset={Value=State.Config.StyleSpeedPreset,Widget=dodgeTab:Dropdown({
@@ -28226,6 +28634,8 @@ local createMobileUI = function(C)
         Callback=function() local ok,message=State.StartTrickshot(); if mobile.Toast then mobile.Toast(message,ok and "info" or "warn") end end})
     mobile.StyleStatus=dodgeTab:Paragraph({Title="Adaptive juke and trickshot counters",
         Desc="Thirteen patterns | space and observed opponent feints"})
+    mobile.AimLearningStatus=advancedCombat:Paragraph({Title="Aim learning",
+        Desc="Awaiting correlated server gun rays"})
     mobile.FeaturePickers.KnifeDodgeMode={Value=State.Config.KnifeDodgeMode,Widget=dodgeTab:Dropdown({Title="Dodge mode",
         Desc="Side teleport tries a supported 4–8 stud move; falls back to jump/sidestep when unavailable.",
         Values={"Side teleport","Jump / sidestep"},Value=State.Config.KnifeDodgeMode,Multi=false,Callback=function(value)
@@ -28665,7 +29075,29 @@ local createMobileUI = function(C)
             if info.LegacyJukes>0 then
                 details..=("\nEarlier jukes (before pattern tracking): %d"):format(info.LegacyJukes)
             end
+            local learned=info.Learning
+            if learned then
+                local match=learned.Current
+                details..=("\nJuke learning %s | %d graded | %d improved | %d setbacks | %d uncertain")
+                    :format(info.LearningEnabled and "on" or "off",learned.Graded,
+                        learned.Positive,learned.Negative,learned.Inconclusive)
+                if match then
+                    details..=("\nThis round: %d auto / %d manual | %d graded | %d uncertain")
+                        :format(match.Attempts,match.Manual,match.Graded,match.Inconclusive)
+                end
+                details..=("\nLearning: %s | %s\nStorage: %s")
+                    :format(learned.LastAction,learned.LastOutcome,learned.Storage)
+            end
             updateDescription(mobile.StyleStatus,"StyleMoves",details)
+        end
+        if mobile.AimLearningStatus and State.GetAimLearningSnapshot then
+            local a=State.GetAimLearningSnapshot()
+            local details=("Aim learning %s | %d reported rays graded | %d hits | %d misses | %d unknown"
+                .."\nThis round: %d graded | %d hits | %d misses | %d situations"
+                .."\nLast: %s\nStorage: %s")
+                :format(a.Enabled and "on" or "off",a.Observed,a.Hits,a.Misses,a.Unknown,
+                    a.RoundObserved,a.RoundHits,a.RoundMisses,a.Contexts,a.Last,a.Storage)
+            updateDescription(mobile.AimLearningStatus,"AimLearning",details)
         end
         if mobile.ResultsStatus and State.GetCombatResults then
             updateDescription(mobile.ResultsStatus,"CombatResults",State.GetCombatResults().Text)

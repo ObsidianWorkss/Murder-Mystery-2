@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.58 — 2026-11-28
+
+- Add **Learn juke choices**: FSS-inspired contextual bandit for automatic jukes. Group actions by role, surrounding space, threat distance and crowding. Establish a balanced baseline, then test bounded Snap and (only in open space) Feint timing variants. Never override measured wall/floor clearance or character WalkSpeed.
+- Record round-by-round juke attempts, manual moves, graded movement outcomes, blocked routes, nearby deaths, and inconclusive observations. Only observable separation improvements and concrete interruption/death proxies update movement scores. These signals are not proof a specific juke caused an opponent to miss.
+- Add **Learn gun aim timing**: after enough correlated server-reported gun rays, try small 0.92x and 1.08x prediction-lead variants for comparable motion/distance situations. Unmatched, obstructed and unknown outcomes do not score; a ray hit is not claimed as a confirmed kill. Existing stationary/visibility/cover checks remain in control. Knife hit outcomes are not learned without reliable feedback.
+- Bound both models to 48 contexts, use validated numeric rewards, preserve in-session round scores through reload, and optionally save only anonymous contextual scores to `MM2Universal/learning-v1.json` when the client's file APIs work. Limit routine writes and flush at round end/unload.
+- Show movement and aiming learning counts in the existing menu; add new source-extracted Luau regression tests for contextual choice, safer timing, reward exclusion, bounded prediction and persistence fallbacks.
+
 ## 1.0.0-rc.57 — 2026-11-28
 
 - Add manual **B** quick jukes and **Y** trickshot spins with optional automatic, role-aware activation and independent toggles. Automatic 360 spins only trigger during an existing rising jump, with an equipped weapon, visible near-crosshair opponent and sufficient estimated airtime; weapon firing remains a separate feature.

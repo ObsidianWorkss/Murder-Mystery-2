@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.57-7499ff" alt="Version 1.0.0-rc.57">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.58-7499ff" alt="Version 1.0.0-rc.58">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.57.** All five Luau entry points compile and the complete offline regression suite passes. This update adds automatic and manual space-aware jukes, 13 movement patterns, FSS-inspired opponent-feint reading, airborne-only automatic trickshot spins, and reliable gun-point and moving-knife-target selection. Jukes do not alter WalkSpeed; the separate opt-in Speed Boost remains independent. The script loaded successfully in a connected MM2 client, but live hit-rate gains and successful evasions against human opponents remain **unverified**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.58.** The existing 13 space-aware juke patterns, automatic airborne spins, and central-body gun/knife targeting are joined by opt-in FSS-inspired per-round learning. Auto-jukes can favor three bounded timing and feint choices for similar situations based on observed separation, blocked paths and nearby deaths; gun aim can choose slightly shorter or longer prediction lead based on heuristically matched server-reported ray hits and misses. Unknown shots and uncertain movement outcomes are not rewarded. Learning models are limited to 48 contexts each, can be saved locally where file APIs are available, and contain no opponent IDs. Jukes never change WalkSpeed. The full offline regression suite passes, but actual hit-rate improvements and successful evasions remain **unverified**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 
