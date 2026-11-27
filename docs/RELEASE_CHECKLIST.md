@@ -1,6 +1,14 @@
 # Release candidate checklist
 
-Version: **1.0.0-rc.55**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+Version: **1.0.0-rc.56**. Do not describe this candidate as fully verified until the pending live checks have been completed.
+
+## Knife flight and floor targeting (rc.56)
+
+- [x] Prefer central torso/head knife aim points instead of floor-skimming lower limbs.
+- [x] Apply turn and braking motion predictions to knife trajectories, retaining the bounded flight-time solver and replication-age checks.
+- [x] Adjust nearby flat-floor mouse fallback toward torso height without altering high-ledge/steep-slope throws or breaking manual input when raycasting fails.
+- [x] Run 1,350 offline Luau assertions, compile five entrypoints, and validate package checksum.
+- [ ] Record real knife trajectories and server hit registration against jumping, strafing and last-second turning players in a live MM2 Murderer round. Opponents remain able to react after release.
 
 ## Native manual knife throws (rc.55)
 

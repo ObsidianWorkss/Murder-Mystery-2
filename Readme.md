@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.55-7499ff" alt="Version 1.0.0-rc.55">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.56-7499ff" alt="Version 1.0.0-rc.56">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.55.** Local validation passes **1,173 main-runtime** and **171 standalone-farm Luau assertions** (1,344 total) and compiles all five entry points. Manual knife inputs now keep the native throw-event pathway and never lock a target before charging: at release, they use a fresh on-screen assisted point or fall back to the cursor, even with clear-target protection enabled. Strict automated throws keep their target lock and safety checks. The rc.54 gun/knife motion prediction and rc.53 local-seat safeguards remain. Real-world hit rates are **not established** without controlled live testing. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.56.** Local validation passes **1,179 main-runtime** and **171 standalone-farm Luau assertions** (1,350 total) and compiles all five entry points. Knife throwing now favors torso/head instead of exposed feet, uses the existing adaptive turn/brake prediction for moving targets, and corrects near-level flat-ground cursor fallback to body height instead of launching directly into the floor. Manual E/right-click and native input restoration from rc.55 remain. Live throw accuracy and server hit registration are **unverified** because a connected MM2 client was unavailable. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

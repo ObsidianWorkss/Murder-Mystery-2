@@ -17893,7 +17893,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.55"
+State.Version = "1.0.0-rc.56"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19016,7 +19016,9 @@ local function motionPredictor(part, root, samplePosition, wallAware, historyOve
     if observed.ControlledVertical then source ..= "+ControlledVertical" end
     State.LastAimMotionPolicy = {Fast=observed.Fast,ControlledVertical=observed.ControlledVertical,Cap=cap}
     local ballistic = airborne and not observed.ControlledVertical
-    local model = wallAware and State.FitHorizontalMotion(velocity, record and record.History, os.clock(), cap)
+    -- Knives need the same turn/brake estimate as guns: disabling map sweeps
+    -- must not also disable motion history for thrown projectiles.
+    local model = State.FitHorizontalMotion(velocity, record and record.History, os.clock(), cap)
     if model then
         source ..= "+" .. model.Kind
         State.LastMotionPrediction = {Kind = model.Kind, Confidence = model.Confidence, TurnRate = model.Rate,
@@ -19375,6 +19377,13 @@ function State.GunTimingShifts(positionAt, lead, position)
     return shifts
 end
 local function gunPartAimPriority(kind,name,profile)
+    if kind=="Knife" then
+        if name=="UpperTorso" or name=="Torso" then return 4 end
+        if name=="LowerTorso" then return 3 end
+        if name=="Head" then return 2 end
+        -- Avoid skimming a player's feet or the floor on long throws.
+        return 0
+    end
     if kind~="Gun" then return 0 end
     if name=="HumanoidRootPart" then return profile and profile.Core and 5 or 0 end
     if name=="UpperTorso" or name=="Torso" then return 4 end
@@ -19408,7 +19417,10 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
     local queryParts = {}
     for _, name in ipairs(names) do
         local info = bodySamples[name]
-        if info and info.Part.Parent == char then table.insert(queryParts, info.Part) end
+        if info and info.Part.Parent == char
+            and (kind~="Knife" or gunPartAimPriority(kind,name)>0) then
+            table.insert(queryParts,info.Part)
+        end
     end
     if #queryParts == 0 then return nil end
     local bodyQuery = RaycastParams.new()
@@ -19419,7 +19431,7 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
     for _, name in ipairs(names) do
         local info = bodySamples[name]
         local part = info and info.Part
-        if part and part.Parent == char then
+        if part and part.Parent == char and (kind~="Knife" or gunPartAimPriority(kind,name)>0) then
             local maximumQuality = projectedArea(part, origin, info.Frame, info.Size) * bodyWeight(name)
             local partPriority=gunPartAimPriority(kind,name,bodySamples._GunProfile)
             if partPriority>bestPriority or (partPriority==bestPriority and maximumQuality>bestQuality) then
@@ -20938,6 +20950,35 @@ local function knifeFeedback(message)
     State.KnifeFeedback = {Message = message, Until = os.clock() + 1.8}
     State.AimStatus = message
 end
+function State.KnifeCursorFloorCorrection(origin, point, floorY, floorNormalY)
+    -- When fallback receives a cursor hit on nearby level ground, firing at
+    -- that exact floor contact sends the blade into the floor, not a torso.
+    -- Preserve intentional downward throws from high ledges and steep slopes.
+    if typeof(origin)~="Vector3" or typeof(point)~="Vector3"
+        or type(floorY)~="number" or type(floorNormalY)~="number"
+        or floorNormalY<.65 or math.abs(point.Y-floorY)>.7 then return point,false end
+    local drop=origin.Y-point.Y
+    local dx,dz=point.X-origin.X,point.Z-origin.Z
+    if drop<1.4 or drop>8 or dx*dx+dz*dz<25 then return point,false end
+    return Vector3.new(point.X,point.Y+math.min(3,math.max(2.2,drop-.6)),point.Z),true
+end
+local function knifeCursorFrame(origin)
+    local cursor=weapon:GetMouseTargetCFrame()
+    if not State.Config.KnifeAim or typeof(cursor)~="CFrame" then return cursor,false end
+    local point=cursor.Position
+    -- Optional geometry correction must never make an otherwise valid manual
+    -- input fail when a map is streaming or a raycast cannot be performed.
+    local ok,ground=pcall(function()
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances={player.Character}
+        params.IgnoreWater,params.RespectCanCollide=true,true
+        return workspace:Raycast(point+Vector3.new(0,.6,0),Vector3.new(0,-1.5,0),params)
+    end)
+    if not ok then return cursor,false end
+    local lifted,changed=State.KnifeCursorFloorCorrection(origin,point,ground and ground.Position.Y,ground and ground.Normal.Y)
+    return changed and CFrame.new(lifted) or cursor,changed
+end
 local function startThrow(record, preferred, strict, canRelease)
     if record.Kind ~= "Knife" then return false end
     if State.CanThrowKnife and not State.CanThrowKnife() then knifeFeedback("This role / mode cannot throw knives"); return false end
@@ -21016,9 +21057,10 @@ local function startThrow(record, preferred, strict, canRelease)
             end
             -- A manual throw can always fall back to the native cursor when
             -- no candidate qualifies, regardless of RequireClearKnifeTarget.
-            local manual=false
+            local manual,manualLift=false,false
             if not targetFrame and not strict then
-                targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
+                targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
+                targetName,solution=nil,nil; manual=true
             end
             if not targetFrame then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target no longer clear"); return
@@ -21030,7 +21072,8 @@ local function startThrow(record, preferred, strict, canRelease)
                 -- The user is still moving. Re-sample the *real* throw origin
                 -- and current cursor rather than swallowing manual input.
                 originFrame=handle.CFrame
-                targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
+                targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
+                targetName,solution=nil,nil; manual=true
             end
             if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
                 or State.IsPlayerExcluded(solution.Player)
@@ -21038,7 +21081,8 @@ local function startThrow(record, preferred, strict, canRelease)
                 if strict then
                     State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: target or firing path changed"); return
                 end
-                targetFrame=weapon:GetMouseTargetCFrame(); targetName,solution=nil,nil; manual=true
+                targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
+                targetName,solution=nil,nil; manual=true
             end
             if State.ExcludedPlayerInShotPath(originFrame.Position,targetFrame.Position) then
                 State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: excluded player in firing path"); return
@@ -21050,7 +21094,8 @@ local function startThrow(record, preferred, strict, canRelease)
             State.Stats.KnifeRequests+=1
             State.LastRequest={Weapon="Knife",Target=targetName,Position=targetFrame.Position,
                 LeadTime=solution and solution.LeadTime,AimPart=solution and solution.AimPart,
-                VelocitySource=solution and solution.VelocitySource,ManualFallback=manual}
+                VelocitySource=solution and solution.VelocitySource,ManualFallback=manual,
+                FloorCorrected=manualLift}
             knifeFeedback(manual and "Knife thrown toward your cursor (no clear assist target)"
                 or targetName and ("Knife thrown toward "..targetName) or "Knife throw sent")
             stopTracks(record); playTrack(record,"ThrowKnife")

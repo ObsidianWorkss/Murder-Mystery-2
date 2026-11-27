@@ -207,8 +207,10 @@ do
         > gunPartAimPriority("Gun","UpperTorso",{Core=true})
         and gunPartAimPriority("Gun","Head",{}) > gunPartAimPriority("Gun","RightFoot",{}),
         "validated core and head are preferred to limbs in their eligible cases")
-    check(gunPartAimPriority("Knife","UpperTorso",{})==gunPartAimPriority("Knife","RightFoot",{}),
-        "new center-mass ordering does not change knife target selection")
+    check(gunPartAimPriority("Knife","UpperTorso",{})>gunPartAimPriority("Knife","Head",{})
+        and gunPartAimPriority("Knife","Head",{})>gunPartAimPriority("Knife","RightFoot",{})
+        and gunPartAimPriority("Knife","RightLowerLeg",{})==0,
+        "knife target selection prioritizes torso and head instead of feet and floor-level limbs")
     local original={"UpperTorso","Head","LeftUpperArm","LowerTorso","RightLowerLeg"}
     local movingRoot={AssemblyLinearVelocity={Y=48}}
     check(State.GunAutoPartNames(original,movingRoot,true)[1]=="UpperTorso"
@@ -412,7 +414,35 @@ do
     local function reportStabContact(_,_,source)
         assert(source=="ClickedStabAssist"); contacts+=1
     end
+    local floorHit
+    local workspace={Raycast=function()
+        if floorHit=="error" then error("map is streaming") end
+        return floorHit
+    end}
+    local RaycastParams={new=function() return {} end}
+    local Enum={RaycastFilterType={Exclude="Exclude"}}
+    local xyzMeta={}
+    local function xyz(x,y,z) return setmetatable({X=x,Y=y,Z=z,Kind="Vector3"},xyzMeta) end
+    xyzMeta.__sub=function(a,b) return xyz(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
+    xyzMeta.__add=function(a,b) return xyz(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end
+    xyzMeta.__index=function(a,k)
+        if k=="Magnitude" then return math.sqrt(a.X*a.X+a.Y*a.Y+a.Z*a.Z) end
+    end
+    local Vector3={new=xyz}
+    local CFrame={new=function(point) return {Position=point,Kind="CFrame"} end}
     -- INSERT_THROW
+    local ground=Vector3.new(30,0,0)
+    local origin=Vector3.new(0,4,0)
+    local corrected,raised=State.KnifeCursorFloorCorrection(origin,ground,0,1)
+    check(raised and corrected.Y==3 and corrected.X==30,
+        "manual cursor fallback lifts a nearby level-floor hit toward torso height")
+    local ledge,ledgeRaised=State.KnifeCursorFloorCorrection(Vector3.new(0,20,0),ground,0,1)
+    check(not ledgeRaised and ledge==ground,
+        "downward throws from a high ledge stay aligned with the native cursor")
+    local slope,slopeRaised=State.KnifeCursorFloorCorrection(origin,ground,0,.2)
+    check(not slopeRaised and slope==ground,"steep ground aim is not forced upward")
+    local airborne,airborneRaised=State.KnifeCursorFloorCorrection(origin,ground,4,1)
+    check(not airborneRaised and airborne==ground,"a non-grounded cursor aim is not changed")
     local function release()
         local f=table.remove(jobs,1)
         assert(f,"missing charge job"); f()
@@ -425,6 +455,18 @@ do
     release()
     check(sends==1 and State.LastRequest.ManualFallback and State.LastRequest.Target==nil,
         "manual throw without an assisted target releases toward the player's cursor")
+    local beforeFloorSends=sends
+    handle.CFrame=CFrame.new(origin);handle.Position=origin;floorHit={Position=ground,Normal=Vector3.new(0,1,0)}
+    r=record();startThrow(r);release()
+    check(sends==beforeFloorSends+1 and State.LastRequest.FloorCorrected and State.LastRequest.Position.Y==3,
+        ("manual throw lifts floor fallback [sends=%s changed=%s y=%s feedback=%s]"):format(sends,tostring(State.LastRequest.FloorCorrected),tostring(State.LastRequest.Position.Y),tostring(State.KnifeFeedback and State.KnifeFeedback.Message)))
+    floorHit="error"
+    r=record();startThrow(r);release()
+    check(sends==beforeFloorSends+2 and State.LastRequest.ManualFallback
+        and not State.LastRequest.FloorCorrected,
+        "map streaming errors during optional floor check do not cancel a manual throw")
+    floorHit=nil;handle.CFrame=frame(0);handle.Position=vec(0)
+    sends=beforeFloorSends
     r=record(); startThrow(r); excludedPath=true; release(); excludedPath=false
     check(sends==1 and not r.Charging and r.LastThrow==-math.huge,
         "manual cursor fallback still refuses shots crossing an excluded player")

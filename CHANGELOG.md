@@ -16,6 +16,13 @@
 - Use the available selected collectible-currency balance, including starting funds, with no session-time, spending, crate-count or godly cap. Continue ordinary rolls when listed targets are already owned. Preserve inventory-based target preferences, one request at a time, per-currency debit checks, ten-second roll intervals and per-currency spending totals. Pause ambiguous/timed-out purchases, deduplicate late replies and carry unresolved purchase state as paused through reconnect.
 - All four scripts compile; 152 farm assertions and the existing 1,017 main-runtime assertions pass (1,169 total). Simulations cover a full day of reconnect failures and more than 30 hours/10,000 crate rolls. A read-only native selector probe chose Halloween2026Box at 600 Candy with a 520 balance while the farm stayed stopped; no crate was purchased and no teleport was triggered. Earlier Underground diagnostics reported 100 server events, 57 nearby bag-count correlations and two reset requests. Overnight native operation, reconnect/resume, reward banking, successful unboxing, godly outcomes and immunity from position rejection remain unverified.
 
+## 1.0.0-rc.56 — 2026-11-27
+
+- Fix knife aim preferring exposed narrow legs/feet over central hitboxes: torso and head now take priority, and automated knife aim does not select floor-level limbs as target points. Gun priority is unchanged.
+- Reuse the adaptive horizontal turn and braking motion model for knife interception, not just guns. Knife throws now extrapolate verified steering motion rather than always assuming the opponent runs straight through the entire flight time. The game's charging time and projectile travel cannot guarantee opponents will not change direction after release.
+- When assisted manual aim has no eligible opponent and the cursor lands on nearby level ground, raise the fallback aim toward normal torso height. Keep high-ledge/steep-slope throws intact and preserve the native cursor if optional ground checks fail while streaming.
+- **1,350 offline Luau assertions pass** (1,179 main runtime, 171 farm); all five entry points compile. The attached Roblox client was in another game, so server-confirmed knife hit-rate and trajectory remain unverified.
+
 ## 1.0.0-rc.55 — 2026-11-27
 
 - Fix manual E/right-click knife throws while assisted aim is on: never charge with a hard target lock. Select an eligible on-screen opponent only at release, otherwise fall back to the actual mouse target even when `RequireClearKnifeTarget` is enabled. Automatic strict throws still pin their selected target and enforce target validity.

@@ -1,5 +1,12 @@
 # Validation — 2026-11-26
 
+## Release candidate 1.0.0-rc.56
+
+- **1,350 offline Luau assertions passed** across 20 suites (1,179 main runtime and 171 farm). Five Luau entrypoints compiled, Python test harness compiled, and the source diff was whitespace-clean.
+- The knife solver now uses adaptive horizontal steering/braking even when knife wall sweeps are disabled. Target selection favors upper/lower torso or head and rejects foot/leg-only aim candidates that resulted in floor-skimming shots.
+- Manual cursor fallback to a flat floor in approximately level surroundings now raises the release target toward normal torso height. A high ledge, a steep slope, a non-ground point or a failed map raycast retains the original cursor direction instead of cancelling the manual release.
+- The Roblox client bridge was not connected to MM2 during rc.56 validation. Actual Murderer knife release, projectile trajectory and hit registration against moving/jumping players remain unverified; no guaranteed hit rate is claimed.
+
 ## Release candidate 1.0.0-rc.55
 
 - **1,344 offline Luau assertions passed** across 20 suites (1,173 main runtime, 171 farm), including the manual release-target timing and repeated shooter-motion fallback regressions. All five entry points compile.
