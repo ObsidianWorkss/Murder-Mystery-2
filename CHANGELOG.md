@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-rc.64 — 2026-11-28
+
+- Audit all 30 available saved client match exports and live counters. Historical JSON files contained only the latest 600 retained events, ambiguous elimination labels, inflated continuous-approach counts, cursor-only knife throw fallbacks and unconfirmed gun responses.
+- **Preserve complete future event timelines where local storage works:** flush batches of up to 150 named match events into numbered local JSON parts while recording; keep the most recent 600 events in memory for fast UI display. The round export includes `Archive.Files`, `Archive.RecordedEvents`, `Archive.Complete`, and explicit drop/pending counts. On write failure retain data for retry within a bounded queue and report any loss; do not claim a legacy mid-round recording was complete.
+- Retain the last confirmed role when the game's role cache temporarily becomes Unknown after a death/respawn, and count *episodes* of approach instead of counting every 200 ms sample as a separate approach.
+- Stop labeling missing characters or observed zero-health characters as confirmed eliminations. Record observable state and an approximate nearby opponent for context without attributing a kill to anyone. Preserve same-session script diagnostic counters across reload.
+- Count knife throws that used cursor fallback separately and report them as unmatched assisted targets, not confirmed misses.
+- Make juke learning conservative when the Murderer still has an exposed gun line from the Sheriff/Hero: separation alone is inconclusive, while ordinary non-gun or newly covered juke outcomes retain existing bounded learning.
+- Add source-extracted Luau tests for archive chunk ordering, bounded flushes, failed file writes, role/death-label stability, and approach episode classification.
+
 ## 1.0.0-rc.63 — 2026-11-28
 
 - Investigate the latest recorded Murderer death to Sheriff: an automatic airborne 360 started while the ranged opponent was about 38 studs away and stopped on landing; an earlier automatic corner juke had 3.8 of 7.5 requested studs available and immediately hit a wall/ledge.

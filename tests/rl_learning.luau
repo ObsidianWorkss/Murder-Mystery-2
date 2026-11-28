@@ -73,6 +73,12 @@ check("learner cannot override blocked route",noRoute==nil)
 local reward,reason=styleRLGrade(true,false,false,12,16,2,1.1,true)
 check("observed directional separation can be a positive proxy",
     reward==1 and reason=="Observed separation improved")
+reward,reason=styleRLGrade(true,false,false,12,16,2,1.1,true,true)
+check("distance gained while sheriff can still shoot is not a successful dodge",
+    reward==nil and reason=="Ranged shooter still has line of sight")
+reward=styleRLGrade(true,false,false,12,16,2,1.1,true,false)
+check("observed separation behind cover may still receive a cautious positive reward",
+    reward==1)
 reward=styleRLGrade(true,true,false,12,16,2,1.1,true)
 check("blocking obstacle is a negative proxy",reward==-1)
 reward=styleRLGrade(false,false,true,12,10,1,0.8,true)

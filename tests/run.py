@@ -305,6 +305,15 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness.write_text(behavior, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
 
+    archive = (root / "tests" / "behavior_archive.luau").read_text(encoding="utf-8")
+    begin = source.index("function State.FlushBehaviorChunk(")
+    finish = source.index("function State.GetBehaviorMapSnapshot(", begin)
+    archive = archive.replace("-- INSERT_ARCHIVE_WRITER", source[begin:finish])
+    if "-- INSERT_" in archive:
+        raise RuntimeError("Unexpanded event archive source marker")
+    harness.write_text(archive, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
     round_test = (root / "tests" / "behavior_round.luau").read_text(encoding="utf-8")
     begin = source.index("local function recordRound(")
     helpers = source.index("local function mapActors(")

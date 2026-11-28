@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.63-7499ff" alt="Version 1.0.0-rc.63">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.64-7499ff" alt="Version 1.0.0-rc.64">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.63.** Review of a recent Murderer defeat by an armed Sheriff identified an unsafe automatic 360 spin at about 38 studs and a 3.8-stud corner juke that immediately stopped at a wall. The style controller now **never automatically spins as Murderer against a Sheriff/Hero** and declines automatic shooter-facing jukes when a tested escape lane is too short, retaining the player's normal steering. Manual B/Y moves remain available. The script reports the number of blocked unsafe sheriff jukes in Style Moves. The rc.62 exposure-weighted gun/knife aiming, headless per-match spectator logs, and adaptive juke learning remain unchanged; no WalkSpeed change or remote weapon behavior changes were made. All offline regression tests pass, but **survival improvement is unverified against live shooter attacks**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.64.** A review of 30 saved match exports found that long matches lose earlier events at the 600-entry preview limit, roles can revert to Unknown after character loss, repeated approaches were counted each sampling interval, and temporary character disappearance was labeled as a kill. The recorder now writes **ordered local event chunks** while a round is active, includes the chunk paths and completeness status in the round JSON manifest, preserves confirmed roles, counts separate approaches, and labels uncertain death observations accurately. Gun skips and cursor-only knife throws remain distinguishable from confirmed misses. Juke learning no longer rewards mere separation from a Sheriff/Hero with a clear line of sight. All rc.63 safeguards for unsafe automatic spins and cramped corner jukes remain; no automatic victory or hit-rate guarantee is claimed. See the [log audit](docs/LOG_AUDIT_2026-11-28.md), [validation record](tests/VALIDATION.md), and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

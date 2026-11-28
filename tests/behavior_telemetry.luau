@@ -63,6 +63,30 @@ check("global view expands to fit all observed players",
     x1<0 and x2>200 and z1< -50 and z2>60)
 check("normalization is consistent for current global bounds",
     select(1,behaviorMapCoordinate(200,60,x1,x2,z1,z2))>0.5)
+check("role loss on elimination preserves last confirmed role",
+    behaviorRoleUpdate("Murderer","Unknown")=="Murderer")
+check("unknown player remains unknown without a role observation",
+    behaviorRoleUpdate(nil,"Unknown")=="Unknown")
+check("confirmed role change updates the previous role",
+    behaviorRoleUpdate("Innocent","Sheriff")=="Sheriff")
+check("genuine zero health is recorded as an observation, not a kill claim",
+    behaviorLifeEvent(true,true,0)=="Health zero")
+check("fake death or character disappearance is not mislabeled as a kill",
+    behaviorLifeEvent(false,false,nil)=="Character unavailable")
+check("temporary replication loss is not counted as a kill",
+    behaviorLifeEvent(true,false,nil)=="Character unavailable")
+local approach={}
+check("first approach counts as a single episode",
+    behaviorApproachTransition(approach,true,1))
+check("continuous approach cannot count five times per second",
+    not behaviorApproachTransition(approach,true,1.2)
+        and not behaviorApproachTransition(approach,true,1.4))
+check("stopping and immediately resuming does not create false episodes",
+    not behaviorApproachTransition(approach,false,1.5)
+        and not behaviorApproachTransition(approach,true,1.7))
+check("a separated later approach is a new observation",
+    not behaviorApproachTransition(approach,false,3)
+        and behaviorApproachTransition(approach,true,3.1))
 
 check("lobby movement is excluded from training and logs",
     not behaviorShouldSample(false,true,true))

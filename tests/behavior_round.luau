@@ -24,8 +24,10 @@ end
 local Players={GetPlayers=function() return {player,actor1,actor2} end}
 local function roleFor(other) return other.Role or "Unknown" end
 local events,exports={},{}
-local recorder={Round=0,InRound=false,People={},
-    MatchHistory={},RoundMap=nil,LastExportRound=0,Phase="Idle"}
+local recorder={Round=0,InRound=false,People={},Seq=0,
+    ArchiveEvents={},ArchiveFiles={},ArchiveSeq=0,ArchiveLost=0,
+    MatchHistory={},RoundMap=nil,LastExportRound=0,Phase="Idle",
+    Session="test-job"}
 local State={Config={BehaviorSpectate=true},GameContext={
     InRound=function(other)
         if other==player then return inRound end
@@ -39,6 +41,7 @@ local State={Config={BehaviorSpectate=true},GameContext={
     Mode=function() return "Classic" end,
 }}
 local function pushEvent(kind,name,detail)
+    recorder.Seq+=1
     events[#events+1]={Kind=kind,Round=recorder.Round,Name=name,Detail=detail}
 end
 function State.GetBehaviorSnapshot()
@@ -73,6 +76,9 @@ inRound=true;liveMap=mapA
 check("live map begins first round",recordRound(2)==true)
 check("match start resets previous lobby samples",
     recorder.People.Lobby==nil and recorder.Round==1)
+check("round start creates a fresh archive identity",
+    type(recorder.ArchiveId)=="string" and recorder.RoundStartSeq==1
+        and #recorder.ArchiveFiles==0)
 check("round opener pins the active match map",recorder.RoundMap==mapA)
 check("only a match-start event is logged",#events==1 and events[1].Kind=="Round start")
 recorder.People.Alice={Role="Sheriff",Samples=35}

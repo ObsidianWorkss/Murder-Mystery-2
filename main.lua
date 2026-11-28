@@ -17900,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.63"
+State.Version = "1.0.0-rc.64"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18676,12 +18676,15 @@ local function styleRLUpdate(rows,key,action,reward,serial)
     record.At=serial
     return true
 end
-local function styleRLGrade(completed,blocked,died,before,after,moved,elapsed,sameThreat)
+local function styleRLGrade(completed,blocked,died,before,after,moved,elapsed,sameThreat,shooterVisible)
     if not sameThreat or elapsed<0 or elapsed>1.8 then return nil,"Inconclusive" end
     if died then return -1,"Death after nearby juke" end
     if blocked then return -1,"Blocked by wall or ledge" end
     if completed and before<=22 and after and after-before>=1.5
         and moved>=1.0 and elapsed>=0.45 then
+        if shooterVisible==true then
+            return nil,"Ranged shooter still has line of sight"
+        end
         return 1,"Observed separation improved"
     end
     return nil,"Inconclusive"
@@ -18843,8 +18846,21 @@ local function styleRLTick(now,inRound)
             local separation=Vector3.new(delta.X,0,delta.Z).Magnitude
             local displacement=pending.Root.Position-pending.Origin
             local moved=Vector3.new(displacement.X,0,displacement.Z):Dot(pending.Direction)
+            local shooterVisible=nil
+            local enemyRole=roleFor(pending.OpponentPlayer)
+            if roleFor(player)=="Murderer" and
+                (enemyRole=="Sheriff" or enemyRole=="Hero") then
+                local origin=pending.Opponent.Position+Vector3.new(0,1,0)
+                local target=pending.Root.Position+Vector3.new(0,1,0)
+                local params=RaycastParams.new()
+                params.FilterType=Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances={pending.OpponentPlayer.Character}
+                params.RespectCanCollide=true
+                local hit=workspace:Raycast(origin,target-origin,params)
+                shooterVisible=not hit or hit.Instance:IsDescendantOf(pending.Character)
+            end
             local reward,reason=styleRLGrade(true,false,false,pending.Before,
-                separation,moved,elapsed,true)
+                separation,moved,elapsed,true,shooterVisible)
             styleRLFinish(reward,reason)
         elseif elapsed>=1.65 then
             styleRLFinish(nil,"Observation expired")
@@ -19553,6 +19569,28 @@ local function behaviorWeaknessTags(data,own)
     end
     return hints
 end
+local function behaviorRoleUpdate(previous,observed)
+    -- The round role cache sometimes reverts to Unknown after elimination.
+    -- Preserve the last actually observed role in exported match summaries.
+    if observed==nil or observed=="Unknown" then return previous or "Unknown" end
+    return observed
+end
+local function behaviorLifeEvent(hasRoot,hasHumanoid,health)
+    -- A missing character is not proof of an elimination: respawn, reparent,
+    -- fake-death effects and replication gaps can look the same to a client.
+    if hasRoot and hasHumanoid and type(health)=="number" and health<=0 then
+        return "Health zero"
+    end
+    return "Character unavailable"
+end
+local function behaviorApproachTransition(record,approaching,now)
+    if not approaching then record.Approaching=false;return false end
+    if record.Approaching then return false end
+    record.Approaching=true
+    if now-(record.LastApproachAt or -math.huge)<1 then return false end
+    record.LastApproachAt=now
+    return true
+end
 local function behaviorBounds(people)
     local minX,maxX,minZ,maxZ=math.huge,-math.huge,math.huge,-math.huge
     local samples=0
@@ -19612,7 +19650,17 @@ local recorder={Enabled=State.Config.BehaviorRecording~=false,
     NextView=0,Seq=sameSession and previousBehavior.Seq or 0,
     ExportSeq=sameSession and previousBehavior.ExportSeq or 0,
     LastExport=sameSession and previousBehavior.LastExport or "Not exported",
-    Errors={},LastScriptStatus="",LastGunSkip=nil,LastKnifeSkip=nil,LastGunShot=nil,
+    ArchiveEvents=sameSession and previousBehavior.ArchiveEvents or {},
+    ArchiveFiles=sameSession and previousBehavior.ArchiveFiles or {},
+    ArchiveId=sameSession and previousBehavior.ArchiveId or nil,
+    ArchiveSeq=sameSession and previousBehavior.ArchiveSeq or 0,
+    ArchiveLost=sameSession and previousBehavior.ArchiveLost or 0,
+    ArchiveIncomplete=sameSession and previousBehavior.ArchiveIncomplete or false,
+    ArchiveRetryAt=sameSession and previousBehavior.ArchiveRetryAt or 0,
+    RoundStartSeq=sameSession and previousBehavior.RoundStartSeq or 0,
+    ArchiveStatus=sameSession and previousBehavior.ArchiveStatus or "Awaiting match archive",
+    Errors=sameSession and previousBehavior.Errors or {},
+    LastScriptStatus="",LastGunSkip=nil,LastKnifeSkip=nil,LastGunShot=nil,
     SampleInterval=0.20,MaxEvents=600,MaxPeople=32,MaxTrail=90,
     MaxPath=360,
     View=nil,Widgets={},CurrentMap={},
@@ -19625,11 +19673,24 @@ State.BehaviorRecorder=recorder
 local function pushEvent(kind,name,detail,time)
     recorder.Seq+=1
     local events=recorder.Events
-    events[#events+1]={N=recorder.Seq,T=math.floor((time-recorder.Started)*100)/100,
+    local item={N=recorder.Seq,T=math.floor((time-recorder.Started)*100)/100,
         Round=recorder.Round,Kind=tostring(kind):sub(1,28),
         Player=tostring(name or "SYSTEM"):sub(1,42),
         Detail=tostring(detail or ""):sub(1,180)}
+    events[#events+1]=item
     if #events>recorder.MaxEvents then table.remove(events,1) end
+    if recorder.Round>0 then
+        local pending=recorder.ArchiveEvents
+        pending[#pending+1]=item
+        if #pending>=150 and State.FlushBehaviorChunk
+            and time>=recorder.ArchiveRetryAt then
+            State.FlushBehaviorChunk(false)
+        end
+        if #pending>1800 then
+            table.remove(pending,1)
+            recorder.ArchiveLost+=1
+        end
+    end
 end
 function State.LogBehaviorEvent(kind,name,detail)
     if not State.Config.BehaviorRecording or not recorder.InRound then return false end
@@ -19642,7 +19703,8 @@ local function newPlayerRecord(other)
         Events=0,Starts=0,Stops=0,
         Reversals=0,Turns=0,Jumps=0,Lands=0,Warps=0,Still=0,
         CloseStill=0,Approaches=0,MaxSpeed=0,TotalSpeed=0,Last=nil,
-        LastEvent="Not observed",LastSeen=0,StationarySince=0}
+        LastEvent="Not observed",LastSeen=0,StationarySince=0,
+        Approaching=false,LastApproachAt=-math.huge}
 end
 local function samplePlayer(other,now,myPosition)
     local character=other.Character
@@ -19652,7 +19714,32 @@ local function samplePlayer(other,now,myPosition)
         local old=recorder.People[other.Name]
         if old and old.Alive~=false and old.Root then
             old.Alive=false
-            pushEvent("Eliminated",other.Name,"Character no longer alive",now)
+            local detail="Client observation only; cause not confirmed"
+            if old.Last and old.Role~="Unknown" then
+                local nearest,nearestDist,nearestRole=nil,math.huge,nil
+                local last=Vector3.new(old.Last.X,old.Last.Y,old.Last.Z)
+                for _,candidate in ipairs(Players:GetPlayers()) do
+                    if candidate~=other then
+                        local role=roleFor(candidate)
+                        if styleOpponentRole(old.Role,role) then
+                            local avatar=candidate.Character
+                            local position=avatar and avatar:FindFirstChild("HumanoidRootPart")
+                            if position then
+                                local distance=(position.Position-last).Magnitude
+                                if distance<nearestDist then
+                                    nearest,nearestDist,nearestRole=candidate.Name,distance,role
+                                end
+                            end
+                        end
+                    end
+                end
+                if nearest then
+                    detail..=("; nearest opposing %s %s at ~%.1f studs"):
+                        format(nearestRole,nearest,nearestDist)
+                end
+            end
+            pushEvent(behaviorLifeEvent(root~=nil,hum~=nil,hum and hum.Health),
+                other.Name,detail,now)
         end
         return
     end
@@ -19689,9 +19776,10 @@ local function samplePlayer(other,now,myPosition)
         Speed=planar,Air=air,T=now}
     local previous=record.Last
     local role=roleFor(other)
-    if record.Role~=role then
-        record.Role=role
-        pushEvent("Role",name,role,now)
+    local stableRole=behaviorRoleUpdate(record.Role,role)
+    if record.Role~=stableRole then
+        record.Role=stableRole
+        pushEvent("Role",name,stableRole,now)
     end
     if previous then
         for _,kind in ipairs(behaviorTransitionEvents(previous,current,now-previous.T)) do
@@ -19718,11 +19806,15 @@ local function samplePlayer(other,now,myPosition)
     if delta and other~=player then
         local distance=Vector3.new(delta.X,0,delta.Z).Magnitude
         if distance<15 and planar<2 then record.CloseStill+=1 end
+        local toward=false
         if previous and distance<60 and planar>5 and now-previous.T<0.65 then
             local dir=Vector3.new(v.X,0,v.Z)
             if dir:Dot(Vector3.new(delta.X,0,delta.Z).Unit)>planar*0.55 then
-                record.Approaches+=1
+                toward=true
             end
+        end
+        if behaviorApproachTransition(record,toward,now) then
+            record.Approaches+=1
         end
     elseif other==player then
         -- Own exposure check uses observed opponents, not unseen attacks.
@@ -19820,6 +19912,16 @@ local function recordRound(now)
         recorder.InRound=true
         recorder.Round+=1
         recorder.People={}
+        recorder.ArchiveEvents={}
+        recorder.ArchiveFiles={}
+        recorder.ArchiveSeq=0
+        recorder.ArchiveLost=0
+        recorder.ArchiveIncomplete=false
+        recorder.ArchiveRetryAt=0
+        recorder.RoundStartSeq=recorder.Seq+1
+        recorder.ArchiveId=("%d-%d-%s"):format(os.time(),recorder.Round,
+            tostring(recorder.Session):sub(1,8))
+        recorder.ArchiveStatus="Recording complete event chunks"
         recorder.RoundMap=activeMap
         recorder.LastScriptStatus="Ready"
         recorder.LastGunSkip=State.LastGunSkip
@@ -19860,6 +19962,15 @@ local function recordRound(now)
         recorder.SpectatorSince=nil
         recorder.EmptySince=nil
     end
+    if inRound and recorder.InRound and not recorder.ArchiveId then
+        -- A pre-archive script can be reloaded during an ongoing match.
+        -- Its already-truncated earlier events cannot be reconstructed.
+        recorder.ArchiveId=("%d-%d-%s"):format(os.time(),recorder.Round,
+            tostring(recorder.Session):sub(1,8))
+        recorder.RoundStartSeq=recorder.Seq+1
+        recorder.ArchiveStatus="Partial: recording started after mid-round reload"
+        recorder.ArchiveIncomplete=true
+    end
     if inRound and recorder.InRound then
         if phase=="Spectating" and not wasSpectating then
             recorder.SpectatorSince=now
@@ -19896,9 +20007,13 @@ local function observeScriptState(now)
     local knife=State.KnifeFeedback
     if knife and recorder.LastKnifeSkip~=knife then
         recorder.LastKnifeSkip=knife
-        pushEvent("Knife feedback",player.Name,tostring(knife.Message),now)
-        if tostring(knife.Message or ""):find("cancelled") or
-            tostring(knife.Message or ""):find("skipped") then
+        local message=tostring(knife.Message or "")
+        pushEvent("Knife feedback",player.Name,message,now)
+        if message:find("no clear assist target",1,true) then
+            recorder.Errors.KnifeCursorFallback=(recorder.Errors.KnifeCursorFallback or 0)+1
+        end
+        if message:find("cancelled",1,true) or
+            message:find("skipped",1,true) then
             recorder.Errors.KnifeSkips=(recorder.Errors.KnifeSkips or 0)+1
         end
     end
@@ -19944,6 +20059,10 @@ function State.GetBehaviorSnapshot(name)
         Phase=recorder.Phase,Spectating=recorder.Phase=="Spectating",
         Round=recorder.Round,JobId=recorder.Session,Duration=os.clock()-recorder.Started,
         Players=people,TotalEvents=recorder.Seq,RetainedEvents=#recorder.Events,
+        ArchiveStatus=recorder.ArchiveStatus,
+        ArchivedChunks=#recorder.ArchiveFiles,
+        UnflushedEvents=#recorder.ArchiveEvents,
+        DroppedArchiveEvents=recorder.ArchiveLost,
         MatchHistory=table.clone(recorder.MatchHistory),
         Errors=table.clone(recorder.Errors),LastExport=recorder.LastExport}
 end
@@ -19958,6 +20077,48 @@ function State.GetBehaviorEvents(limit,name)
         end
     end
     return events
+end
+function State.FlushBehaviorChunk(force)
+    local pending=recorder.ArchiveEvents
+    if #pending==0 or (not force and #pending<150) then return false,"Nothing to flush" end
+    if type(writefile)~="function" then
+        recorder.ArchiveStatus="Partial: local event-chunk storage unavailable"
+        recorder.ArchiveRetryAt=os.clock()+8
+        return false,recorder.ArchiveStatus
+    end
+    local chunk={}
+    for i=1,math.min(150,#pending) do chunk[#chunk+1]=pending[i] end
+    local name=recorder.ArchiveId or
+        ("%d-%d"):format(os.time(),recorder.Round)
+    local number=recorder.ArchiveSeq+1
+    local path=("MM2Universal/diagnostics/events-%s-%03d.json"):
+        format(name,number)
+    local ok,err=pcall(function()
+        if type(makefolder)=="function" and type(isfolder)=="function" then
+            if not isfolder("MM2Universal") then makefolder("MM2Universal") end
+            if not isfolder("MM2Universal/diagnostics") then
+                makefolder("MM2Universal/diagnostics")
+            end
+        end
+        local encoded=game:GetService("HttpService"):JSONEncode({
+            Schema=1,Round=recorder.Round,FirstN=chunk[1].N,
+            LastN=chunk[#chunk].N,Events=chunk,
+        })
+        writefile(path,encoded)
+    end)
+    if not ok then
+        recorder.ArchiveStatus="Partial: event chunk write failed: "..tostring(err):sub(1,90)
+        recorder.ArchiveRetryAt=os.clock()+8
+        return false,recorder.ArchiveStatus
+    end
+    recorder.ArchiveRetryAt=0
+    recorder.ArchiveSeq=number
+    recorder.ArchiveFiles[#recorder.ArchiveFiles+1]=path
+    for _=1,#chunk do table.remove(pending,1) end
+    if not recorder.ArchiveIncomplete then
+        recorder.ArchiveStatus="Continuous event chunks saved locally"
+    end
+    return true,path
 end
 function State.GetBehaviorMapSnapshot()
     local visible={}
@@ -20025,6 +20186,11 @@ function State.GetWeaknessReport()
     if (errors.KnifeSkips or 0)>=3 then
         table.insert(scriptIssues,"Repeated knife cancellations; inspect moving muzzle/throw path")
     end
+    if (errors.KnifeCursorFallback or 0)>=3 then
+        table.insert(scriptIssues,("%d knife throws used manual cursor fallback; "
+            .."no clear assisted target was confirmed, not a proven aim miss")
+            :format(errors.KnifeCursorFallback))
+    end
     local enemies,personal={},{}
     for _,record in ipairs(observed.Players) do
         if record.Self then personal=record.Weaknesses
@@ -20044,13 +20210,28 @@ function State.ExportBehaviorLog(reason)
     if recorder.Round<=0 then return false,"No recorded match to export" end
     local roundEvents=behaviorEventsForRound(recorder.Events,recorder.Round)
     if #roundEvents<=1 then return false,"Nothing meaningful to export yet" end
+    while #recorder.ArchiveEvents>0 do
+        local ok=State.FlushBehaviorChunk(true)
+        if not ok then break end
+    end
     snapshot.RetainedEvents=#roundEvents
     snapshot.MatchHistory=nil
+    snapshot.ArchiveStatus=recorder.ArchiveStatus
+    snapshot.ArchivedChunks=#recorder.ArchiveFiles
+    snapshot.UnflushedEvents=#recorder.ArchiveEvents
     recorder.ExportSeq+=1
     local stamp=("%d-%03d"):format(os.time(),recorder.ExportSeq)
     local path="MM2Universal/diagnostics/"..stamp..".json"
+    local archive={Files=table.clone(recorder.ArchiveFiles),
+        RecordedEvents=math.max(0,recorder.Seq-recorder.RoundStartSeq+1),
+        DroppedEvents=recorder.ArchiveLost,
+        UnflushedEvents=#recorder.ArchiveEvents,
+        Complete=not recorder.ArchiveIncomplete and recorder.ArchiveLost==0
+            and #recorder.ArchiveEvents==0,
+        Note="Chunk files contain full event timeline; Events is only the recent 600-event preview"}
     local payload={Schema=1,RecordedAt=os.time(),Reason=tostring(reason or "manual"),
-        Snapshot=snapshot,Events=roundEvents,Weakness=State.GetWeaknessReport()}
+        Snapshot=snapshot,Events=roundEvents,Archive=archive,
+        Weakness=State.GetWeaknessReport()}
     local ok,message=pcall(function()
         local http=game:GetService("HttpService")
         if type(makefolder)=="function" and type(isfolder)=="function" then
