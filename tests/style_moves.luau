@@ -234,7 +234,21 @@ check("No auto action in unknown role",
 check("Auto spin sheriff with clear gun target",
     styleAutoAction("Sheriff","Murderer",27,0,"Gun",true,true,true),"Trickshot")
 check("Auto spin murderer with knife versus sheriff",
-    styleAutoAction("Murderer","Sheriff",30,0,"Knife",true,true,true),"Trickshot")
+    styleAutoAction("Murderer","Sheriff",30,0,"Knife",true,true,true),nil)
+check("Murderer does not auto spin into armed Hero fire",
+    styleAutoAction("Murderer","Hero",38,0,"Knife",true,true,true),nil)
+check("Murderer can still defensively juke a close armed sheriff",
+    styleAutoAction("Murderer","Sheriff",9,6,"Knife",true,true,true),"Juke")
+check("Gun fight allows a sheriff's automatic airborne trickshot",
+    styleAutoAction("Sheriff","Murderer",30,0,"Gun",true,true,true),"Trickshot")
+check("Constrained 3.8-stud lane cannot take over steering versus gun",
+    styleGunSafeEscape(3.8,7.5),false)
+check("Broad 6-stud supported lane still permits a defensive juke",
+    styleGunSafeEscape(6,7.5),true)
+check("Short escape is rejected even if desired distance is short",
+    styleGunSafeEscape(3.8,4),false)
+check("Invalid desired clearance fails safely",
+    styleGunSafeEscape(5,0),false)
 check("Auto spin hero with gun versus murderer",
     styleAutoAction("Hero","Murderer",25,0,"Gun",true,false,true),"Trickshot")
 check("Auto spin ignores obstructed target",

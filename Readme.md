@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.62-7499ff" alt="Version 1.0.0-rc.62">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.63-7499ff" alt="Version 1.0.0-rc.63">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.62.** Combat aiming uses a confidence-weighted choice among verified torso/head points: a better-exposed lower torso can beat a tiny upper-torso peek, without accepting invisible body parts, player obstructions or unsafe firing paths. Target-locked automatic knife throws can reacquire the same opponent from a moving release origin with two additional bounded aim scans, but still cancel if the handle is unstable or the target disappears. Gun rejection counts now identify specific reasons and repeated throw-cooldown messages no longer flood the match log. All previous headless spectator recording, movement learning, juke, and trickshot features remain. Offline checks pass, but **live hit-rate improvement is unverified** because unmatched server replies do not count as hits or misses. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.63.** Review of a recent Murderer defeat by an armed Sheriff identified an unsafe automatic 360 spin at about 38 studs and a 3.8-stud corner juke that immediately stopped at a wall. The style controller now **never automatically spins as Murderer against a Sheriff/Hero** and declines automatic shooter-facing jukes when a tested escape lane is too short, retaining the player's normal steering. Manual B/Y moves remain available. The script reports the number of blocked unsafe sheriff jukes in Style Moves. The rc.62 exposure-weighted gun/knife aiming, headless per-match spectator logs, and adaptive juke learning remain unchanged; no WalkSpeed change or remote weapon behavior changes were made. All offline regression tests pass, but **survival improvement is unverified against live shooter attacks**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

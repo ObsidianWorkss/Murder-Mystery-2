@@ -17900,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.62"
+State.Version = "1.0.0-rc.63"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -18578,6 +18578,14 @@ local function styleSpaceDuration(duration,clearance,walkSpeed)
     local result=math.min(duration,available)
     return result>=0.13 and result or nil
 end
+local function styleGunSafeEscape(clearance,desired)
+    -- A short sideways push in a corner can cancel itself against the wall
+    -- while leaving the murderer exposed to the sheriff's ranged gun.
+    -- Do not seize movement from the player for that low-clearance juke.
+    return type(clearance)=="number" and type(desired)=="number"
+        and clearance==clearance and desired==desired and desired>0
+        and clearance>=math.max(4.5,desired*0.72)
+end
 local function styleSpinAngle(elapsed,duration)
     return math.pi*2*math.clamp(elapsed/(duration and duration>0 and duration or 0.60),0,1)
 end
@@ -18586,7 +18594,12 @@ local function styleAutoAction(ownRole,opponentRole,distance,closing,weapon,visi
     if canJuke and distance>=2 and distance<=17 and (distance<=9 or closing>=2.5) then return "Juke" end
     local armed=(ownRole=="Murderer" and weapon=="Knife")
         or ((ownRole=="Sheriff" or ownRole=="Hero") and weapon=="Gun")
-    if canTrickshot and armed and visible and distance>=18 and distance<=48 then return "Trickshot" end
+    -- The murderer has only a delayed projectile against a hitscan sheriff.
+    -- A visible, armed Sheriff/Hero 18-48 studs away is NOT a safe distance
+    -- for a cosmetic automatic 360 spin. Manual Y remains available.
+    local shooterRisk=ownRole=="Murderer" and (opponentRole=="Sheriff" or opponentRole=="Hero")
+    if canTrickshot and armed and visible and not shooterRisk
+        and distance>=18 and distance<=48 then return "Trickshot" end
     return nil
 end
 local function styleCanAutoSpin(closeThreats,airborne,risingSpeed,weapon,cursorError,remainingAirTime)
@@ -18733,6 +18746,7 @@ local style={Status="Ready",Active=nil,LastStart=-math.huge,LastSide=1,
     ObservedReversals=previousStyle and previousStyle.ObservedReversals or 0,
     FeintHolds=previousStyle and previousStyle.FeintHolds or 0,
     CounterCuts=previousStyle and previousStyle.CounterCuts or 0,
+    SheriffLaneHolds=previousStyle and previousStyle.SheriffLaneHolds or 0,
     LastFeintHoldAt=-math.huge,NextMotionSweep=0,TrackedOpponents=0,
     ObservedPlayers=0,ObservedOpponents=0,CloseThreats=0,ClosestThreat=0,
     LastLaneRisk=0,AutoJukes=previousStyle and previousStyle.AutoJukes or 0,
@@ -19161,6 +19175,19 @@ function State.StartJuke(automatic,preferredRoot,knownThreats)
     local duration=styleJukeDuration(ownSpeed,opponentSpeed,closing,State.Config.StyleSpeedPreset)
     local escape,reason=stylePlanEscape(char,hum,root,opponent,threats,duration)
     if not escape then return false,reason end
+    local opponentRole=chosen.Player and roleFor(chosen.Player)
+    if automatic and roleFor(player)=="Murderer"
+        and (opponentRole=="Sheriff" or opponentRole=="Hero")
+        and not styleGunSafeEscape(escape.Clearance,escape.Desired) then
+        local now=os.clock()
+        if not style.LastSheriffHoldAt or now-style.LastSheriffHoldAt>=0.75 then
+            style.SheriffLaneHolds+=1
+            style.LastSheriffHoldAt=now
+            style.Status=("Sheriff juke held: only %.1f of %.1f studs clear; keeping your steering")
+                :format(escape.Clearance,escape.Desired)
+        end
+        return false,style.Status
+    end
     local reading=styleFeintResponse(chosen.Motion and chosen.Motion.Reversals or 0,
         chosen.Motion and chosen.Motion.LastReverseAt,distance,closing,os.clock())
     local pattern=styleJukePattern(distance,closing,opponentSpeed,style.Jukes+1,
@@ -19230,6 +19257,13 @@ end
 function State.StartTrickshot(automatic,preferredRoot)
     local char,hum,root=startAllowed()
     if char==false then return false,hum end
+    if automatic and roleFor(player)=="Murderer" and preferredRoot then
+        local selected=Players:GetPlayerFromCharacter(preferredRoot.Parent)
+        local role=selected and roleFor(selected)
+        if role=="Sheriff" or role=="Hero" then
+            return false,"Automatic spin blocked: ranged Sheriff/Hero threat"
+        end
+    end
     if automatic and (hum.FloorMaterial~=Enum.Material.Air
         or root.AssemblyLinearVelocity.Y<10) then
         return false,"Automatic spin requires an existing airborne jump"
@@ -19268,6 +19302,7 @@ function State.GetStyleMoveSnapshot()
         TrackedOpponents=style.TrackedOpponents,
         ObservedReversals=style.ObservedReversals,
         FeintHolds=style.FeintHolds,CounterCuts=style.CounterCuts,
+        SheriffLaneHolds=style.SheriffLaneHolds,
         LearningEnabled=State.Config.SelfLearningJukes==true,
         Learning={Rounds=learner.Sessions,Graded=learner.Graded,Positive=learner.Positive,
             Negative=learner.Negative,Inconclusive=learner.Inconclusive,
@@ -30001,6 +30036,10 @@ local createMobileUI = function(C)
                     info.LastOpponentRead,info.LastOpponentReversals,info.TrackedOpponents,
                     info.ObservedReversals,info.FeintHolds,info.CounterCuts,
                     info.LastPattern,info.LastJukeSpeed,info.LastJukeDuration,info.LastSpinDuration,info.Status)
+            if (info.SheriffLaneHolds or 0)>0 then
+                details..=("\nUnsafe automatic sheriff jukes held: %d")
+                    :format(info.SheriffLaneHolds)
+            end
             if info.LegacyJukes>0 then
                 details..=("\nEarlier jukes (before pattern tracking): %d"):format(info.LegacyJukes)
             end

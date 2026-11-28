@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.63 — 2026-11-28
+
+- Investigate the latest recorded Murderer death to Sheriff: an automatic airborne 360 started while the ranged opponent was about 38 studs away and stopped on landing; an earlier automatic corner juke had 3.8 of 7.5 requested studs available and immediately hit a wall/ledge.
+- Prevent automatic showy spins when playing Murderer against an armed Sheriff or Hero, including a defensive check inside the shared trickshot entrypoint. Manual spins remain available.
+- Reject cramped automatic jukes against a Sheriff/Hero when supported clearance is under both 4.5 studs and 72% of the desired path. Leave existing movement control with the player instead of performing a short juke that may stop against a wall.
+- Add a bounded counter and visible Style Moves status for shooter-threat jukes held due to unsafe lane clearance. Preserve all existing knife/gun aim, obstacle checks, WalkSpeed, and manual B/Y control.
+- Extend role-action and space-policy tests around the exact 3.8/7.5-stud failure. These safeguards reduce known unsafe auto-actions but cannot guarantee avoiding a server-validated gunshot.
+
 ## 1.0.0-rc.62 — 2026-11-28
 
 - Change gun and knife assisted body-point ranking from strict part-name preference to **exposure-weighted confidence**. Continue using sampled body-hit rays, clear-path checks, timing-coverage gates and central-body filtering. A well-exposed lower torso can now outrank a tiny upper-torso glimpse.
