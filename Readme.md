@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.60-7499ff" alt="Version 1.0.0-rc.60">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.61-7499ff" alt="Version 1.0.0-rc.61">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.60.** Per-player movement diagnostics now record automatically and **headlessly by default**, only while your character is inside an active MM2 play map. Other players must be on that same map, so lobby and spectator movement are not included. When your match participation ends, the recorder automatically exports that round's named-player events and movement paths to a local `MM2Universal/diagnostics` JSON file, clears live trails, and retains a bounded match summary. Recording continues without opening any menu or map; the optional relative X/Z overview can be enabled separately. The previous space-aware jukes, aim learning and all existing combat features are preserved. Jukes never change WalkSpeed. Behavior labels remain observational hypotheses, not knowledge of private player inputs. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.61.** Headless behavior recording works during an active MM2 match **and continues spectating the same play map after your character dies or returns to the lobby**. It observes only living participants on the active map, never records lobby movement, and automatically exports that round's named-player paths/events to local `MM2Universal/diagnostics` JSON once the remaining map participants finish. Spectators who join an ongoing round can also attach using multiple visible map participants and known roles. The optional X/Z overview can be enabled separately; it is not required for recording. Existing space-aware jukes, learning and aiming remain unchanged, and jukes never change WalkSpeed. Behavioral assessments are observational hypotheses, not access to private player inputs. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.61 — 2026-11-28
+
+- Continue **headless spectator recording** when the local character is eliminated or teleports to the lobby. Pin the active play map, keep observing only living players within that map, and do not confuse lobby movement with live combat.
+- Recognize active rounds joined from the lobby when multiple living map participants have known roles. Continue when only one player survives; apply a short 2.5-second empty-map grace period to avoid ending records on brief respawns/network gaps.
+- Export a round only after the observed match ends, rather than when the local player dies. Preserve opponent trails across the spectating transition, mark spectator and resumed-play transitions, and separate later map changes from the previous match.
+- Add an on-by-default **Continue spectating after elimination** toggle and explicit Playing / Spectating / Lobby status in the behavior menu. The optional radar follows the recorded match; recording remains headless by default.
+- Expand source-extracted round lifecycle tests for spectator continuation, last-player exit, late observer attachment, role requirements, same-round resumption, and reattachment without duplicate rounds.
+
 ## 1.0.0-rc.60 — 2026-11-28
 
 - Make named-player match diagnostics **headless and automatic by default**: the recorder works without displaying the overlay or opening the menu. The overview remains an optional toggle; a one-time settings migration makes existing installations headless, without overriding later explicit preferences.

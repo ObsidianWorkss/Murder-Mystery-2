@@ -17724,7 +17724,7 @@ local State = {
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true, KnifeDodgeMode = "Side teleport",
         Triggerbot = false, KnifeTriggerbot = false, AutoJuke = true, AutoTrickshot = true,
         AdaptiveJukeLearning = true, SelfLearningJukes = true, SelfLearningAim = true,
-        BehaviorRecording = true, TacticalOverview = false,
+        BehaviorRecording = true, BehaviorSpectate = true, TacticalOverview = false,
         StyleSpeedPreset = "Adaptive"},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, StabSweepErrors = 0,
@@ -17900,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.60"
+State.Version = "1.0.0-rc.61"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19541,6 +19541,12 @@ end
 local function behaviorShouldShowMap(recording,overview,inRound)
     return recording==true and overview==true and inRound==true
 end
+local function behaviorObserverPhase(ownOnMap,pinned,actors,emptySeconds,observeEnabled)
+    if ownOnMap then return "Playing" end
+    if observeEnabled~=true or not pinned then return "Idle" end
+    if actors>0 or emptySeconds<2.5 then return "Spectating" end
+    return "Idle"
+end
 local function behaviorEventsForRound(events,round)
     local selected={}
     for _,event in ipairs(events) do
@@ -19576,6 +19582,9 @@ local recorder={Enabled=State.Config.BehaviorRecording~=false,
     MaxPath=360,
     View=nil,Widgets={},CurrentMap={},
     RoundMap=sameSession and previousBehavior.RoundMap or nil,
+    Phase=sameSession and previousBehavior.Phase or "Idle",
+    SpectatorSince=sameSession and previousBehavior.SpectatorSince or nil,
+    EmptySince=sameSession and previousBehavior.EmptySince or nil,
     LastExportRound=sameSession and previousBehavior.LastExportRound or 0}
 State.BehaviorRecorder=recorder
 local function pushEvent(kind,name,detail,time)
@@ -19711,28 +19720,85 @@ local function samplePlayer(other,now,myPosition)
         if #path>recorder.MaxPath then table.remove(path,1) end
     end
 end
+local function mapActors(map)
+    if not map or not map.Object then return 0,0 end
+    local count,roles=0,0
+    for _,other in ipairs(Players:GetPlayers()) do
+        if other~=player then
+            local char=other.Character
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if root and hum and hum.Health>0 and State.GameContext.InRound(other) then
+                local active=State.GameContext.MapAt(root.Position)
+                if active and active.Object==map.Object then
+                    count+=1
+                    local role=roleFor(other)
+                    if role~="Unknown" then roles+=1 end
+                end
+            end
+        end
+    end
+    return count,roles
+end
+local function discoverSpectatorMap()
+    local best,bestCount=nil,0
+    for _,map in ipairs(State.GameContext.Areas()) do
+        local count,known=mapActors(map)
+        -- Lobby spectators can attach to an already-running match only when
+        -- multiple living map participants and a known round role are visible.
+        -- An empty loaded map or a single character is not match evidence.
+        if count>=2 and known>=1 and count>bestCount then
+            best,bestCount=map,count
+        end
+    end
+    return best,bestCount
+end
 local function recordRound(now)
     local char=player.Character
     local root=char and char:FindFirstChild("HumanoidRootPart")
     local currentMap=root and State.GameContext.MapAt(root.Position)
-    local inRound=State.GameContext.InRound(player)==true and currentMap~=nil
+    local ownOnMap=State.GameContext.InRound(player)==true and currentMap~=nil
+    local activeMap=ownOnMap and currentMap or recorder.RoundMap
+    local actors=0
+    if not ownOnMap and State.Config.BehaviorSpectate then
+        if activeMap then
+            actors=mapActors(activeMap)
+        elseif not recorder.InRound then
+            activeMap,actors=discoverSpectatorMap()
+        end
+    end
+    if ownOnMap or actors>0 then
+        recorder.EmptySince=nil
+    elseif not recorder.EmptySince then
+        recorder.EmptySince=now
+    end
+    local phase=behaviorObserverPhase(ownOnMap,activeMap,actors,
+        now-(recorder.EmptySince or now),State.Config.BehaviorSpectate)
+    local inRound=phase~="Idle"
+    -- If a new play map replaces the previous match, never combine both maps
+    -- into the same match report. The prior map will be closed on this tick.
+    local replacedMap=ownOnMap and recorder.InRound and recorder.RoundMap
+        and recorder.RoundMap.Object~=currentMap.Object
+    if replacedMap then inRound=false end
+    local wasSpectating=recorder.Phase=="Spectating"
     if inRound and not recorder.InRound then
         recorder.InRound=true
         recorder.Round+=1
         recorder.People={}
-        recorder.RoundMap=currentMap
+        recorder.RoundMap=activeMap
         recorder.LastScriptStatus="Ready"
         recorder.LastGunSkip=State.LastGunSkip
         recorder.LastKnifeSkip=State.KnifeFeedback
         recorder.LastGunShot=State.LastGunFeedback
         recorder.LastRequest=State.LastRequest
-        pushEvent("Round start",player.Name,State.GameContext.Mode(),now)
+        pushEvent("Round start",player.Name,
+            State.GameContext.Mode()..(phase=="Spectating" and " (spectating)" or ""),now)
     elseif inRound and recorder.InRound and not recorder.RoundMap then
         -- Reattached to a recorder from the same round during a reload.
-        recorder.RoundMap=currentMap
+        recorder.RoundMap=activeMap
     elseif not inRound and recorder.InRound then
         recorder.InRound=false
-        pushEvent("Round end",player.Name,"Observed round ended",now)
+        pushEvent("Round end",player.Name,"No active participants remain on observed map",now)
         if State.ExportBehaviorLog and recorder.LastExportRound~=recorder.Round then
             local ok=State.ExportBehaviorLog("round")
             if ok then recorder.LastExportRound=recorder.Round end
@@ -19756,7 +19822,20 @@ local function recordRound(now)
         recorder.RoundMap=nil
         recorder.People={}
         recorder.CurrentMap={}
+        recorder.SpectatorSince=nil
+        recorder.EmptySince=nil
     end
+    if inRound and recorder.InRound then
+        if phase=="Spectating" and not wasSpectating then
+            recorder.SpectatorSince=now
+            pushEvent("Spectator recording",player.Name,
+                "Continuing on "..tostring(activeMap and activeMap.Object.Name or "match map"),now)
+        elseif phase=="Playing" and wasSpectating then
+            pushEvent("Resumed play",player.Name,"Returned to the active match map",now)
+            recorder.SpectatorSince=nil
+        end
+    end
+    recorder.Phase=inRound and phase or "Idle"
     return inRound
 end
 local function observeScriptState(now)
@@ -19824,6 +19903,7 @@ function State.GetBehaviorSnapshot(name)
     table.sort(people,function(a,b) return a.Name<b.Name end)
     return {Enabled=State.Config.BehaviorRecording,Overview=State.Config.TacticalOverview,
         InRound=recorder.InRound,RoundOnly=recorder.RoundOnly,
+        Phase=recorder.Phase,Spectating=recorder.Phase=="Spectating",
         Round=recorder.Round,JobId=recorder.Session,Duration=os.clock()-recorder.Started,
         Players=people,TotalEvents=recorder.Seq,RetainedEvents=#recorder.Events,
         MatchHistory=table.clone(recorder.MatchHistory),
@@ -20190,7 +20270,7 @@ connect(RunService.Heartbeat,function()
     end
     local own=player.Character
     local root=own and own:FindFirstChild("HumanoidRootPart")
-    local ownPosition=root and root.Position
+    local ownPosition=recorder.Phase=="Playing" and root and root.Position or nil
     for _,other in ipairs(Players:GetPlayers()) do
         samplePlayer(other,now,ownPosition)
     end
@@ -29254,8 +29334,10 @@ local createMobileUI = function(C)
         Callback=function() mobile.OpenPage("BehaviorDiagnostics") end})
     option(behaviorPage,"Record movement and actions","BehaviorRecording",
         "Automatically records your active match only, about five samples per second. Pauses in the lobby and saves a local JSON log at round end.")
+    option(behaviorPage,"Continue spectating after elimination","BehaviorSpectate",
+        "Keeps recording living players on the active match map while you are in the lobby. Never samples lobby movement; automatically saves when the match finishes.")
     option(behaviorPage,"Show world overview","TacticalOverview",
-        "Optional in-match X/Z radar and trails. Headless recording works without it; never displays lobby movement.")
+        "Optional live-match X/Z radar and trails, including while spectating. Headless recording works without it; never displays lobby movement.")
     mobile.BehaviorStatus=behaviorPage:Paragraph({
         Title="Behavior analysis",Desc="Gathering movement observations and weapon diagnostics"})
     behaviorPage:Button({Title="Export match evidence",Desc="Save named player paths, event timeline and weakness hypotheses as local JSON",
@@ -29876,10 +29958,11 @@ local createMobileUI = function(C)
             local log=State.GetBehaviorSnapshot()
             local issues=State.GetWeaknessReport()
             local evidence=State.GetBehaviorEvents(5)
+            local state=log.Phase=="Spectating" and "SPECTATING / RECORDING"
+                or log.Phase=="Playing" and "PLAYING / RECORDING" or "LOBBY: PAUSED"
             local details=("%s | Round %d | %d match players | %d retained events"
                 .."\nSampling in match: %.1f Hz | Last export: %s")
-                :format(log.InRound and "RECORDING" or "LOBBY: PAUSED",
-                    log.Round,#log.Players,log.RetainedEvents,
+                :format(state,log.Round,#log.Players,log.RetainedEvents,
                     1/State.BehaviorRecorder.SampleInterval,log.LastExport)
             for _,person in ipairs(log.Players) do
                 details..=("\n%s%s: %d turns, %d reversals, %d jumps, %d approaches")

@@ -307,8 +307,14 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
 
     round_test = (root / "tests" / "behavior_round.luau").read_text(encoding="utf-8")
     begin = source.index("local function recordRound(")
+    helpers = source.index("local function mapActors(")
     finish = source.index("local function observeScriptState(", begin)
-    round_test = round_test.replace("-- INSERT_RECORD_ROUND", source[begin:finish])
+    round_test = round_test.replace("-- INSERT_RECORD_ROUND",
+        source[helpers:finish])
+    begin_policy = source.index("local function behaviorObserverPhase(")
+    end_policy = source.index("local function behaviorEventsForRound(", begin_policy)
+    round_test = round_test.replace("-- INSERT_OBSERVER_PHASE",
+        source[begin_policy:end_policy])
     if "-- INSERT_" in round_test:
         raise RuntimeError("Unexpanded behavior round test marker")
     harness.write_text(round_test, encoding="utf-8")
