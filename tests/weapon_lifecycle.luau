@@ -13,8 +13,16 @@ function humanoid:EquipTool(tool)
     tool.Parent=character
     character.EquippedTool=tool
 end
+local playerGui={Name="PlayerGui"}
+function playerGui:FindFirstChild(name)
+    return self.CantShoot and self.CantShoot.Name==name and
+        self.CantShoot.Parent==self and self.CantShoot or nil
+end
 local player={Character=character}
 function player:FindFirstChild(name) return name=="Backpack" and backpack or nil end
+function player:FindFirstChildOfClass(name)
+    return name=="PlayerGui" and playerGui or nil
+end
 local State={Running=true,Config={Aim=true,MagicBullet=true,SpeedBoost=false,WalkSpeed=24},WeaponHandlers={},
     CanUseCombatWeapon=function() return true end}
 local scheduled={}
@@ -31,23 +39,44 @@ local function sendGun() end
 local function clickKnife() end
 local function ready() return true end
 local function reportStabContact() end
-local function makeTool(kind,equipped,visible)
+local function makeTool(kind,equipped,visible,uiWhere)
     local item={Name=kind,Parent=equipped and character or backpack,Enabled=true,
         Activated={},Equipped={},Unequipped={}}
     function item:IsA(name) return name=="Tool" end
     function item:GetAttribute(name) return name=="EquippedPerk" and "Haste" or nil end
     local original={Name=kind.."Client",Parent=item,Enabled=true}
+    local cantShoot
     function original:IsA(name) return name=="LocalScript" end
+    function original:FindFirstChild(name)
+        return self.CantShoot and self.CantShoot.Name==name and
+            self.CantShoot.Parent==self and self.CantShoot or nil
+    end
     function original:Clone()
         local copy={Name=self.Name,Enabled=self.Enabled,Parent=nil}
-        function copy:FindFirstChild() return nil end
+        function copy:FindFirstChild(name)
+            if name~="CantShoot" then return nil end
+            local found=self.CantShoot or cantShoot
+            return found and found.Parent==self and found or nil
+        end
         function copy:Destroy() self.Parent=nil; self.Destroyed=true end
+        if self.CantShoot and self.CantShoot.Parent==self and
+            self.CantShoot.Archivable~=false then
+            local cg={Name="CantShoot",Parent=copy,Enabled=self.CantShoot.Enabled}
+            function cg:IsA(name) return name=="LayerCollector" end
+            copy.CantShoot=cg
+        end
         return copy
     end
     function original:Destroy() self.Parent=nil; self.Destroyed=true end
-    local cantShoot=kind=="Gun" and {Enabled=visible,Parent=item} or nil
+    local origin=uiWhere=="client" and original or
+        uiWhere=="playerGui" and playerGui or item
+    cantShoot=kind=="Gun" and uiWhere~="missing" and
+        {Name="CantShoot",Enabled=visible,Parent=origin,
+            Archivable=uiWhere~="clientUnarchivable"} or nil
     if cantShoot then
         function cantShoot:IsA(name) return name=="LayerCollector" end
+        if origin==original then original.CantShoot=cantShoot end
+        if origin==playerGui then playerGui.CantShoot=cantShoot end
     end
     function item:FindFirstChild(name)
         if name==original.Name and original.Parent==self then return original end
@@ -57,12 +86,15 @@ local function makeTool(kind,equipped,visible)
     return item,cantShoot
 end
 -- INSERT_RESTORE
+-- INSERT_STAGE_GUN_UI
 -- INSERT_TAKEOVER
 do
     local item,cantShoot=makeTool("Gun",false,true)
     takeOver(item)
     check(State.WeaponHandlers[item]~=nil and cantShoot.Enabled==false,
         "gun takeover hides the native shooting hint")
+    check(State.WeaponHandlers[item].Backup:FindFirstChild("CantShoot")==cantShoot,
+        "gun takeover stages native UI beneath the backed-up GunClient")
     restoreHandler(item)
     check(cantShoot.Enabled==true,"restoring gun returns the original visible shooting hint")
 end
@@ -70,6 +102,46 @@ do
     local item,cantShoot=makeTool("Gun",false,false)
     takeOver(item); restoreHandler(item)
     check(cantShoot.Enabled==false,"restoring gun preserves an originally hidden shooting hint")
+end
+do
+    local item,cantShoot=makeTool("Gun",false,true,"playerGui")
+    takeOver(item)
+    local record=State.WeaponHandlers[item]
+    check(record and record.Backup:FindFirstChild("CantShoot")==cantShoot,
+        "GUI previously moved into PlayerGui is staged under saved GunClient")
+    restoreHandler(item)
+    check(cantShoot.Parent==record.Backup and cantShoot.Enabled,
+        "restored GunClient has the missing UI before its native script starts")
+end
+do
+    local item=makeTool("Gun",false,true,"client")
+    takeOver(item)
+    local record=State.WeaponHandlers[item]
+    check(record and record.Backup:FindFirstChild("CantShoot")~=nil,
+        "normal native GunClient UI is preserved by its clone")
+    restoreHandler(item)
+end
+do
+    local item,cantShoot=makeTool("Gun",false,true,"clientUnarchivable")
+    -- simulate Roblox cloning the LocalScript without a non-Archivable child
+    cantShoot.Parent=item:FindFirstChild("GunClient")
+    local original=item:FindFirstChild("GunClient")
+    original.CantShoot=cantShoot
+    takeOver(item)
+    local record=State.WeaponHandlers[item]
+    check(record and record.Backup:FindFirstChild("CantShoot")==cantShoot,
+        "non-Archivable native UI is moved out before original script destruction")
+    restoreHandler(item)
+    check(cantShoot.Parent==record.Backup and cantShoot.Enabled,
+        "non-Archivable native UI survives its original script being replaced")
+end
+do
+    local item=makeTool("Gun",false,true,"missing")
+    local original=item:FindFirstChild("GunClient")
+    takeOver(item)
+    check(State.WeaponHandlers[item]==nil and original.Parent==item
+        and original.Enabled==true and not original.Destroyed,
+        "missing GunClient UI leaves native gun alone instead of recreating a broken script")
 end
 do
     local knife=makeTool("Knife",true)

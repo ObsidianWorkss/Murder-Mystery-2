@@ -208,6 +208,10 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     start = source.index("local function restoreHandler(item)")
     end = source.index("local function ready(record)", start)
     lifecycle = lifecycle.replace("-- INSERT_RESTORE", source[start:end])
+    stage_start = source.index("local function stageGunClientCantShoot(")
+    stage_end = source.index("local function restoreHandler(", stage_start)
+    lifecycle = lifecycle.replace("-- INSERT_STAGE_GUN_UI",
+        source[stage_start:stage_end])
     start = source.index("local function takeOver(item)")
     end = source.index("local function syncWeapons()", start)
     lifecycle = lifecycle.replace("-- INSERT_TAKEOVER", source[start:end])

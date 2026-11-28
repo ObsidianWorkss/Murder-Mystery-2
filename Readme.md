@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.64-7499ff" alt="Version 1.0.0-rc.64">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.65-7499ff" alt="Version 1.0.0-rc.65">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.64.** A review of 30 saved match exports found that long matches lose earlier events at the 600-entry preview limit, roles can revert to Unknown after character loss, repeated approaches were counted each sampling interval, and temporary character disappearance was labeled as a kill. The recorder now writes **ordered local event chunks** while a round is active, includes the chunk paths and completeness status in the round JSON manifest, preserves confirmed roles, counts separate approaches, and labels uncertain death observations accurately. Gun skips and cursor-only knife throws remain distinguishable from confirmed misses. Juke learning no longer rewards mere separation from a Sheriff/Hero with a clear line of sight. All rc.63 safeguards for unsafe automatic spins and cramped corner jukes remain; no automatic victory or hit-rate guarantee is claimed. See the [log audit](docs/LOG_AUDIT_2026-11-28.md), [validation record](tests/VALIDATION.md), and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.65.** Investigation of the Roblox `GunClient:WaitForChild("CantShoot")` infinite-yield warning found a native-script restoration risk: the game's `CantShoot` UI can be missing from the cloned client if moved elsewhere or marked non-archivable. Gun takeover now stages the existing GUI beneath the backup script from the original client, tool, or PlayerGui before destroying the original. If no valid GUI dependency is available, it leaves the native gun script alone instead of installing a potentially broken replacement. Native restoration also checks for that dependency before re-enabling the backup. This eliminates the known restoration failure paths in offline tests; real warning recurrence remains unverified until a gun is available in the live client. All rc.64 headless match archives and conservative aiming/juke safeguards remain. See [validation](tests/VALIDATION.md) and the [log audit](docs/LOG_AUDIT_2026-11-28.md).
 
 ## Quick start
 

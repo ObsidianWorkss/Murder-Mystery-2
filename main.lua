@@ -17900,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.64"
+State.Version = "1.0.0-rc.65"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -22591,6 +22591,24 @@ local function loadTracks(record)
         end
     end
 end
+local function stageGunClientCantShoot(item,native,backup,playerGui)
+    -- MM2's native GunClient uses script:WaitForChild("CantShoot"). The GUI
+    -- may already have been reparented by a previous native-script run, or
+    -- omitted by Clone() if its Archivable property was disabled. A cloned
+    -- GunClient must never be started without the original dependency.
+    local existing=backup:FindFirstChild("CantShoot")
+    if existing then return existing:IsA("LayerCollector"),nil end
+    for _,owner in ipairs({native or false,item,playerGui or false}) do
+        if owner then
+            local source=owner:FindFirstChild("CantShoot")
+            if source and source:IsA("LayerCollector") then
+                source.Parent=backup
+                return backup:FindFirstChild("CantShoot")==source,source
+            end
+        end
+    end
+    return false,nil
+end
 local function restoreHandler(item)
     local record = State.WeaponHandlers[item]
     if not record then return end
@@ -22612,12 +22630,22 @@ local function restoreHandler(item)
             if sounds and sound and not sounds:FindFirstChild("Throw") then sound.Parent = sounds end
         elseif record.Kind == "Gun" then
             local cantShoot = item:FindFirstChild("CantShoot")
-            if cantShoot and cantShoot == record.CantShoot then
+            if record.CantShoot and record.CantShoot.Parent then
                 -- The takeover hides this native warning; do not leave it
                 -- disabled when the original client script is restored.
-                cantShoot.Enabled = record.CantShootEnabled
+                record.CantShoot.Enabled = record.CantShootEnabled
             end
-            if cantShoot and not backup:FindFirstChild("CantShoot") then cantShoot.Parent = backup end
+            if not backup:FindFirstChild("CantShoot") then
+                local ready,source=stageGunClientCantShoot(item,nil,backup,
+                    player:FindFirstChildOfClass("PlayerGui"))
+                if ready and source and source==record.CantShoot then
+                    source.Enabled=record.CantShootEnabled
+                end
+                if not ready then
+                    State.Stats.NativeGunMissingUI=(State.Stats.NativeGunMissingUI or 0)+1
+                    warn("Native GunClient restore: CantShoot dependency unavailable")
+                end
+            end
         end
         backup.Parent = item
         backup.Enabled = record.NativeEnabled
@@ -23424,6 +23452,19 @@ local function takeOver(item)
         State.AimStatus = "Weapon backup unavailable"
         return
     end
+    local nativeGui=nil
+    if item.Name=="Gun" then
+        local staged,source=stageGunClientCantShoot(item,native,backup,
+            player:FindFirstChildOfClass("PlayerGui"))
+        if not staged then
+            -- Do not destroy a native gun script if we cannot restore the
+            -- dependency it expects. This also handles slow replication.
+            backup:Destroy()
+            State.AimStatus="Native gun UI not ready; preserving game controls"
+            return
+        end
+        nativeGui=source
+    end
     local record = {Item = item, Kind = item.Name, Backup = backup, NativeEnabled = native.Enabled,
         Connections = {}, Tracks = {}, Active = true, ThrowToken = 0, Charging = false,
         LastGun = -math.huge, LastStab = -math.huge, LastThrow = -math.huge, StabbingUntil = 0}
@@ -23434,7 +23475,7 @@ local function takeOver(item)
     native.Enabled = false
     native:Destroy()
     if record.Kind == "Gun" then
-        local cantShoot = item:FindFirstChild("CantShoot")
+        local cantShoot = nativeGui or item:FindFirstChild("CantShoot")
         if cantShoot and cantShoot:IsA("LayerCollector") then
             record.CantShoot,record.CantShootEnabled = cantShoot,cantShoot.Enabled
             cantShoot.Enabled = false

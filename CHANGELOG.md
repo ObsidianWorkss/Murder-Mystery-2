@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.65 — 2026-11-28
+
+- Investigate the live warning `GunClient:WaitForChild("CantShoot")` using Roblox Creator Hub's Instance/WaitForChild documentation, MM2 runtime logs, and the local weapon takeover/restoration code. The warning means the game's native script waited for an immediate child that was unavailable; it does not by itself prove a server-side gun failure.
+- Stage the actual `CantShoot` LayerCollector under the saved native `GunClient` before replacement when the UI has already been moved to the Tool or PlayerGui, or when `Clone()` omitted a non-archivable GUI child. Restore its original enabled state and only restart the saved client with the dependency available where possible.
+- If the required UI cannot be found, **leave the native client unchanged** rather than destroying and cloning it into a permanently waiting state. Preserve manual/native gun behavior and existing assistant aim for supported weapons.
+- Add source-extracted weapon-lifecycle tests for normal clones, GUI relocated to PlayerGui, non-archivable client children, missing dependencies, and original GUI visibility. Live recurrence testing awaits a round where the connected client owns a Gun tool.
+
 ## 1.0.0-rc.64 — 2026-11-28
 
 - Audit all 30 available saved client match exports and live counters. Historical JSON files contained only the latest 600 retained events, ambiguous elimination labels, inflated continuous-approach counts, cursor-only knife throw fallbacks and unconfirmed gun responses.
