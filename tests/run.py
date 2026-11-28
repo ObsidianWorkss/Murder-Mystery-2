@@ -290,6 +290,37 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness.write_text(style, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
 
+    behavior = (root / "tests" / "behavior_telemetry.luau").read_text(encoding="utf-8")
+    begin = source.index("local function behaviorTransitionEvents(")
+    finish = source.index("do\n-- Live overhead movement overview", begin)
+    behavior = behavior.replace("-- INSERT_BEHAVIOR_POLICY", source[begin:finish])
+    # Style state lives inside its own lexical do-block: telemetry must use
+    # the public State.StyleMoves reference, not an out-of-scope local.
+    telemetry_end = source.index("local function equippedWeapon()", finish)
+    import re
+    if re.search(r"(?<![\w.])style\.", source[finish:telemetry_end]):
+        raise AssertionError("Telemetry references inaccessible local style state")
+    if "-- INSERT_" in behavior:
+        raise RuntimeError("Unexpanded behavior telemetry source marker")
+    harness.write_text(behavior, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    round_test = (root / "tests" / "behavior_round.luau").read_text(encoding="utf-8")
+    begin = source.index("local function recordRound(")
+    finish = source.index("local function observeScriptState(", begin)
+    round_test = round_test.replace("-- INSERT_RECORD_ROUND", source[begin:finish])
+    if "-- INSERT_" in round_test:
+        raise RuntimeError("Unexpanded behavior round test marker")
+    harness.write_text(round_test, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
+    # Prevent a regression where the heartbeat captures the lobby even when
+    # the round detector has already returned false.
+    record_loop = source.index("connect(RunService.Heartbeat,function()", finish)
+    sampler = source.index("samplePlayer(other,now,ownPosition)", record_loop)
+    leave = source.index("if not inRound then", record_loop, sampler)
+    assert source.index("return", leave, sampler) < sampler
+
     rl = (root / "tests" / "rl_learning.luau").read_text(encoding="utf-8")
     begin = source.index("local function styleSpaceDuration(")
     finish = source.index("local function styleSpinAngle(", begin)

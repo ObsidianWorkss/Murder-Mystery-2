@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.58-7499ff" alt="Version 1.0.0-rc.58">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.60-7499ff" alt="Version 1.0.0-rc.60">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.58.** The existing 13 space-aware juke patterns, automatic airborne spins, and central-body gun/knife targeting are joined by opt-in FSS-inspired per-round learning. Auto-jukes can favor three bounded timing and feint choices for similar situations based on observed separation, blocked paths and nearby deaths; gun aim can choose slightly shorter or longer prediction lead based on heuristically matched server-reported ray hits and misses. Unknown shots and uncertain movement outcomes are not rewarded. Learning models are limited to 48 contexts each, can be saved locally where file APIs are available, and contain no opponent IDs. Jukes never change WalkSpeed. The full offline regression suite passes, but actual hit-rate improvements and successful evasions remain **unverified**. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.60.** Per-player movement diagnostics now record automatically and **headlessly by default**, only while your character is inside an active MM2 play map. Other players must be on that same map, so lobby and spectator movement are not included. When your match participation ends, the recorder automatically exports that round's named-player events and movement paths to a local `MM2Universal/diagnostics` JSON file, clears live trails, and retains a bounded match summary. Recording continues without opening any menu or map; the optional relative X/Z overview can be enabled separately. The previous space-aware jukes, aim learning and all existing combat features are preserved. Jukes never change WalkSpeed. Behavior labels remain observational hypotheses, not knowledge of private player inputs. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

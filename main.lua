@@ -17699,6 +17699,7 @@ local previousStats = env.MM2Assist and env.MM2Assist.Stats
 local previousStyle = env.MM2Assist and env.MM2Assist.StyleMoves
 local previousShotLog = env.MM2Assist and env.MM2Assist.ShotLog
 local previousBlockers = env.MM2Assist and env.MM2Assist.ServerBlockers
+local previousBehavior = env.MM2Assist and env.MM2Assist.BehaviorRecorder
 local previousGunDelay = nil -- old reply-derived half-delay is not a calibration
 local previousRecord = env.MM2Assist and env.MM2Assist.Invis and env.MM2Assist.Invis.Record
 local repairRequired = (previousRecord and previousRecord.Swapped) or (env.MM2Assist and env.MM2Assist.RepairRequired) or false
@@ -17723,6 +17724,7 @@ local State = {
         KillAllMode = "Burst", TargetPriority = "Nearest", PerformancePreset = "Balanced", WeaponEquipRecovery = true, KnifeDodgeMode = "Side teleport",
         Triggerbot = false, KnifeTriggerbot = false, AutoJuke = true, AutoTrickshot = true,
         AdaptiveJukeLearning = true, SelfLearningJukes = true, SelfLearningAim = true,
+        BehaviorRecording = true, TacticalOverview = false,
         StyleSpeedPreset = "Adaptive"},
     Stats = {AimCalls = 0, Redirects = 0, KnifeRedirects = 0, GunRequests = 0, KnifeRequests = 0,
         StabRequests = 0, StabContactReports = 0, StabSweepErrors = 0,
@@ -17898,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.58"
+State.Version = "1.0.0-rc.60"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19456,6 +19458,754 @@ connect(UIS.WindowFocusReleased,function()
 end)
 connect(UIS.WindowFocused,function() style.Focused=true end)
 connect(player.CharacterRemoving,function() State.StopStyleMove("Waiting for respawn") end)
+end
+-- Bounded, client-observed behavior telemetry. Names are only stored locally.
+-- All inferences are hypotheses; clients cannot see other players' inputs.
+local function behaviorTransitionEvents(previous,current,dt)
+    local events={}
+    if not previous or dt<0.06 or dt>1 then return events end
+    local dx=current.X-previous.X
+    local dz=current.Z-previous.Z
+    if math.sqrt(dx*dx+dz*dz)>dt*85+12 then
+        return {"Warp"}
+    end
+    if not previous.Air and current.Air and current.VY>3 then
+        table.insert(events,"Jump")
+    elseif previous.Air and not current.Air then
+        table.insert(events,"Land")
+    end
+    if previous.Speed<2 and current.Speed>=6 then
+        table.insert(events,"Start")
+    elseif previous.Speed>=6 and current.Speed<2 then
+        table.insert(events,"Stop")
+    end
+    if previous.Speed>=7 and current.Speed>=7 then
+        local dot=(previous.VX*current.VX+previous.VZ*current.VZ)/
+            math.max(0.01,previous.Speed*current.Speed)
+        if dot< -0.3 then
+            table.insert(events,"Reverse")
+        elseif dot<0.42 then
+            table.insert(events,"Sharp turn")
+        end
+    end
+    return events
+end
+local function behaviorMapCoordinate(x,z,minX,maxX,minZ,maxZ)
+    local sx=math.max(maxX-minX,1)
+    local sz=math.max(maxZ-minZ,1)
+    return math.clamp((x-minX)/sx,0,1),math.clamp((z-minZ)/sz,0,1)
+end
+local function behaviorWeaknessTags(data,own)
+    local hints={}
+    if not data or (data.Samples or 0)<8 then return hints end
+    local n=math.max(1,data.Samples)
+    if (data.Reversals or 0)>=4 then
+        table.insert(hints,own and "Repeated sharp reversals; feints may disrupt aim"
+            or "Frequent reversals observed; avoid long linear leads")
+    end
+    if (data.Jumps or 0)>=5 then
+        table.insert(hints,"Repeated jumps observed; landing prediction may be useful")
+    end
+    if (data.Still or 0)/n>=0.68 then
+        table.insert(hints,own and "Often stationary; check exposure to approaching threats"
+            or "Mostly stationary while observed; possible fixed-position habit")
+    end
+    if own and (data.CloseStill or 0)>=3 then
+        table.insert(hints,"Stationary during nearby opposing-player approach")
+    end
+    if not own and (data.Approaches or 0)>=5 then
+        table.insert(hints,"Repeated approaches toward your position")
+    end
+    return hints
+end
+local function behaviorBounds(people)
+    local minX,maxX,minZ,maxZ=math.huge,-math.huge,math.huge,-math.huge
+    local samples=0
+    for _,record in ipairs(people) do
+        if record.Last then
+            minX=math.min(minX,record.Last.X)
+            maxX=math.max(maxX,record.Last.X)
+            minZ=math.min(minZ,record.Last.Z)
+            maxZ=math.max(maxZ,record.Last.Z)
+            samples+=1
+        end
+    end
+    if samples==0 then return -50,50,-50,50 end
+    local cx,cz=(maxX+minX)*0.5,(maxZ+minZ)*0.5
+    local span=math.max(90,(maxX-minX)*1.2+25,(maxZ-minZ)*1.2+25)
+    return cx-span*0.5,cx+span*0.5,cz-span*0.5,cz+span*0.5
+end
+local function behaviorShouldSample(inRound,participantOnMap,sameMap)
+    return inRound==true and participantOnMap==true and sameMap==true
+end
+local function behaviorShouldShowMap(recording,overview,inRound)
+    return recording==true and overview==true and inRound==true
+end
+local function behaviorEventsForRound(events,round)
+    local selected={}
+    for _,event in ipairs(events) do
+        if event.Round==round then selected[#selected+1]=event end
+    end
+    return selected
+end
+do
+-- Live overhead movement overview and per-player timeline, independent of ESP.
+-- Older recorder builds sampled the lobby: discard their ambiguous telemetry.
+local sameSession=previousBehavior and previousBehavior.RoundOnly==true
+    and previousBehavior.Session==game.JobId
+if State.Config.BehaviorHeadlessV2~=true then
+    -- One-time migration. Headless/automatic becomes the initial setting,
+    -- then users may explicitly enable the optional visual overview again.
+    State.Config.BehaviorRecording=true
+    State.Config.TacticalOverview=false
+    State.Config.BehaviorHeadlessV2=true
+end
+local recorder={Enabled=State.Config.BehaviorRecording~=false,
+    RoundOnly=true,
+    Events=sameSession and previousBehavior.Events or {},
+    People=sameSession and previousBehavior.People or {},
+    MatchHistory=sameSession and previousBehavior.MatchHistory or {},
+    Session=game.JobId,Started=sameSession and previousBehavior.Started or os.clock(),
+    Round=sameSession and previousBehavior.Round or 0,
+    InRound=sameSession and previousBehavior.InRound or false,NextSample=0,
+    NextView=0,Seq=sameSession and previousBehavior.Seq or 0,
+    ExportSeq=sameSession and previousBehavior.ExportSeq or 0,
+    LastExport=sameSession and previousBehavior.LastExport or "Not exported",
+    Errors={},LastScriptStatus="",LastGunSkip=nil,LastKnifeSkip=nil,LastGunShot=nil,
+    SampleInterval=0.20,MaxEvents=600,MaxPeople=32,MaxTrail=90,
+    MaxPath=360,
+    View=nil,Widgets={},CurrentMap={},
+    RoundMap=sameSession and previousBehavior.RoundMap or nil,
+    LastExportRound=sameSession and previousBehavior.LastExportRound or 0}
+State.BehaviorRecorder=recorder
+local function pushEvent(kind,name,detail,time)
+    recorder.Seq+=1
+    local events=recorder.Events
+    events[#events+1]={N=recorder.Seq,T=math.floor((time-recorder.Started)*100)/100,
+        Round=recorder.Round,Kind=tostring(kind):sub(1,28),
+        Player=tostring(name or "SYSTEM"):sub(1,42),
+        Detail=tostring(detail or ""):sub(1,180)}
+    if #events>recorder.MaxEvents then table.remove(events,1) end
+end
+function State.LogBehaviorEvent(kind,name,detail)
+    if not State.Config.BehaviorRecording or not recorder.InRound then return false end
+    pushEvent(kind,name,detail,os.clock())
+    return true
+end
+local function newPlayerRecord(other)
+    return {Name=other.Name,DisplayName=other.DisplayName,Self=other==player,
+        Role="Unknown",Samples=0,Trail={},Path={},LastPathAt=-math.huge,
+        Events=0,Starts=0,Stops=0,
+        Reversals=0,Turns=0,Jumps=0,Lands=0,Warps=0,Still=0,
+        CloseStill=0,Approaches=0,MaxSpeed=0,TotalSpeed=0,Last=nil,
+        LastEvent="Not observed",LastSeen=0,StationarySince=0}
+end
+local function samplePlayer(other,now,myPosition)
+    local character=other.Character
+    local root=character and character:FindFirstChild("HumanoidRootPart")
+    local hum=character and character:FindFirstChildOfClass("Humanoid")
+    if not root or not hum or hum.Health<=0 then
+        local old=recorder.People[other.Name]
+        if old and old.Alive~=false and old.Root then
+            old.Alive=false
+            pushEvent("Eliminated",other.Name,"Character no longer alive",now)
+        end
+        return
+    end
+    local participantMap=State.GameContext.MapAt(root.Position)
+    if not behaviorShouldSample(recorder.InRound,participantMap~=nil,
+        participantMap~=nil and recorder.RoundMap~=nil
+            and participantMap.Object==recorder.RoundMap.Object) then
+        return
+    end
+    local name=other.Name
+    local record=recorder.People[name]
+    if not record then
+        local count=0
+        for _ in pairs(recorder.People) do count+=1 end
+        if count>=recorder.MaxPeople then return end
+        record=newPlayerRecord(other)
+        recorder.People[name]=record
+        pushEvent("Joined observation",name,"Observed character movement",now)
+    end
+    if record.Root and record.Root~=root then
+        record.Last=nil
+        record.Trail={}
+        record.Path={}
+        record.LastPathAt=-math.huge
+        pushEvent("Respawn",name,"Character model changed",now)
+    end
+    record.Root=root
+    record.Alive=true
+    local v=root.AssemblyLinearVelocity
+    local planar=math.min(120,math.sqrt(v.X*v.X+v.Z*v.Z))
+    local pos=root.Position
+    local air=hum.FloorMaterial==Enum.Material.Air
+    local current={X=pos.X,Y=pos.Y,Z=pos.Z,VX=v.X,VY=v.Y,VZ=v.Z,
+        Speed=planar,Air=air,T=now}
+    local previous=record.Last
+    local role=roleFor(other)
+    if record.Role~=role then
+        record.Role=role
+        pushEvent("Role",name,role,now)
+    end
+    if previous then
+        for _,kind in ipairs(behaviorTransitionEvents(previous,current,now-previous.T)) do
+            if kind=="Jump" then record.Jumps+=1
+            elseif kind=="Land" then record.Lands+=1
+            elseif kind=="Reverse" then record.Reversals+=1
+            elseif kind=="Sharp turn" then record.Turns+=1
+            elseif kind=="Start" then record.Starts+=1
+            elseif kind=="Stop" then record.Stops+=1
+            elseif kind=="Warp" then record.Warps+=1 end
+            record.Events+=1
+            record.LastEvent=kind
+            pushEvent(kind,name,("speed %.1f, position %.1f/%.1f"):format(
+                planar,pos.X,pos.Z),now)
+        end
+    end
+    record.Last=current
+    record.LastSeen=now
+    record.Samples+=1
+    record.TotalSpeed+=planar
+    record.MaxSpeed=math.max(record.MaxSpeed,planar)
+    if planar<2 then record.Still+=1 end
+    local delta=myPosition and myPosition-pos
+    if delta and other~=player then
+        local distance=Vector3.new(delta.X,0,delta.Z).Magnitude
+        if distance<15 and planar<2 then record.CloseStill+=1 end
+        if previous and distance<60 and planar>5 and now-previous.T<0.65 then
+            local dir=Vector3.new(v.X,0,v.Z)
+            if dir:Dot(Vector3.new(delta.X,0,delta.Z).Unit)>planar*0.55 then
+                record.Approaches+=1
+            end
+        end
+    elseif other==player then
+        -- Own exposure check uses observed opponents, not unseen attacks.
+        local ownRole=roleFor(player)
+        if planar<2 then
+            for _,otherPlayer in ipairs(Players:GetPlayers()) do
+                if otherPlayer~=player and styleOpponentRole(ownRole,roleFor(otherPlayer)) then
+                    local enemy=otherPlayer.Character
+                    local enemyRoot=enemy and enemy:FindFirstChild("HumanoidRootPart")
+                    if enemyRoot and (enemyRoot.Position-pos).Magnitude<=15 then
+                        record.CloseStill+=1
+                        break
+                    end
+                end
+            end
+        end
+    end
+    local trail=record.Trail
+    trail[#trail+1]={X=math.floor(pos.X*10+0.5)/10,
+        Z=math.floor(pos.Z*10+0.5)/10,T=math.floor((now-recorder.Started)*10)/10}
+    if #trail>recorder.MaxTrail then table.remove(trail,1) end
+    if now-record.LastPathAt>=0.8 then
+        record.LastPathAt=now
+        local path=record.Path
+        path[#path+1]={T=math.floor((now-recorder.Started)*10)/10,
+            X=math.floor(pos.X*10+0.5)/10,
+            Y=math.floor(pos.Y*10+0.5)/10,
+            Z=math.floor(pos.Z*10+0.5)/10,
+            Speed=math.floor(planar*10+0.5)/10,Air=air}
+        if #path>recorder.MaxPath then table.remove(path,1) end
+    end
+end
+local function recordRound(now)
+    local char=player.Character
+    local root=char and char:FindFirstChild("HumanoidRootPart")
+    local currentMap=root and State.GameContext.MapAt(root.Position)
+    local inRound=State.GameContext.InRound(player)==true and currentMap~=nil
+    if inRound and not recorder.InRound then
+        recorder.InRound=true
+        recorder.Round+=1
+        recorder.People={}
+        recorder.RoundMap=currentMap
+        recorder.LastScriptStatus="Ready"
+        recorder.LastGunSkip=State.LastGunSkip
+        recorder.LastKnifeSkip=State.KnifeFeedback
+        recorder.LastGunShot=State.LastGunFeedback
+        recorder.LastRequest=State.LastRequest
+        pushEvent("Round start",player.Name,State.GameContext.Mode(),now)
+    elseif inRound and recorder.InRound and not recorder.RoundMap then
+        -- Reattached to a recorder from the same round during a reload.
+        recorder.RoundMap=currentMap
+    elseif not inRound and recorder.InRound then
+        recorder.InRound=false
+        pushEvent("Round end",player.Name,"Observed round ended",now)
+        if State.ExportBehaviorLog and recorder.LastExportRound~=recorder.Round then
+            local ok=State.ExportBehaviorLog("round")
+            if ok then recorder.LastExportRound=recorder.Round end
+        end
+        if State.GetBehaviorSnapshot then
+            local snapshot=State.GetBehaviorSnapshot()
+            local compact={}
+            for _,entry in ipairs(snapshot.Players) do
+                compact[#compact+1]={Name=entry.Name,Role=entry.Role,
+                    Samples=entry.Samples,Jumps=entry.Jumps,
+                    Reversals=entry.Reversals,Turns=entry.Turns,
+                    Starts=entry.Starts,Stops=entry.Stops,
+                    Approaches=entry.Approaches,
+                    Weaknesses=entry.Weaknesses}
+            end
+            recorder.MatchHistory[#recorder.MatchHistory+1]={
+                Round=recorder.Round,Players=compact,
+                RetainedEvents=snapshot.RetainedEvents}
+            if #recorder.MatchHistory>8 then table.remove(recorder.MatchHistory,1) end
+        end
+        recorder.RoundMap=nil
+        recorder.People={}
+        recorder.CurrentMap={}
+    end
+    return inRound
+end
+local function observeScriptState(now)
+    local active=State.StyleMoves and State.StyleMoves.Status or "Ready"
+    if recorder.LastScriptStatus~=active then
+        if active~="Ready" then
+            pushEvent("Style",player.Name,active,now)
+            if active:find("Juke stopped:",1,true) then
+                local errors=recorder.Errors
+                errors.JukeBlocked=(errors.JukeBlocked or 0)+1
+            end
+        end
+        recorder.LastScriptStatus=active
+    end
+    local gunSkip=State.LastGunSkip
+    if gunSkip and gunSkip.At and recorder.LastGunSkip~=gunSkip then
+        recorder.LastGunSkip=gunSkip
+        local msg=tostring(gunSkip.Message or "Gun shot skipped")
+        pushEvent("Gun skip",player.Name,msg,now)
+        local errors=recorder.Errors
+        errors.GunSkips=(errors.GunSkips or 0)+1
+    end
+    local knife=State.KnifeFeedback
+    if knife and recorder.LastKnifeSkip~=knife then
+        recorder.LastKnifeSkip=knife
+        pushEvent("Knife feedback",player.Name,tostring(knife.Message),now)
+        if tostring(knife.Message or ""):find("cancelled") or
+            tostring(knife.Message or ""):find("skipped") then
+            recorder.Errors.KnifeSkips=(recorder.Errors.KnifeSkips or 0)+1
+        end
+    end
+    local gun=State.LastGunFeedback
+    if gun and recorder.LastGunShot~=gun then
+        recorder.LastGunShot=gun
+        pushEvent("Gun feedback",gun.Target or player.Name,
+            ("From %s: %s"):format(player.Name,gun.Message or "Gun response"),now)
+    end
+    local request=State.LastRequest
+    if request and recorder.LastRequest~=request then
+        recorder.LastRequest=request
+        pushEvent("Attack request",request.Target or player.Name,
+            ("%s / %s by %s (request, not confirmed hit)"):format(
+                request.Weapon or "Weapon",request.Mode or "Unknown",player.Name),now)
+    end
+end
+function State.GetBehaviorSnapshot(name)
+    local people={}
+    for _,record in pairs(recorder.People) do
+        if not name or name==record.Name then
+            people[#people+1]={Name=record.Name,DisplayName=record.DisplayName,
+                Self=record.Self,Role=record.Role,Samples=record.Samples,
+                Jumps=record.Jumps,Turns=record.Turns,Reversals=record.Reversals,
+                Starts=record.Starts,Stops=record.Stops,Warps=record.Warps,
+                Still=record.Still,CloseStill=record.CloseStill,
+                Approaches=record.Approaches,MeanSpeed=record.TotalSpeed/math.max(1,record.Samples),
+                MaxSpeed=record.MaxSpeed,LastEvent=record.LastEvent,
+                SecondsSinceSeen=os.clock()-record.LastSeen,
+                Last=record.Last and {X=record.Last.X,Z=record.Last.Z,
+                    Speed=record.Last.Speed,Air=record.Last.Air},
+                Trail=table.clone(record.Trail),
+                Path=table.clone(record.Path),
+                Weaknesses=behaviorWeaknessTags(record,record.Self)}
+        end
+    end
+    table.sort(people,function(a,b) return a.Name<b.Name end)
+    return {Enabled=State.Config.BehaviorRecording,Overview=State.Config.TacticalOverview,
+        InRound=recorder.InRound,RoundOnly=recorder.RoundOnly,
+        Round=recorder.Round,JobId=recorder.Session,Duration=os.clock()-recorder.Started,
+        Players=people,TotalEvents=recorder.Seq,RetainedEvents=#recorder.Events,
+        MatchHistory=table.clone(recorder.MatchHistory),
+        Errors=table.clone(recorder.Errors),LastExport=recorder.LastExport}
+end
+function State.GetBehaviorEvents(limit,name)
+    local events={}
+    limit=math.clamp(tonumber(limit) or 30,1,120)
+    for i=#recorder.Events,1,-1 do
+        local item=recorder.Events[i]
+        if not name or item.Player==name then
+            table.insert(events,item)
+            if #events>=limit then break end
+        end
+    end
+    return events
+end
+function State.GetBehaviorMapSnapshot()
+    local visible={}
+    local now=os.clock()
+    for _,person in pairs(recorder.InRound and recorder.People or {}) do
+        if person.Last and now-person.LastSeen<=2 then
+            visible[#visible+1]=person
+        end
+    end
+    table.sort(visible,function(a,b) return a.Name<b.Name end)
+    local x1,x2,z1,z2=behaviorBounds(visible)
+    local points,heat={},{}
+    local maxHeat=0
+    for _,person in ipairs(visible) do
+        local u,v=behaviorMapCoordinate(person.Last.X,person.Last.Z,x1,x2,z1,z2)
+        local trail={}
+        for i=math.max(1,#person.Trail-27),#person.Trail do
+            local position=person.Trail[i]
+            local tx,tz=behaviorMapCoordinate(position.X,position.Z,x1,x2,z1,z2)
+            trail[#trail+1]={U=tx,V=tz}
+        end
+        for i=math.max(1,#person.Path-90),#person.Path do
+            local position=person.Path[i]
+            local tx,tz=behaviorMapCoordinate(position.X,position.Z,x1,x2,z1,z2)
+            local col=math.clamp(math.floor(tx*8)+1,1,8)
+            local row=math.clamp(math.floor(tz*8)+1,1,8)
+            local index=(row-1)*8+col
+            local value=(heat[index] or 0)+1
+            heat[index]=value
+            maxHeat=math.max(maxHeat,value)
+        end
+        points[#points+1]={Name=person.Name,Role=person.Role,Self=person.Self,
+            U=u,V=v,Speed=person.Last.Speed,Trail=trail,
+            WeaknessCount=#behaviorWeaknessTags(person,person.Self)}
+    end
+    return {Points=points,Span=math.floor(x2-x1),XMin=x1,XMax=x2,
+        ZMin=z1,ZMax=z2,Round=recorder.Round,Heat=heat,MaxHeat=maxHeat,
+        Note="Relative X/Z positions only; walls, height and hidden inputs are not mapped"}
+end
+function State.GetWeaknessReport()
+    local observed=State.GetBehaviorSnapshot()
+    local scriptIssues={}
+    local errors=observed.Errors
+    local total=State.Stats.GunRequests or 0
+    local replied=State.Stats.GunReplies or 0
+    if total>=4 and replied/total<0.6 then
+        table.insert(scriptIssues,
+            ("Many gun requests lack correlated replies (%d of %d); outcome unknown"):
+                format(total-replied,total))
+    end
+    if (errors.JukeBlocked or 0)>=2 then
+        table.insert(scriptIssues,"Repeated juke collision/ledge stops; inspect map clearance")
+    end
+    if (errors.GunSkips or 0)>=3 then
+        table.insert(scriptIssues,"Repeated gun safety skips; inspect line of sight and timing")
+    end
+    if (errors.KnifeSkips or 0)>=3 then
+        table.insert(scriptIssues,"Repeated knife cancellations; inspect moving muzzle/throw path")
+    end
+    local enemies,personal={},{}
+    for _,record in ipairs(observed.Players) do
+        if record.Self then personal=record.Weaknesses
+        elseif #record.Weaknesses>0 then
+            enemies[#enemies+1]={Name=record.Name,Hypotheses=record.Weaknesses}
+        end
+    end
+    return {Player=personal,Opponents=enemies,Script=scriptIssues,
+        Caveat="Movement-derived hypotheses, not proven player intentions or guaranteed weaknesses"}
+end
+function State.ExportBehaviorLog(reason)
+    if type(writefile)~="function" then
+        recorder.LastExport="File writing unavailable; use GetBehaviorSnapshot()"
+        return false,recorder.LastExport
+    end
+    local snapshot=State.GetBehaviorSnapshot()
+    if recorder.Round<=0 then return false,"No recorded match to export" end
+    local roundEvents=behaviorEventsForRound(recorder.Events,recorder.Round)
+    if #roundEvents<=1 then return false,"Nothing meaningful to export yet" end
+    snapshot.RetainedEvents=#roundEvents
+    snapshot.MatchHistory=nil
+    recorder.ExportSeq+=1
+    local stamp=("%d-%03d"):format(os.time(),recorder.ExportSeq)
+    local path="MM2Universal/diagnostics/"..stamp..".json"
+    local payload={Schema=1,RecordedAt=os.time(),Reason=tostring(reason or "manual"),
+        Snapshot=snapshot,Events=roundEvents,Weakness=State.GetWeaknessReport()}
+    local ok,message=pcall(function()
+        local http=game:GetService("HttpService")
+        if type(makefolder)=="function" and type(isfolder)=="function" then
+            if not isfolder("MM2Universal") then makefolder("MM2Universal") end
+            if not isfolder("MM2Universal/diagnostics") then
+                makefolder("MM2Universal/diagnostics")
+            end
+        end
+        local json=http:JSONEncode(payload)
+        if #json>1500000 then error("Log too large; use snapshot API") end
+        writefile(path,json)
+    end)
+    if not ok then
+        recorder.LastExport="Export failed: "..tostring(message):sub(1,95)
+        return false,recorder.LastExport
+    end
+    recorder.LastExport=path
+    return true,path
+end
+local function behaviorText(parent,content,size,position,dimensions,color,fontSize)
+    local label=Instance.new("TextLabel")
+    label.Name="Label"
+    label.BackgroundTransparency=1
+    label.Text=content
+    label.TextXAlignment=Enum.TextXAlignment.Left
+    label.TextTruncate=Enum.TextTruncate.AtEnd
+    label.TextColor3=color
+    label.Font=Enum.Font.GothamMedium
+    label.TextSize=fontSize or 12
+    label.Position=position
+    label.Size=dimensions
+    label.ZIndex=6
+    label.Parent=parent
+    return label
+end
+local function behaviorColor(point)
+    if point.Self then return Color3.fromRGB(89,225,198) end
+    if point.Role=="Murderer" then return Color3.fromRGB(255,116,113) end
+    if point.Role=="Sheriff" or point.Role=="Hero" then
+        return Color3.fromRGB(116,164,255)
+    end
+    return Color3.fromRGB(241,190,123)
+end
+local function makeBehaviorOverview()
+    local gui=Instance.new("ScreenGui")
+    gui.Name="MM2TacticalOverview"
+    gui.IgnoreGuiInset=true
+    gui.ResetOnSpawn=false
+    gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+    gui.DisplayOrder=170
+    gui.Parent=player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui")
+    recorder.View=gui
+    local panel=Instance.new("Frame")
+    panel.Name="WorldOverview"
+    panel.AnchorPoint=Vector2.new(1,0)
+    panel.Position=UDim2.new(1,-18,0,115)
+    panel.Size=UDim2.fromOffset(275,287)
+    panel.BackgroundColor3=Color3.fromRGB(13,20,34)
+    panel.BackgroundTransparency=0.05
+    panel.BorderSizePixel=0
+    panel.Parent=gui
+    local round=Instance.new("UICorner")
+    round.CornerRadius=UDim.new(0,12)
+    round.Parent=panel
+    local stroke=Instance.new("UIStroke")
+    stroke.Color=Color3.fromRGB(60,83,111)
+    stroke.Thickness=1
+    stroke.Parent=panel
+    behaviorText(panel,"MATCH OVERVIEW",12,UDim2.fromOffset(14,11),
+        UDim2.fromOffset(167,23),Color3.fromRGB(231,239,251),13)
+    local toggle=Instance.new("TextButton")
+    toggle.Name="Collapse"
+    toggle.Text="−"
+    toggle.Size=UDim2.fromOffset(25,23)
+    toggle.Position=UDim2.fromOffset(239,9)
+    toggle.BackgroundColor3=Color3.fromRGB(35,49,69)
+    toggle.TextColor3=Color3.fromRGB(237,243,252)
+    toggle.Font=Enum.Font.GothamBold
+    toggle.TextSize=16
+    toggle.Parent=panel
+    local tRound=Instance.new("UICorner")
+    tRound.CornerRadius=UDim.new(0,6)
+    tRound.Parent=toggle
+    local subtitle=behaviorText(panel,"LIVE | Observed X/Z map",11,
+        UDim2.fromOffset(14,34),UDim2.fromOffset(247,18),
+        Color3.fromRGB(149,168,195),11)
+    local world=Instance.new("Frame")
+    world.Name="RelativeWorldMap"
+    world.Size=UDim2.fromOffset(251,198)
+    world.Position=UDim2.fromOffset(12,55)
+    world.BackgroundColor3=Color3.fromRGB(20,30,48)
+    world.BorderSizePixel=0
+    world.ClipsDescendants=true
+    world.Parent=panel
+    local wc=Instance.new("UICorner")
+    wc.CornerRadius=UDim.new(0,5)
+    wc.Parent=world
+    for line=1,3 do
+        local v=Instance.new("Frame")
+        v.BackgroundColor3=Color3.fromRGB(51,69,92)
+        v.BackgroundTransparency=0.58
+        v.BorderSizePixel=0
+        v.Position=UDim2.new(line/4,0,0,0)
+        v.Size=UDim2.new(0,1,1,0)
+        v.Parent=world
+        local h=v:Clone()
+        h.Position=UDim2.new(0,0,line/4,0)
+        h.Size=UDim2.new(1,0,0,1)
+        h.Parent=world
+    end
+    recorder.HeatTiles={}
+    for row=1,8 do
+        for col=1,8 do
+            local heat=Instance.new("Frame")
+            heat.Name="ActivityCell"
+            heat.Position=UDim2.new((col-1)/8,0,(row-1)/8,0)
+            heat.Size=UDim2.new(1/8,0,1/8,0)
+            heat.BorderSizePixel=0
+            heat.BackgroundColor3=Color3.fromRGB(77,137,179)
+            heat.BackgroundTransparency=1
+            heat.ZIndex=2
+            heat.Parent=world
+            recorder.HeatTiles[(row-1)*8+col]=heat
+        end
+    end
+    local footer=behaviorText(panel,"Activity heat | no walls",11,
+        UDim2.fromOffset(13,260),UDim2.fromOffset(167,18),
+        Color3.fromRGB(153,169,188),10)
+    local export=Instance.new("TextButton")
+    export.Name="ExportLogs"
+    export.Text="EXPORT"
+    export.Size=UDim2.fromOffset(76,22)
+    export.Position=UDim2.fromOffset(187,259)
+    export.BackgroundColor3=Color3.fromRGB(40,85,113)
+    export.TextColor3=Color3.fromRGB(225,244,252)
+    export.Font=Enum.Font.GothamBold
+    export.TextSize=11
+    export.Parent=panel
+    local ec=Instance.new("UICorner")
+    ec.CornerRadius=UDim.new(0,5)
+    ec.Parent=export
+    local collapsed=false
+    connect(toggle.MouseButton1Click,function()
+        collapsed=not collapsed
+        toggle.Text=collapsed and "+" or "−"
+        panel.Size=UDim2.fromOffset(275,collapsed and 38 or 287)
+        world.Visible=not collapsed
+        subtitle.Visible=not collapsed
+        footer.Visible=not collapsed
+        export.Visible=not collapsed
+    end)
+    connect(export.MouseButton1Click,function()
+        local ok,path=State.ExportBehaviorLog("manual")
+        footer.Text=ok and "Saved local JSON log" or tostring(path):sub(1,40)
+    end)
+    recorder.MapPanel=panel
+    recorder.MapWorld=world
+    recorder.MapHeader=subtitle
+    recorder.MapFooter=footer
+end
+local function updateBehaviorOverview()
+    local gui=recorder.View
+    if not gui or not gui.Parent then
+        if not behaviorShouldShowMap(State.Config.BehaviorRecording,
+            State.Config.TacticalOverview,recorder.InRound) then return end
+        local ok,err=pcall(makeBehaviorOverview)
+        if not ok then error(err) end
+        gui=recorder.View
+    end
+    gui.Enabled=behaviorShouldShowMap(State.Config.BehaviorRecording,
+        State.Config.TacticalOverview,recorder.InRound)
+    if not gui.Enabled then return end
+    local map=State.GetBehaviorMapSnapshot()
+    recorder.CurrentMap=map
+    if recorder.MapHeader then
+        recorder.MapHeader.Text=("%d players  |  Round %d  |  %d studs"):format(
+            #map.Points,map.Round,map.Span)
+    end
+    local world=recorder.MapWorld
+    for index,tile in ipairs(recorder.HeatTiles or {}) do
+        local intensity=map.MaxHeat>0 and (map.Heat[index] or 0)/map.MaxHeat or 0
+        tile.BackgroundTransparency=intensity>0
+            and math.clamp(0.97-intensity*0.57,0.38,0.96) or 1
+    end
+    local inUse={}
+    for _,point in ipairs(map.Points) do
+        local widget=recorder.Widgets[point.Name]
+        if not widget then
+            local dot=Instance.new("Frame")
+            dot.Name="PlayerMarker"
+            dot.Size=UDim2.fromOffset(8,8)
+            dot.AnchorPoint=Vector2.new(0.5,0.5)
+            dot.BorderSizePixel=0
+            dot.ZIndex=7
+            dot.Parent=world
+            local corner=Instance.new("UICorner")
+            corner.CornerRadius=UDim.new(1,0)
+            corner.Parent=dot
+            local label=behaviorText(world,point.Name,11,UDim2.fromOffset(0,0),
+                UDim2.fromOffset(82,13),Color3.fromRGB(238,243,252),10)
+            label.ZIndex=8
+            local tail={}
+            for i=1,9 do
+                local trail=Instance.new("Frame")
+                trail.Size=UDim2.fromOffset(3,3)
+                trail.AnchorPoint=Vector2.new(0.5,0.5)
+                trail.BackgroundTransparency=0.2+i*0.07
+                trail.BorderSizePixel=0
+                trail.ZIndex=5
+                trail.Visible=false
+                trail.Parent=world
+                tail[i]=trail
+            end
+            widget={Dot=dot,Label=label,Tail=tail}
+            recorder.Widgets[point.Name]=widget
+        end
+        inUse[point.Name]=true
+        local color=behaviorColor(point)
+        widget.Dot.BackgroundColor3=color
+        widget.Label.TextColor3=color
+        widget.Label.Text=(point.Self and "YOU " or "")..point.Name:sub(1,12)
+        local px=math.floor(8+point.U*235)
+        local py=math.floor(7+point.V*184)
+        widget.Dot.Position=UDim2.fromOffset(px,py)
+        widget.Label.Position=UDim2.fromOffset(math.clamp(px+5,0,165),math.clamp(py-14,0,182))
+        widget.Dot.Visible=true
+        widget.Label.Visible=true
+        for i,trail in ipairs(widget.Tail) do
+            local trailIndex=#point.Trail-i*3
+            local sample=trailIndex>=1 and point.Trail[trailIndex]
+            trail.Visible=sample~=nil
+            if sample then
+                trail.Position=UDim2.fromOffset(math.floor(8+sample.U*235),
+                    math.floor(7+sample.V*184))
+                trail.BackgroundColor3=color
+            end
+        end
+    end
+    for name,widget in pairs(recorder.Widgets) do
+        if not inUse[name] then
+            widget.Dot.Visible=false
+            widget.Label.Visible=false
+            for _,trail in ipairs(widget.Tail) do trail.Visible=false end
+        end
+    end
+end
+connect(RunService.Heartbeat,function()
+    if not State.Running then return end
+    if not State.Config.BehaviorRecording then
+        if recorder.View then recorder.View.Enabled=false end
+        return
+    end
+    local now=os.clock()
+    if now<recorder.NextSample then return end
+    recorder.NextSample=now+recorder.SampleInterval
+    local inRound=recordRound(now)
+    -- The recorder is headless by default; the UI is only a viewer.
+    -- Never sample lobby players, update match movement trails or count
+    -- weapon/movement telemetry outside a verified play-map session.
+    if not inRound then
+        if recorder.View then recorder.View.Enabled=false end
+        return
+    end
+    local own=player.Character
+    local root=own and own:FindFirstChild("HumanoidRootPart")
+    local ownPosition=root and root.Position
+    for _,other in ipairs(Players:GetPlayers()) do
+        samplePlayer(other,now,ownPosition)
+    end
+    observeScriptState(now)
+    if now>=recorder.NextView then
+        recorder.NextView=now+0.45
+        local ok,err=pcall(updateBehaviorOverview)
+        if not ok then
+            recorder.Errors.MapUpdates=(recorder.Errors.MapUpdates or 0)+1
+            if recorder.Errors.MapUpdates<=3 then
+                pushEvent("Map update error",player.Name,tostring(err),now)
+            end
+        end
+    end
+end)
 end
 local function equippedWeapon()
     local char = player.Character
@@ -24142,6 +24892,12 @@ end
 function State.Destroy()
     -- Saved before unload switches features off. A copy replaced by a newer one never writes over newer settings.
     if State.SaveSettings and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then State.SaveSettings() end
+    if State.ExportBehaviorLog and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then
+        pcall(State.ExportBehaviorLog,"reload")
+    end
+    if State.BehaviorRecorder and State.BehaviorRecorder.View then
+        pcall(function() State.BehaviorRecorder.View:Destroy() end)
+    end
     if State.SaveLearning and player:GetAttribute("MM2UniversalInstance") == State.InstanceToken then
         pcall(State.SaveLearning,true)
     end
@@ -28409,6 +29165,7 @@ local createMobileUI = function(C)
     local guidance=page("Guidance",visualsPage,"Guidance","route")
     local playersPage=tab("Players","users")
     local playersTab=page("Players",playersPage,"Player Actions","users",true)
+    local behaviorPage=page("BehaviorDiagnostics",playersPage,"Match Intelligence","scan-eye")
     local protected=page("Protected",playersPage,"Protected","shield-check")
     local chatSection=page("Chat",playersPage,"Chat","message-circle")
     local settingsPage=tab("Settings","settings")
@@ -28493,6 +29250,22 @@ local createMobileUI = function(C)
     end
     mobile.OverviewStatus=home:Paragraph({Title="Session",Desc="Waiting for round"})
     home:Paragraph({Title="MM2 Universal",Desc="v" .. State.Version})
+    home:Button({Title="Match intelligence",Desc="Player behavior, movement map and script issue report",
+        Callback=function() mobile.OpenPage("BehaviorDiagnostics") end})
+    option(behaviorPage,"Record movement and actions","BehaviorRecording",
+        "Automatically records your active match only, about five samples per second. Pauses in the lobby and saves a local JSON log at round end.")
+    option(behaviorPage,"Show world overview","TacticalOverview",
+        "Optional in-match X/Z radar and trails. Headless recording works without it; never displays lobby movement.")
+    mobile.BehaviorStatus=behaviorPage:Paragraph({
+        Title="Behavior analysis",Desc="Gathering movement observations and weapon diagnostics"})
+    behaviorPage:Button({Title="Export match evidence",Desc="Save named player paths, event timeline and weakness hypotheses as local JSON",
+        Callback=function()
+            local ok,message=State.ExportBehaviorLog("manual")
+            if mobile.Toast then
+                mobile.Toast(ok and "Local match log exported" or tostring(message),
+                    ok and "info" or "warn")
+            end
+        end})
     option(home,"Aim assist","Aim","Master switch for every aim feature.")
     option(combat, "Gun aim", "MagicBullet", "Assists shots at eligible opponents in the current game mode.")
     option(combat, "Conservative gun shots", "ConservativeGun",
@@ -29098,6 +29871,32 @@ local createMobileUI = function(C)
                 :format(a.Enabled and "on" or "off",a.Observed,a.Hits,a.Misses,a.Unknown,
                     a.RoundObserved,a.RoundHits,a.RoundMisses,a.Contexts,a.Last,a.Storage)
             updateDescription(mobile.AimLearningStatus,"AimLearning",details)
+        end
+        if mobile.BehaviorStatus and State.GetBehaviorSnapshot then
+            local log=State.GetBehaviorSnapshot()
+            local issues=State.GetWeaknessReport()
+            local evidence=State.GetBehaviorEvents(5)
+            local details=("%s | Round %d | %d match players | %d retained events"
+                .."\nSampling in match: %.1f Hz | Last export: %s")
+                :format(log.InRound and "RECORDING" or "LOBBY: PAUSED",
+                    log.Round,#log.Players,log.RetainedEvents,
+                    1/State.BehaviorRecorder.SampleInterval,log.LastExport)
+            for _,person in ipairs(log.Players) do
+                details..=("\n%s%s: %d turns, %d reversals, %d jumps, %d approaches")
+                    :format(person.Self and "YOU " or "",person.Name,
+                        person.Turns,person.Reversals,person.Jumps,person.Approaches)
+            end
+            for _,hint in ipairs(issues.Player) do details..="\nYOU: "..hint end
+            for _,hint in ipairs(issues.Script) do details..="\nSCRIPT: "..hint end
+            for _,target in ipairs(issues.Opponents) do
+                details..="\n"..target.Name..": "..table.concat(target.Hypotheses,"; ")
+            end
+            details..="\nRecent events:"
+            for _,event in ipairs(evidence) do
+                details..=("\n[%.1fs] %s | %s | %s"):
+                    format(event.T,event.Player,event.Kind,event.Detail)
+            end
+            updateDescription(mobile.BehaviorStatus,"MatchIntel",details)
         end
         if mobile.ResultsStatus and State.GetCombatResults then
             updateDescription(mobile.ResultsStatus,"CombatResults",State.GetCombatResults().Text)

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-rc.60 — 2026-11-28
+
+- Make named-player match diagnostics **headless and automatic by default**: the recorder works without displaying the overlay or opening the menu. The overview remains an optional toggle; a one-time settings migration makes existing installations headless, without overriding later explicit preferences.
+- Remove lobby contamination: record movement only while the local character is in a recognized play map, and sample only players inside the same map. Stop sampling when the local round ends, hide the map and clear current player trails.
+- Automatically export round-only JSON evidence to `MM2Universal/diagnostics` when the local round ends. Filter events by the recorded round instead of including older matches, and retain up to eight compact completed-match summaries.
+- Preserve active round observations across compatible script reloads, but discard legacy recorder sessions that could have included lobby movement. Keep an optional manual export and add source-extracted tests for lobby exclusion, map matching, transition handling, automatic export, and mid-round reattachment.
+
+## 1.0.0-rc.59 — 2026-11-28
+
+- Add a bounded in-session **Behavior Recorder** that samples observable movement about every 200 ms for up to 32 named players. It tracks movement starts/stops, grounded jumps/landings, abrupt direction reversals, sharp turns, plausible warps and approaches, and keeps short visible trails plus longer compressed world-space movement paths.
+- Add a small dark **Match Overview** overlay with relative live X/Z positions, player names and roles, recent trails, and an 8×8 activity heatmap. It dynamically fits the observed players, supports collapsing and manual export, and makes no claim to map walls, elevation, hidden inputs or opponents' intentions.
+- Add **Match Intelligence** to the Players menu: recording/overview toggles, per-player movement counts, recent action timeline, a local JSON evidence export and separate tentative diagnoses for self, opponents and script reliability. The evidence log includes reported gun-ray feedback, skipped gun/knife actions, juke stops, weapon requests, and local role transitions without calling an attempted action a confirmed hit.
+- Keep a maximum of 600 named recent events, 90 live trail positions and 360 compressed longer path points per player, plus up to eight compact completed-match summaries. New match boundaries reset the current behavior profiles; reloads on the same server retain observations. Exported diagnostics remain on the user's client filesystem; no network telemetry is transmitted.
+- Add source-extracted Luau regression tests for behavior transitions, map normalization, heat overview bounds and weakness labels. The model's behavior labels are hypotheses, not guaranteed player habits or known weaknesses.
+
 ## 1.0.0-rc.58 — 2026-11-28
 
 - Add **Learn juke choices**: FSS-inspired contextual bandit for automatic jukes. Group actions by role, surrounding space, threat distance and crowding. Establish a balanced baseline, then test bounded Snap and (only in open space) Feint timing variants. Never override measured wall/floor clearance or character WalkSpeed.
