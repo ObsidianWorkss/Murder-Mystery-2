@@ -17900,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.65"
+State.Version = "1.0.0-rc.66"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19627,6 +19627,11 @@ local function behaviorEventsForRound(events,round)
     end
     return selected
 end
+local function behaviorMayWriteArchive(phase)
+    -- Executor writefile() can block the Roblox VM for tens of milliseconds.
+    -- Preserve smooth gameplay and spectator views: write only after a match.
+    return phase=="Idle"
+end
 do
 -- Live overhead movement overview and per-player timeline, independent of ESP.
 -- Older recorder builds sampled the lobby: discard their ambiguous telemetry.
@@ -19657,11 +19662,13 @@ local recorder={Enabled=State.Config.BehaviorRecording~=false,
     ArchiveLost=sameSession and previousBehavior.ArchiveLost or 0,
     ArchiveIncomplete=sameSession and previousBehavior.ArchiveIncomplete or false,
     ArchiveRetryAt=sameSession and previousBehavior.ArchiveRetryAt or 0,
+    PendingExports=sameSession and previousBehavior.PendingExports or {},
     RoundStartSeq=sameSession and previousBehavior.RoundStartSeq or 0,
     ArchiveStatus=sameSession and previousBehavior.ArchiveStatus or "Awaiting match archive",
     Errors=sameSession and previousBehavior.Errors or {},
     LastScriptStatus="",LastGunSkip=nil,LastKnifeSkip=nil,LastGunShot=nil,
     SampleInterval=0.20,MaxEvents=600,MaxPeople=32,MaxTrail=90,
+    MaxArchivePending=12000,
     MaxPath=360,
     View=nil,Widgets={},CurrentMap={},
     RoundMap=sameSession and previousBehavior.RoundMap or nil,
@@ -19683,12 +19690,16 @@ local function pushEvent(kind,name,detail,time)
         local pending=recorder.ArchiveEvents
         pending[#pending+1]=item
         if #pending>=150 and State.FlushBehaviorChunk
+            and behaviorMayWriteArchive(recorder.Phase)
             and time>=recorder.ArchiveRetryAt then
             State.FlushBehaviorChunk(false)
+        elseif #pending>=150 and recorder.Phase=="Playing" then
+            recorder.DeferredCombatWrites=(recorder.DeferredCombatWrites or 0)+1
         end
-        if #pending>1800 then
+        if #pending>recorder.MaxArchivePending then
             table.remove(pending,1)
             recorder.ArchiveLost+=1
+            recorder.ArchiveStatus="Partial: match exceeded in-memory event budget"
         end
     end
 end
@@ -19918,6 +19929,7 @@ local function recordRound(now)
         recorder.ArchiveLost=0
         recorder.ArchiveIncomplete=false
         recorder.ArchiveRetryAt=0
+        recorder.DeferredCombatWrites=0
         recorder.RoundStartSeq=recorder.Seq+1
         recorder.ArchiveId=("%d-%d-%s"):format(os.time(),recorder.Round,
             tostring(recorder.Session):sub(1,8))
@@ -19936,8 +19948,8 @@ local function recordRound(now)
     elseif not inRound and recorder.InRound then
         recorder.InRound=false
         pushEvent("Round end",player.Name,"No active participants remain on observed map",now)
-        if State.ExportBehaviorLog and recorder.LastExportRound~=recorder.Round then
-            local ok=State.ExportBehaviorLog("round")
+        if State.QueueCompletedBehaviorExport and recorder.LastExportRound~=recorder.Round then
+            local ok=State.QueueCompletedBehaviorExport("round")
             if ok then recorder.LastExportRound=recorder.Round end
         end
         if State.GetBehaviorSnapshot then
@@ -20063,6 +20075,8 @@ function State.GetBehaviorSnapshot(name)
         ArchivedChunks=#recorder.ArchiveFiles,
         UnflushedEvents=#recorder.ArchiveEvents,
         DroppedArchiveEvents=recorder.ArchiveLost,
+        DeferredCombatWrites=recorder.DeferredCombatWrites or 0,
+        PendingExports=#recorder.PendingExports,
         MatchHistory=table.clone(recorder.MatchHistory),
         Errors=table.clone(recorder.Errors),LastExport=recorder.LastExport}
 end
@@ -20078,21 +20092,23 @@ function State.GetBehaviorEvents(limit,name)
     end
     return events
 end
-function State.FlushBehaviorChunk(force)
-    local pending=recorder.ArchiveEvents
+function State.FlushBehaviorChunk(force,archive)
+    local target=archive or recorder
+    local pending=target.ArchiveEvents
     if #pending==0 or (not force and #pending<150) then return false,"Nothing to flush" end
     if type(writefile)~="function" then
-        recorder.ArchiveStatus="Partial: local event-chunk storage unavailable"
-        recorder.ArchiveRetryAt=os.clock()+8
-        return false,recorder.ArchiveStatus
+        target.ArchiveStatus="Partial: local event-chunk storage unavailable"
+        target.ArchiveRetryAt=os.clock()+8
+        return false,target.ArchiveStatus
     end
     local chunk={}
     for i=1,math.min(150,#pending) do chunk[#chunk+1]=pending[i] end
-    local name=recorder.ArchiveId or
-        ("%d-%d"):format(os.time(),recorder.Round)
-    local number=recorder.ArchiveSeq+1
+    local name=target.ArchiveId or
+        ("%d-%d"):format(os.time(),target.Round)
+    local number=target.ArchiveSeq+1
     local path=("MM2Universal/diagnostics/events-%s-%03d.json"):
         format(name,number)
+    local writeStarted=os.clock()
     local ok,err=pcall(function()
         if type(makefolder)=="function" and type(isfolder)=="function" then
             if not isfolder("MM2Universal") then makefolder("MM2Universal") end
@@ -20101,22 +20117,29 @@ function State.FlushBehaviorChunk(force)
             end
         end
         local encoded=game:GetService("HttpService"):JSONEncode({
-            Schema=1,Round=recorder.Round,FirstN=chunk[1].N,
+            Schema=1,Round=target.Round,FirstN=chunk[1].N,
             LastN=chunk[#chunk].N,Events=chunk,
         })
         writefile(path,encoded)
     end)
-    if not ok then
-        recorder.ArchiveStatus="Partial: event chunk write failed: "..tostring(err):sub(1,90)
-        recorder.ArchiveRetryAt=os.clock()+8
-        return false,recorder.ArchiveStatus
+    local elapsedMs=(os.clock()-writeStarted)*1000
+    local perf=State.Performance
+    if perf then
+        perf.ArchiveWrites=(perf.ArchiveWrites or 0)+1
+        perf.LastArchiveWriteMs=elapsedMs
+        perf.MaxArchiveWriteMs=math.max(perf.MaxArchiveWriteMs or 0,elapsedMs)
     end
-    recorder.ArchiveRetryAt=0
-    recorder.ArchiveSeq=number
-    recorder.ArchiveFiles[#recorder.ArchiveFiles+1]=path
+    if not ok then
+        target.ArchiveStatus="Partial: event chunk write failed: "..tostring(err):sub(1,90)
+        target.ArchiveRetryAt=os.clock()+8
+        return false,target.ArchiveStatus
+    end
+    target.ArchiveRetryAt=0
+    target.ArchiveSeq=number
+    target.ArchiveFiles[#target.ArchiveFiles+1]=path
     for _=1,#chunk do table.remove(pending,1) end
-    if not recorder.ArchiveIncomplete then
-        recorder.ArchiveStatus="Continuous event chunks saved locally"
+    if not target.ArchiveIncomplete then
+        target.ArchiveStatus="Continuous event chunks saved locally"
     end
     return true,path
 end
@@ -20250,6 +20273,95 @@ function State.ExportBehaviorLog(reason)
     end
     recorder.LastExport=path
     return true,path
+end
+function State.QueueCompletedBehaviorExport(reason)
+    if type(writefile)~="function" or recorder.Round<=0 then
+        return false,"No local storage or completed round"
+    end
+    local events=behaviorEventsForRound(recorder.Events,recorder.Round)
+    if #events<=1 then return false,"No meaningful match evidence" end
+    -- Freeze the completed match before the live recorder clears its People
+    -- and starts a new map. No file writes occur in the Heartbeat callback.
+    local snapshot=State.GetBehaviorSnapshot()
+    local weakness=State.GetWeaknessReport()
+    snapshot.MatchHistory=nil
+    snapshot.RetainedEvents=#events
+    recorder.ExportSeq+=1
+    local stamp=("%d-%03d"):format(os.time(),recorder.ExportSeq)
+    local job={
+        Round=recorder.Round,ArchiveEvents=recorder.ArchiveEvents,
+        ArchiveFiles=recorder.ArchiveFiles,ArchiveSeq=recorder.ArchiveSeq,
+        ArchiveId=recorder.ArchiveId,ArchiveLost=recorder.ArchiveLost,
+        ArchiveIncomplete=recorder.ArchiveIncomplete,
+        ArchiveStatus=recorder.ArchiveStatus,ArchiveRetryAt=0,
+        RecordedEvents=math.max(0,recorder.Seq-recorder.RoundStartSeq+1),
+        Events=events,Snapshot=snapshot,Weakness=weakness,
+        Reason=tostring(reason or "round"),
+        Path="MM2Universal/diagnostics/"..stamp..".json",
+        Status="Queued",
+    }
+    recorder.PendingExports[#recorder.PendingExports+1]=job
+    recorder.LastExport=("Round %d queued for local archive"):format(job.Round)
+    task.spawn(function()
+        task.wait(0.2)
+        local errors=0
+        while #job.ArchiveEvents>0 do
+            -- Save between matches, one chunk at a time. The executor file
+            -- API can block a frame, even when invoked via task.spawn.
+            while recorder.Phase=="Playing" or recorder.Phase=="Spectating" do
+                task.wait(0.4)
+            end
+            local ok,reason=State.FlushBehaviorChunk(true,job)
+            if ok then
+                errors=0
+                task.wait(0.2)
+            else
+                errors+=1
+                if errors>=3 then
+                    job.Status="Archive write failed: "..tostring(reason):sub(1,100)
+                    break
+                end
+                task.wait(2)
+            end
+        end
+        while recorder.Phase=="Playing" or recorder.Phase=="Spectating" do
+            task.wait(0.4)
+        end
+        local snapshot=job.Snapshot
+        snapshot.ArchiveStatus=job.ArchiveStatus
+        snapshot.ArchivedChunks=#job.ArchiveFiles
+        snapshot.UnflushedEvents=#job.ArchiveEvents
+        local archive={
+            Files=table.clone(job.ArchiveFiles),
+            RecordedEvents=job.RecordedEvents,
+            DroppedEvents=job.ArchiveLost,
+            UnflushedEvents=#job.ArchiveEvents,
+            Complete=not job.ArchiveIncomplete and job.ArchiveLost==0
+                and #job.ArchiveEvents==0,
+            Note="Chunk files contain full event timeline; Events is only the recent 600-event preview",
+        }
+        local payload={Schema=1,RecordedAt=os.time(),Reason=job.Reason,
+            Snapshot=snapshot,Events=job.Events,Archive=archive,Weakness=job.Weakness}
+        local written,reason=pcall(function()
+            local json=game:GetService("HttpService"):JSONEncode(payload)
+            if #json>1500000 then error("Round manifest too large") end
+            writefile(job.Path,json)
+        end)
+        if written then
+            job.Status="Saved"
+            recorder.LastExport=job.Path
+            for i=#recorder.PendingExports,1,-1 do
+                if recorder.PendingExports[i]==job then
+                    table.remove(recorder.PendingExports,i)
+                    break
+                end
+            end
+        else
+            job.Status="Manifest failed: "..tostring(reason):sub(1,95)
+            recorder.LastExport=job.Status
+        end
+    end)
+    return true,job.Path
 end
 local function behaviorText(parent,content,size,position,dimensions,color,fontSize)
     local label=Instance.new("TextLabel")
@@ -21220,6 +21332,11 @@ State.LearningStorage={Path=learningFile,Status=learningLoadStatus,
     LastFlush=-math.huge,Available=type(writefile)=="function"}
 function State.SaveLearning(force)
     local storage=State.LearningStorage
+    if not force and State.BehaviorRecorder
+        and State.BehaviorRecorder.Phase=="Playing" then
+        storage.Status="Learning buffered until the round ends"
+        return false
+    end
     if not storage.Available then
         storage.Status="No local file-write API; learning remains in session"
         return false
@@ -21887,6 +22004,8 @@ local function chooseTarget(kind, origin, item, preferred, strict, onScreenOnly)
     end
     State.RememberAimTarget(kind,best,preferred,strict,started)
     State.Performance.LastSelectionMs = (os.clock() - started) * 1000
+    State.Performance.MaxSelectionMs = math.max(State.Performance.MaxSelectionMs or 0,
+        State.Performance.LastSelectionMs)
     return best
 end
 
@@ -22609,6 +22728,27 @@ local function stageGunClientCantShoot(item,native,backup,playerGui)
     end
     return false,nil
 end
+local function stageKnifeClientAnimations(item,native,backup)
+    -- Native KnifeClient waits for Slash directly beneath the LocalScript.
+    -- Its other animation children can also be moved out during setup.
+    local folder=item:FindFirstChild("Animations")
+    for _,name in ipairs({"Slash","Downstab","ThrowCharge","ThrowHold","ThrowKnife"}) do
+        local existing=backup:FindFirstChild(name)
+        if not existing then
+            for _,owner in ipairs({native or false,item,folder or false}) do
+                if owner then
+                    local source=owner:FindFirstChild(name)
+                    if source and source:IsA("Animation") then
+                        source.Parent=backup
+                        break
+                    end
+                end
+            end
+        end
+    end
+    local slash=backup:FindFirstChild("Slash")
+    return slash~=nil and slash:IsA("Animation")
+end
 local function restoreHandler(item)
     local record = State.WeaponHandlers[item]
     if not record then return end
@@ -22628,6 +22768,10 @@ local function restoreHandler(item)
             local sounds, handle = item:FindFirstChild("Sounds"), item:FindFirstChild("Handle")
             local sound = handle and handle:FindFirstChild("Throw")
             if sounds and sound and not sounds:FindFirstChild("Throw") then sound.Parent = sounds end
+            if not stageKnifeClientAnimations(item,nil,backup) then
+                State.Stats.NativeKnifeMissingSlash=(State.Stats.NativeKnifeMissingSlash or 0)+1
+                warn("Native KnifeClient restore: Slash dependency unavailable")
+            end
         elseif record.Kind == "Gun" then
             local cantShoot = item:FindFirstChild("CantShoot")
             if record.CantShoot and record.CantShoot.Parent then
@@ -23464,6 +23608,12 @@ local function takeOver(item)
             return
         end
         nativeGui=source
+    elseif item.Name=="Knife" and not stageKnifeClientAnimations(item,native,backup) then
+        -- Prefer native input over a custom knife controller that might
+        -- break Slash/throw initialization when later restored.
+        backup:Destroy()
+        State.AimStatus="Native knife animation not ready; preserving game controls"
+        return
     end
     local record = {Item = item, Kind = item.Name, Backup = backup, NativeEnabled = native.Enabled,
         Connections = {}, Tracks = {}, Active = true, ThrowToken = 0, Charging = false,
@@ -25473,6 +25623,10 @@ installPerformancePreset({State=State,UpdateVisuals=function() updateESP(); upda
 end
 local elapsed, pingElapsed = 0, 0
 connect(RunService.Heartbeat, function(dt)
+    if dt>=1/30 then
+        State.Performance.SlowFrames=(State.Performance.SlowFrames or 0)+1
+        State.Performance.PeakFrameMs=math.max(State.Performance.PeakFrameMs or 0,dt*1000)
+    end
     scanWeaponContacts()
     sampleMotion(os.clock())
     elapsed += dt

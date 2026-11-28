@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-rc.66 — 2026-11-28
+
+- **Fix measured random FPS hitches from match-log storage:** a live client `writefile` call for a log chunk took ~32 ms, and the recorder had invoked it inline from its Heartbeat. In-match and spectator observations now buffer events in memory; normal archive writes are allowed only outside active/spectated rounds.
+- Queue automatic round-end exports instead of writing the entire archive in a single Heartbeat callback. Capture the completed match's player snapshots, weakness report and event timeline before resetting the recorder; write up to 150 events per queued step, separated by yields and paused when the next round begins. Match export manifests still report missing data, truncated previews and chunk completeness.
+- Increase the bounded pending archive buffer from 1,800 to 12,000 events so longer matches can finish without combat-time writes. Keep explicit dropped-event counters when the limit is exceeded; manual exports and unloads may still perform synchronous file operations.
+- Defer periodic learning-model file writes during active play while retaining in-memory reinforcement, and flush on match end or an explicit save.
+- Track maximum observed aim-selection time, slow rendered-frame counts, and last/maximum archive write durations without reducing motion sampling or disabling combat features.
+- Include the separately tested KnifeClient `Slash` dependency restoration safeguard from the preceding uncommitted work: retain native animations before script replacement; leave the native knife controller in place when the required `Slash` animation cannot be preserved.
+- Expand source-extracted regression tests for no disk writes while playing/spectating, asynchronous immutable completed-round snapshots, ordered detached archive writes, failed storage retries and deferred learning persistence.
+
 ## 1.0.0-rc.65 — 2026-11-28
 
 - Investigate the live warning `GunClient:WaitForChild("CantShoot")` using Roblox Creator Hub's Instance/WaitForChild documentation, MM2 runtime logs, and the local weapon takeover/restoration code. The warning means the game's native script waited for an immediate child that was unavailable; it does not by itself prove a server-side gun failure.

@@ -318,6 +318,15 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     harness.write_text(archive, encoding="utf-8")
     subprocess.run([args.luau, str(harness)], check=True, timeout=60)
 
+    export = (root / "tests" / "behavior_export.luau").read_text(encoding="utf-8")
+    begin = source.index("function State.QueueCompletedBehaviorExport(")
+    finish = source.index("local function behaviorText(", begin)
+    export = export.replace("-- INSERT_ROUND_EXPORTER", source[begin:finish])
+    if "-- INSERT_" in export:
+        raise RuntimeError("Unexpanded queued export source marker")
+    harness.write_text(export, encoding="utf-8")
+    subprocess.run([args.luau, str(harness)], check=True, timeout=60)
+
     round_test = (root / "tests" / "behavior_round.luau").read_text(encoding="utf-8")
     begin = source.index("local function recordRound(")
     helpers = source.index("local function mapActors(")

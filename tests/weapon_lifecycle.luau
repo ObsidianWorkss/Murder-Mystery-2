@@ -45,17 +45,21 @@ local function makeTool(kind,equipped,visible,uiWhere)
     function item:IsA(name) return name=="Tool" end
     function item:GetAttribute(name) return name=="EquippedPerk" and "Haste" or nil end
     local original={Name=kind.."Client",Parent=item,Enabled=true}
-    local cantShoot
+    local cantShoot,slash
     function original:IsA(name) return name=="LocalScript" end
     function original:FindFirstChild(name)
+        if name=="Slash" then
+            return self.Slash and self.Slash.Parent==self and self.Slash or nil
+        end
         return self.CantShoot and self.CantShoot.Name==name and
             self.CantShoot.Parent==self and self.CantShoot or nil
     end
     function original:Clone()
         local copy={Name=self.Name,Enabled=self.Enabled,Parent=nil}
         function copy:FindFirstChild(name)
-            if name~="CantShoot" then return nil end
-            local found=self.CantShoot or cantShoot
+            local found
+            if name=="CantShoot" then found=self.CantShoot or cantShoot
+            elseif name=="Slash" then found=self.Slash or slash end
             return found and found.Parent==self and found or nil
         end
         function copy:Destroy() self.Parent=nil; self.Destroyed=true end
@@ -64,6 +68,12 @@ local function makeTool(kind,equipped,visible,uiWhere)
             local cg={Name="CantShoot",Parent=copy,Enabled=self.CantShoot.Enabled}
             function cg:IsA(name) return name=="LayerCollector" end
             copy.CantShoot=cg
+        end
+        if self.Slash and self.Slash.Parent==self and
+            self.Slash.Archivable~=false then
+            local sa={Name="Slash",Parent=copy,Archivable=true}
+            function sa:IsA(name) return name=="Animation" end
+            copy.Slash=sa
         end
         return copy
     end
@@ -78,15 +88,23 @@ local function makeTool(kind,equipped,visible,uiWhere)
         if origin==original then original.CantShoot=cantShoot end
         if origin==playerGui then playerGui.CantShoot=cantShoot end
     end
+    if kind=="Knife" and uiWhere~="knifeMissing" then
+        local slashOwner=uiWhere=="knifeTool" and item or original
+        slash={Name="Slash",Parent=slashOwner,
+            Archivable=uiWhere~="knifeNonArchivable"}
+        function slash:IsA(name) return name=="Animation" end
+        if slashOwner==original then original.Slash=slash end
+    end
     function item:FindFirstChild(name)
         if name==original.Name and original.Parent==self then return original end
         if name=="CantShoot" and cantShoot and cantShoot.Parent==self then return cantShoot end
+        if name=="Slash" and slash and slash.Parent==self then return slash end
         return nil
     end
     return item,cantShoot
 end
--- INSERT_RESTORE
 -- INSERT_STAGE_GUN_UI
+-- INSERT_RESTORE
 -- INSERT_TAKEOVER
 do
     local item,cantShoot=makeTool("Gun",false,true)
@@ -142,6 +160,32 @@ do
     check(State.WeaponHandlers[item]==nil and original.Parent==item
         and original.Enabled==true and not original.Destroyed,
         "missing GunClient UI leaves native gun alone instead of recreating a broken script")
+end
+do
+    local knife=makeTool("Knife",false,nil,"knifeTool")
+    takeOver(knife)
+    local record=State.WeaponHandlers[knife]
+    check(record and record.Backup:FindFirstChild("Slash")~=nil,
+        "knife Slash animation staged from tool before original is destroyed")
+    restoreHandler(knife)
+    check(record.Backup:FindFirstChild("Slash")~=nil,
+        "restored native KnifeClient contains Slash before being re-enabled")
+end
+do
+    local knife=makeTool("Knife",false,nil,"knifeNonArchivable")
+    takeOver(knife)
+    local record=State.WeaponHandlers[knife]
+    check(record and record.Backup:FindFirstChild("Slash")~=nil,
+        "non-Archivable Slash animation survives script replacement")
+    restoreHandler(knife)
+end
+do
+    local knife=makeTool("Knife",false,nil,"knifeMissing")
+    local original=knife:FindFirstChild("KnifeClient")
+    takeOver(knife)
+    check(State.WeaponHandlers[knife]==nil and original.Parent==knife
+        and original.Enabled and not original.Destroyed,
+        "missing Slash leaves the original KnifeClient running untouched")
 end
 do
     local knife=makeTool("Knife",true)

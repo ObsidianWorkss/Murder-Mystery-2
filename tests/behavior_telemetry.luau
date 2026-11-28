@@ -104,6 +104,14 @@ check("turning off recording hides the overview too",
     not behaviorShouldShowMap(false,true,true))
 check("optional overview is visible only in a live round",
     behaviorShouldShowMap(true,true,true))
+check("playing keeps full movement evidence in RAM without blocking writefile",
+    not behaviorMayWriteArchive("Playing"))
+check("spectator view also avoids blocking disk writes",
+    not behaviorMayWriteArchive("Spectating"))
+check("lobby can flush final evidence without slowing active movement",
+    behaviorMayWriteArchive("Idle"))
+check("unknown or unset phases never initiate unrequested disk writes",
+    not behaviorMayWriteArchive(nil) and not behaviorMayWriteArchive("Unknown"))
 local mixed={
     {Round=1,Kind="First start"},
     {Round=1,Kind="First end"},

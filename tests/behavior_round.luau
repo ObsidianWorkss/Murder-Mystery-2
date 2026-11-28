@@ -60,6 +60,11 @@ function State.ExportBehaviorLog(reason)
         PlayersBeforeClear=count}
     return true,"saved"
 end
+function State.QueueCompletedBehaviorExport(reason)
+    -- In production this captures the match immediately and schedules I/O;
+    -- the lifecycle test records the request without executing any disk work.
+    return State.ExportBehaviorLog(reason)
+end
 
 -- INSERT_OBSERVER_PHASE
 -- INSERT_RECORD_ROUND

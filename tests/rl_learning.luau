@@ -157,6 +157,11 @@ check("saved model contains both juke and aim context tables",
         and savedPayload.Aim==State.AimLearning.Rows)
 check("model is saved beneath the existing MM2Universal folder",
     savedPath=="MM2Universal/learning-v1.json")
+State.BehaviorRecorder={Phase="Playing"}
+check("in-match learning updates defer synchronous disk writes",
+    not State.SaveLearning(false) and writeCount==baselineWrites
+        and State.LearningStorage.Status=="Learning buffered until the round ends")
+State.BehaviorRecorder.Phase="Idle"
 check("repeated automatic writes are throttled",
     not State.SaveLearning(false) and writeCount==baselineWrites)
 check("explicit end-of-round flush overrides rate limit",

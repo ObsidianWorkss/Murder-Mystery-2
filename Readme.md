@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.65-7499ff" alt="Version 1.0.0-rc.65">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.66-7499ff" alt="Version 1.0.0-rc.66">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.65.** Investigation of the Roblox `GunClient:WaitForChild("CantShoot")` infinite-yield warning found a native-script restoration risk: the game's `CantShoot` UI can be missing from the cloned client if moved elsewhere or marked non-archivable. Gun takeover now stages the existing GUI beneath the backup script from the original client, tool, or PlayerGui before destroying the original. If no valid GUI dependency is available, it leaves the native gun script alone instead of installing a potentially broken replacement. Native restoration also checks for that dependency before re-enabling the backup. This eliminates the known restoration failure paths in offline tests; real warning recurrence remains unverified until a gun is available in the live client. All rc.64 headless match archives and conservative aiming/juke safeguards remain. See [validation](tests/VALIDATION.md) and the [log audit](docs/LOG_AUDIT_2026-11-28.md).
+**Current build: v1.0.0-rc.66.** A live frame-time investigation found the executor's match-log `writefile` call could block Roblox for about **32 ms** while recording 100 events. In-match and spectator log writes are now buffered in memory, and automatic completed-round exports are queued and written one chunk at a time outside active play. Learning-model disk writes are also deferred during active play. A bounded 12,000-event queue preserves long rounds while recording; missing storage or overflow remains explicitly reported. Motion prediction, attack timing, aim quality, WalkSpeed, and existing learning rules are unchanged. Performance diagnostics track slow frames, maximum aim-selection time and archive-write time. This release also protects the native `KnifeClient/Slash` dependency alongside the previous `GunClient/CantShoot` repair. Full offline tests pass, but frame-time improvement still requires observation across multiple live matches. See [validation](tests/VALIDATION.md) and the [log audit](docs/LOG_AUDIT_2026-11-28.md).
 
 ## Quick start
 
