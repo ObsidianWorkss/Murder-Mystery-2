@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.62 — 2026-11-28
+
+- Change gun and knife assisted body-point ranking from strict part-name preference to **exposure-weighted confidence**. Continue using sampled body-hit rays, clear-path checks, timing-coverage gates and central-body filtering. A well-exposed lower torso can now outrank a tiny upper-torso glimpse.
+- During an automatic, charged knife throw, re-solve from the real moving handle up to two additional times while retaining the original protected target. Cancel if the target/weapon changed or the release origin remains unstable. Manual throws keep their native cursor fallback.
+- Record exact gun skip reasons and how often each occurs, include the most frequent reason in the script diagnostic report, and deduplicate rapid knife cooldown feedback in headless logs while keeping the visible countdown current.
+- Include the selected body part and lead time in local attack-request logs. Neither a sent request nor an uncorrelated server response is evidence of a confirmed hit.
+- Expand source-extracted Luau tests to cover exposure ranking, moving-origin release-time reacquisition, continuously unstable throws, cooldown deduplication and gun skip diagnostics. Hit-rate improvements still need live opponent trials.
+
 ## 1.0.0-rc.61 — 2026-11-28
 
 - Continue **headless spectator recording** when the local character is eliminated or teleports to the lobby. Pin the active play map, keep observing only living players within that map, and do not confuse lobby movement with live combat.

@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml"><img src="https://github.com/ObsidianWorkss/Murder-Mystery-2/actions/workflows/validate.yml/badge.svg?branch=main" alt="Validate script"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0--rc.61-7499ff" alt="Version 1.0.0-rc.61">
+  <img src="https://img.shields.io/badge/version-1.0.0--rc.62-7499ff" alt="Version 1.0.0-rc.62">
   <img src="https://img.shields.io/badge/status-release%20candidate-f0bc63" alt="Release candidate">
 </p>
 
@@ -20,7 +20,7 @@
 
 A Luau toolkit for Murder Mystery 2 with a bundled WindUI menu, adaptive PC and phone controls, combat assistance, role visuals and movement tools.
 
-**Current build: v1.0.0-rc.61.** Headless behavior recording works during an active MM2 match **and continues spectating the same play map after your character dies or returns to the lobby**. It observes only living participants on the active map, never records lobby movement, and automatically exports that round's named-player paths/events to local `MM2Universal/diagnostics` JSON once the remaining map participants finish. Spectators who join an ongoing round can also attach using multiple visible map participants and known roles. The optional X/Z overview can be enabled separately; it is not required for recording. Existing space-aware jukes, learning and aiming remain unchanged, and jukes never change WalkSpeed. Behavioral assessments are observational hypotheses, not access to private player inputs. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+**Current build: v1.0.0-rc.62.** Combat aiming uses a confidence-weighted choice among verified torso/head points: a better-exposed lower torso can beat a tiny upper-torso peek, without accepting invisible body parts, player obstructions or unsafe firing paths. Target-locked automatic knife throws can reacquire the same opponent from a moving release origin with two additional bounded aim scans, but still cancel if the handle is unstable or the target disappears. Gun rejection counts now identify specific reasons and repeated throw-cooldown messages no longer flood the match log. All previous headless spectator recording, movement learning, juke, and trickshot features remain. Offline checks pass, but **live hit-rate improvement is unverified** because unmatched server replies do not count as hits or misses. See the [validation record](tests/VALIDATION.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Quick start
 

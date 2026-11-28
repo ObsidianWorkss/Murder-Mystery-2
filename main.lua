@@ -17900,7 +17900,7 @@ env.MM2Assist = State
 State.InstanceToken = game:GetService("HttpService"):GenerateGUID(false)
 player:SetAttribute("MM2UniversalInstance", State.InstanceToken)
 State.MobileUI = {MenuOpen = true, InputUntil = 0}
-State.Version = "1.0.0-rc.61"
+State.Version = "1.0.0-rc.62"
 State.ReleaseChannel = "Release candidate"
 State.Build = "MM2Universal/" .. State.Version
 -- Support diagnostics intentionally omit player identities, access keys and shot payloads.
@@ -19877,8 +19877,11 @@ local function observeScriptState(now)
     if request and recorder.LastRequest~=request then
         recorder.LastRequest=request
         pushEvent("Attack request",request.Target or player.Name,
-            ("%s / %s by %s (request, not confirmed hit)"):format(
-                request.Weapon or "Weapon",request.Mode or "Unknown",player.Name),now)
+            ("%s / %s by %s | part %s | lead %s (request; hit unconfirmed)"):format(
+                request.Weapon or "Weapon",request.Mode or "Unknown",player.Name,
+                request.AimPart or "cursor",
+                type(request.LeadTime)=="number" and
+                    ("%.3fs"):format(request.LeadTime) or "unknown"),now)
     end
 end
 function State.GetBehaviorSnapshot(name)
@@ -19975,6 +19978,14 @@ function State.GetWeaknessReport()
     end
     if (errors.GunSkips or 0)>=3 then
         table.insert(scriptIssues,"Repeated gun safety skips; inspect line of sight and timing")
+    end
+    local topReason,topCount=nil,0
+    for reason,count in pairs(State.GunSkipReasons or {}) do
+        if count>topCount then topReason,topCount=reason,count end
+    end
+    if topReason and topCount>=3 then
+        table.insert(scriptIssues,("Most frequent gun rejection (%d scans): %s")
+            :format(topCount,topReason))
     end
     if (errors.KnifeSkips or 0)>=3 then
         table.insert(scriptIssues,"Repeated knife cancellations; inspect moving muzzle/throw path")
@@ -21366,6 +21377,14 @@ local function gunPartAimPriority(kind,name,profile)
     if name=="Head" then return 2 end
     return 1
 end
+local function aimPartUtility(quality,priority)
+    -- A well-exposed lower torso is safer than a barely exposed upper torso.
+    -- Keep a modest core preference, but do not let part-name priority
+    -- override actual ray clearance and the number of supported samples.
+    if type(quality)~="number" or quality~=quality or quality<=0
+        or type(priority)~="number" or priority<=0 then return 0 end
+    return quality*(1+math.min(priority,5)*0.08)
+end
 function State.GunAutoPartNames(names, root, onScreenOnly)
     if not onScreenOnly or not root then return names end
     local v=root.AssemblyLinearVelocity
@@ -21416,14 +21435,14 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
     bodyQuery.FilterType = Enum.RaycastFilterType.Include
     bodyQuery.FilterDescendantsInstances = queryParts
     bodyQuery.IgnoreWater = true
-    local best, bestQuality, bestPriority = nil, 0, -1
+    local best, bestQuality = nil, 0
     for _, name in ipairs(names) do
         local info = bodySamples[name]
         local part = info and info.Part
         if part and part.Parent == char and (kind~="Knife" or gunPartAimPriority(kind,name)>0) then
             local maximumQuality = projectedArea(part, origin, info.Frame, info.Size) * bodyWeight(name)
             local partPriority=gunPartAimPriority(kind,name,bodySamples._GunProfile)
-            if partPriority>bestPriority or (partPriority==bestPriority and maximumQuality>bestQuality) then
+            if aimPartUtility(maximumQuality,partPriority)>bestQuality then
                 local predicted, lead, airborne, source, positionAt, knifeSpeed, knifeDelay, aimAction, aimContext
                 local timingShifts
                 local predictionChecked = false
@@ -21485,8 +21504,9 @@ local function exposedSolution(char, root, kind, origin, item, camera, bodySampl
                 end
                 if partBest then
                     local quality = partBestQuality * exposedSamples / (info.OffsetCount or #hitOffsets)
-                    if partPriority>bestPriority or (partPriority==bestPriority and quality>bestQuality) then
-                        bestPriority,bestQuality,best = partPriority,quality,partBest
+                    local utility=aimPartUtility(quality,partPriority)
+                    if utility>bestQuality then
+                        bestQuality,best = utility,partBest
                         best.ExposureQuality = quality
                         best.ExposedSamples = exposedSamples
                     end
@@ -22558,7 +22578,19 @@ local function sendGun(record, preferred, strict, onScreenOnly)
     local function skip(message)
         State.Stats.SkippedGunShots+=1
         local now=os.clock()
-        State.LastGunSkip={Message=message,At=now}
+        local reasons=State.GunSkipReasons
+        if not reasons then reasons={};State.GunSkipReasons=reasons end
+        local reason=message:sub(1,110)
+        reasons[reason]=(reasons[reason] or 0)+1
+        local previous=State.LastGunSkip
+        if previous and previous.Message==message and now-previous.At<.8 then
+            -- Preserve the table identity so the headless recorder doesn't
+            -- mistake forty repeated negative scans for forty new failures.
+            previous.At=now
+            previous.Repeats=(previous.Repeats or 1)+1
+        else
+            State.LastGunSkip={Message=message,At=now,Repeats=1}
+        end
         -- A failed subsequent aim scan should not immediately erase a
         -- real server reply (or a still-pending request) from the gun HUD.
         local feedback=State.LastGunFeedback
@@ -22943,7 +22975,15 @@ local function stabKnife(record, preferred)
     return true
 end
 local function knifeFeedback(message)
-    State.KnifeFeedback = {Message = message, Until = os.clock() + 1.8}
+    local previous=State.KnifeFeedback
+    local now=os.clock()
+    if previous and previous.Message and previous.Message:find("^Throw cooldown:")
+        and message:find("^Throw cooldown:") and now<previous.Until then
+        previous.Message=message
+        previous.Until=now+1.8
+    else
+        State.KnifeFeedback = {Message = message, Until = now + 1.8}
+    end
     State.AimStatus = message
 end
 function State.KnifeCursorFloorCorrection(origin, point, floorY, floorNormalY)
@@ -23063,23 +23103,57 @@ local function startThrow(record, preferred, strict, canRelease)
             end
             if (handle.Position-originFrame.Position).Magnitude>.25 then
                 if strict then
-                    State.Stats.SkippedKnifeThrows+=1; cancel("Throw cancelled: knife moved again during aiming"); return
-                end
-                -- Recalculate from the live moving origin before discarding
-                -- an otherwise valid assisted torso/head solution. Two
-                -- additional bounded scans, then preserve manual cursor input.
-                originFrame=handle.CFrame
-                targetFrame,targetName,solution=aimPoint(record,nil,false,originFrame.Position,true)
-                if (handle.Position-originFrame.Position).Magnitude>.25 then
-                    originFrame=handle.CFrame
-                    targetFrame=nil
-                end
-                if not targetFrame then
-                    targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
-                    targetName,solution=nil,nil; manual=true
+                    -- Movement can be legitimate during the release scan.
+                    -- Recompute the intercept from the *current* handle up
+                    -- to twice, retaining the charged target and visibility
+                    -- safeguards. Never fire from a stale moving origin.
+                    local settled=false
+                    for _=1,2 do
+                        originFrame=handle.CFrame
+                        targetFrame,targetName,solution=aimPoint(record,chargedTarget,true,
+                            originFrame.Position,false)
+                        State.Stats.KnifeReleaseRescans=(State.Stats.KnifeReleaseRescans or 0)+1
+                        if not targetFrame then break end
+                        if (handle.Position-originFrame.Position).Magnitude<=.25 then
+                            settled=true
+                            break
+                        end
+                    end
+                    if not settled then
+                        State.Stats.SkippedKnifeThrows+=1
+                        cancel("Throw cancelled: charged target or moving knife muzzle not stable")
+                        return
+                    end
                 else
-                    manual,manualLift=false,false
+                    -- Recalculate from the live moving origin before discarding
+                    -- an otherwise valid assisted torso/head solution. Two
+                    -- additional bounded scans, then preserve manual cursor input.
+                    originFrame=handle.CFrame
+                    targetFrame,targetName,solution=aimPoint(record,nil,false,originFrame.Position,true)
+                    if (handle.Position-originFrame.Position).Magnitude>.25 then
+                        originFrame=handle.CFrame
+                        targetFrame=nil
+                    end
+                    if not targetFrame then
+                        targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
+                        targetName,solution=nil,nil; manual=true
+                    else
+                        manual,manualLift=false,false
+                    end
                 end
+            end
+            -- A final movement check covers the interval after the last
+            -- solve, not merely shifts that happened between prior scans.
+            if (handle.Position-originFrame.Position).Magnitude>.25 then
+                if strict then
+                    State.Stats.SkippedKnifeThrows+=1
+                    cancel("Throw cancelled: knife muzzle moved after final aim")
+                    return
+                end
+                originFrame=handle.CFrame
+                targetFrame,manualLift=knifeCursorFrame(originFrame.Position)
+                targetName,solution=nil,nil
+                manual=true
             end
             if solution and (not alive(solution.Player) or solution.Player.Character~=solution.Character
                 or State.IsPlayerExcluded(solution.Player)

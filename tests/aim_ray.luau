@@ -28,6 +28,7 @@ meta.__index = function(a, key)
 end
 
 -- INSERT_RELIABLE_PART
+-- INSERT_AIM_PART_UTILITY
 -- INSERT_SAMPLE_RAY
 
 local passed = 0
@@ -44,6 +45,19 @@ check("reliable gun points retain torso, head and optional visible root", #safe 
 check("reliable gun points keep torso first", safe[1] == "UpperTorso" and safe[2] == "Torso")
 check("reliable gun points reject limb-only candidates",
     #State.GunReliablePartNames({"LeftFoot", "RightUpperArm", "LeftLowerLeg"}) == 0)
+local high=gunPartAimPriority("Gun","UpperTorso")
+local lower=gunPartAimPriority("Gun","LowerTorso")
+check("exposed lower torso can beat a tiny upper torso peek",
+    aimPartUtility(1.8,lower)>aimPartUtility(0.22,high))
+check("similarly exposed parts still prefer the central upper torso",
+    aimPartUtility(0.96,high)>aimPartUtility(0.97,lower))
+check("fully exposed head may beat an almost covered torso",
+    aimPartUtility(1,gunPartAimPriority("Gun","Head"))
+        >aimPartUtility(0.24,high))
+check("knife arm candidates never become valid when torso is obscured",
+    aimPartUtility(2,gunPartAimPriority("Knife","Right Arm"))==0)
+check("invalid or empty confidence is never promoted",
+    aimPartUtility(0,high)==0 and aimPartUtility(0/0,high)==0)
 
 local origin, target = vec(0, 0, 0), vec(0, 0, 10)
 hitAt = 9.9

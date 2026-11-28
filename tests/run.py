@@ -389,6 +389,9 @@ with tempfile.TemporaryDirectory(prefix="mm2-combat-") as directory:
     begin = source.index("local function sampleRayHitsBody(")
     finish = source.index("local function gunTimingCoverage(", begin)
     aim_ray = aim_ray.replace("-- INSERT_SAMPLE_RAY", source[begin:finish])
+    begin = source.index("local function gunPartAimPriority(")
+    finish = source.index("function State.GunAutoPartNames(", begin)
+    aim_ray = aim_ray.replace("-- INSERT_AIM_PART_UTILITY", source[begin:finish])
     if "-- INSERT_" in aim_ray:
         raise RuntimeError("Unexpanded aim-ray test source marker")
     harness.write_text(aim_ray, encoding="utf-8")

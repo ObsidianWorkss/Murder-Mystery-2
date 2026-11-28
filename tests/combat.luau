@@ -512,8 +512,14 @@ do
         "moving thrower reaims once from the real release origin before sending")
     sends=1; handle.CFrame=frame(0); handle.Position=vec(0)
     r=record(); throwMove={1,2}; throwAimCalls=0; startThrow(r,near,true); release()
-    check(sends==1 and throwAimCalls==2 and not r.Charging and r.LastThrow==-math.huge,
-        "multiple moving-origin shifts cancel a stale throw rather than sending a bad trajectory")
+    check(sends==2 and throwAimCalls==3 and State.LastRequest.Target==near.Name
+        and lastOrigin.Position.X==2,
+        "target-locked throw reacquires aim after a second legitimate shooter movement")
+    handle.CFrame=frame(0); handle.Position=vec(0)
+    r=record(); throwMove={1,2,3,4}; throwAimCalls=0; startThrow(r,near,true); release()
+    check(sends==2 and throwAimCalls==4 and not r.Charging and r.LastThrow==-math.huge,
+        "continuously moving knife handle still cancels rather than using a stale intercept")
+    sends=1
     handle.CFrame=frame(0); handle.Position=vec(0)
     r=record(); startThrow(r,near,true); near.Character=character(3); release()
     check(sends==1 and not r.Charging,"target respawn cancels charged throw")
@@ -552,6 +558,15 @@ do
     check(contacts==1 and r.StabTarget==near,"manual click requests one selected stab contact")
     clickKnife(r)
     check(contacts==1,"cooldown click does not repeat assisted contact")
+    knifeFeedback("Throw cooldown: 1.0s")
+    local cooldownFeedback=State.KnifeFeedback
+    knifeFeedback("Throw cooldown: 0.8s")
+    check(State.KnifeFeedback==cooldownFeedback
+        and State.KnifeFeedback.Message=="Throw cooldown: 0.8s",
+        "repeated cooldown countdown updates one feedback record rather than flooding logs")
+    knifeFeedback("Equip a ready knife to throw")
+    check(State.KnifeFeedback~=cooldownFeedback,
+        "a new non-cooldown error creates a distinct feedback event")
 end
 
 do
@@ -625,6 +640,9 @@ do
     target.Excluded=false; State.Config.ConservativeGun=true; coverage=.8
     payloadOrigin=nil
     check(not sendGun(record()) and payloadOrigin==nil,"final firing gate rejects partial timing coverage")
+    check(State.GunSkipReasons and
+        (State.GunSkipReasons["Shot skipped: uncertain target timing; reposition and fire again"] or 0)>=1,
+        "gun rejection diagnostics preserve the exact timing failure reason")
     State.LastGunFeedback={Message="Recent server ray result",SentAt=os.clock(),TargetHit=false}
     check(not sendGun(record()) and State.LastGunFeedback.Message=="Recent server ray result"
         and State.LastGunSkip and State.LastGunSkip.Message:find("Shot skipped",1,true),
